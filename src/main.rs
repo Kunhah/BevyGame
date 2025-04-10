@@ -30,7 +30,7 @@ struct GameState {
 }
 
 // New component to mark walls
-#[derive(Component)]
+#[derive(Component, Clone)]
 struct Collider{
     name: String,
 }
@@ -67,9 +67,12 @@ fn main() {
             ..default()
         }))
         .insert_resource(ClearColor(Color::srgb(0.1, 0.1, 0.1)))
+        .insert_resource(CachedInteractables(Vec::new()))
+        .insert_resource(CachedColliders(Vec::new()))
         .add_systems(Startup, setup)
         .add_systems(Update, player_movement)
         .add_systems(Update, interact)
+        .add_systems(Update, update_cache)
         .run();
 }
 
@@ -82,12 +85,22 @@ struct Position {
     y: i32,
 }
 
+#[derive(Resource, Default)]
+struct CachedInteractables(Vec<(Transform, Interactable)>);
+
+#[derive(Resource, Default)]
+struct CachedColliders(Vec<(Transform, Collider)>);
+
 fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
     
     commands
     .spawn(Camera2d::default())
     .insert(Player)
     .insert(Position { x: 0, y: 0 });
+
+    //commands.insert_resource(CachedInteractables(Vec::new()));
+    //commands.insert_resource(CachedColliders(Vec::new()));
+    
 
     //let texture_handle = asset_server.load("character.png");
 
@@ -141,7 +154,6 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
             Interactable { name: "Test interactable".to_string() },
         ));
     }
-
 }
 
 fn player_movement(
@@ -149,8 +161,9 @@ fn player_movement(
     collider_query: Query<&Transform, With<Collider>>, */
     mut param_set: ParamSet<(
         Query<(&mut Transform, &mut Position), With<Player>>,
-        Query<&Transform, With<Collider>>,
+        //Query<&Transform, With<Collider>>,
     )>,
+    cache: Res<CachedColliders>,
     input: Res<ButtonInput<KeyCode>>, 
     time: Res<Time>,
     //collision_grid: Res<CollisionGrid>,
@@ -177,8 +190,8 @@ fn player_movement(
             // Diagonal movement
             let diagonal_speed = movement_speed / (2.0_f32.sqrt());
              // First, collect all collider data safely
-            let p1 = param_set.p1();
-            let colliders: Vec<_> = p1.iter().cloned().collect();
+            //let p1 = param_set.p1();
+            //let colliders: Vec<_> = p1.iter().cloned().collect();
             //let colliders: Vec<_> = p1.iter().collect();
 
             let mut p0 = param_set.p0();
@@ -201,9 +214,9 @@ fn player_movement(
                     let player_rect = Rect::from_center_size(Vec2::new(new_x, new_y), Vec2::new(32.0, 32.0));
 
                     // Check collision using AABB
-                    let collision = colliders.iter().any(|wall_transform| {
+                    let collision = cache.0.iter().any(|wall_transform| {
                         let wall_rect = Rect::from_center_size(
-                            Vec2::new(wall_transform.translation.x, wall_transform.translation.y),
+                            Vec2::new(wall_transform.0.translation.x, wall_transform.0.translation.y),
                             Vec2::new(32.0, 32.0),
                         );
                         aabb_collision(player_rect, wall_rect)
@@ -219,8 +232,8 @@ fn player_movement(
             }
         } else {
 
-            let p1 = param_set.p1();
-            let colliders: Vec<_> = p1.iter().cloned().collect();
+            //let p1 = param_set.p1();
+            //let colliders: Vec<_> = p1.iter().cloned().collect();
             // Horizontal or vertical movement
             for (mut transform, mut position) in param_set.p0().iter_mut() {
                 let new_x = transform.translation.x + direction.x * movement_speed;
@@ -239,9 +252,9 @@ fn player_movement(
                     let player_rect = Rect::from_center_size(Vec2::new(new_x, new_y), Vec2::new(32.0, 32.0));
 
                     // Check collision using AABB
-                    let collision = colliders.iter().any(|wall_transform| {
+                    let collision = cache.0.iter().any(|wall_transform| {
                         let wall_rect = Rect::from_center_size(
-                            Vec2::new(wall_transform.translation.x, wall_transform.translation.y),
+                            Vec2::new(wall_transform.0.translation.x, wall_transform.0.translation.y),
                             Vec2::new(32.0, 32.0),
                         );
                         aabb_collision(player_rect, wall_rect)
@@ -262,31 +275,36 @@ fn player_movement(
 fn interact<'a>(
     mut param_set: ParamSet<(
         Query<(&Transform, &Position), With<Player>>,
-        Query<(&Transform, &Interactable), With<Interactable>>,
+        //Query<(&Transform, &Interactable), With<Interactable>>,
         //Query<&Interactable, With<Interactable>>
     )>,
+    cache: Res<CachedInteractables>,
     input: Res<ButtonInput<KeyCode>>, 
 ) {
     let game_state = GAME_STATE.lock().unwrap();
     if (!input.pressed(KeyCode::KeyX) || game_state.interacting || game_state.battle) {
         return;
     }
+
+    //let p1 = param_set.p1();
     
-    let interactables: Vec<(Transform, Interactable)> = param_set
+    /* let interactables: Vec<(Transform, Interactable)> = param_set
         .p1()
         .iter()
-        .map(|(t, i)| (t.clone(), i.clone())) 
-        .collect();
+        .map(|(t, i)| (t, i)) 
+        .collect(); */
 
     //let interactables: Vec<(Rc<&Transform>, Rc<&Interactable>)> = p1.iter().map(|(t, i)| (Rc::new(t), Rc::new(i))).collect();
     
     let p0 = param_set.p0();
 
+    //let interactables: Vec<(_, _)> = p1.iter().map(|(t, i)| (t, i)).collect();
+
     for (transform, position) in p0.iter() {
 
         let player_rect = Rect::from_center_size(Vec2::new(transform.translation.x, transform.translation.y), Vec2::new(32.0, 32.0));
 
-        let interactable: Option<&(bevy::prelude::Transform, Interactable)> = interactables.iter().find(|(interactable_transform, interactable)| {
+        let interactable: Option<&(bevy::prelude::Transform, Interactable)> = cache.0.iter().find(|(interactable_transform, interactable)| {
             let wall_rect = Rect::from_center_size(
                 Vec2::new(interactable_transform.translation.x, interactable_transform.translation.y),
                 Vec2::new(32.0, 32.0),
@@ -306,6 +324,41 @@ fn aabb_collision(rect1: Rect, rect2: Rect) -> bool {
     rect1.max.x > rect2.min.x &&
     rect1.min.y < rect2.max.y &&
     rect1.max.y > rect2.min.y
+}
+
+fn update_interactable_cache(
+    mut cache: ResMut<CachedInteractables>,
+    query: Query<(&Transform, &Interactable), With<Interactable>>,
+) {
+    cache.0 = query
+        .iter()
+        .map(|(t, i)| (t.clone(), i.clone()))
+        .collect();
+}
+
+fn update_collider_cache(
+    mut cache: ResMut<CachedColliders>,
+    query: Query<(&Transform, &Collider), With<Collider>>,
+) {
+    cache.0 = query
+        .iter()
+        .map(|(t, i)| (t.clone(), i.clone()))
+        .collect();
+}
+
+fn update_cache(
+    mut cache_interactables: ResMut<CachedInteractables>,
+    mut cache_colliders: ResMut<CachedColliders>,
+    interactable_query: Query<(&Transform, &Interactable), With<Interactable>>,
+    collider_query: Query<(&Transform, &Collider), With<Collider>>,
+    input: Res<ButtonInput<KeyCode>>, 
+) {
+    if(!input.pressed(KeyCode::KeyP)) {
+        return;
+    }
+
+    update_interactable_cache(cache_interactables, interactable_query);
+    update_collider_cache(cache_colliders, collider_query);
 }
 
 /* if direction.length() > 0.0 {
