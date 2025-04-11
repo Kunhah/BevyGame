@@ -369,8 +369,11 @@ fn pathfinding(
 fn rotate_to_direction(
     start: Position,
     destination: Position
-) -> Transform.Rotation {
-
+) -> f32 {
+    let dx = destination.x - start.x;
+    let dy = destination.y - start.y;
+    let angle = dy.atan2(dx);
+    angle
 }
 
 /* if direction.length() > 0.0 {
