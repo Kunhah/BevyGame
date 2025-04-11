@@ -282,39 +282,38 @@ fn interact<'a>(
     input: Res<ButtonInput<KeyCode>>, 
 ) {
     let game_state = GAME_STATE.lock().unwrap();
-    if (!input.pressed(KeyCode::KeyX) || game_state.interacting || game_state.battle) {
-        return;
-    }
-
-    //let p1 = param_set.p1();
+    if (input.just_pressed(KeyCode::KeyX) || game_state.interacting || game_state.battle) {
+        
+        //let p1 = param_set.p1();
+        
+        /* let interactables: Vec<(Transform, Interactable)> = param_set
+            .p1()
+            .iter()
+            .map(|(t, i)| (t, i)) 
+            .collect(); */
     
-    /* let interactables: Vec<(Transform, Interactable)> = param_set
-        .p1()
-        .iter()
-        .map(|(t, i)| (t, i)) 
-        .collect(); */
-
-    //let interactables: Vec<(Rc<&Transform>, Rc<&Interactable>)> = p1.iter().map(|(t, i)| (Rc::new(t), Rc::new(i))).collect();
+        //let interactables: Vec<(Rc<&Transform>, Rc<&Interactable>)> = p1.iter().map(|(t, i)| (Rc::new(t), Rc::new(i))).collect();
+        
+        let p0 = param_set.p0();
     
-    let p0 = param_set.p0();
-
-    //let interactables: Vec<(_, _)> = p1.iter().map(|(t, i)| (t, i)).collect();
-
-    for (transform, position) in p0.iter() {
-
-        let player_rect = Rect::from_center_size(Vec2::new(transform.translation.x, transform.translation.y), Vec2::new(32.0, 32.0));
-
-        let interactable: Option<&(bevy::prelude::Transform, Interactable)> = cache.0.iter().find(|(interactable_transform, interactable)| {
-            let wall_rect = Rect::from_center_size(
-                Vec2::new(interactable_transform.translation.x, interactable_transform.translation.y),
-                Vec2::new(32.0, 32.0),
-            );
-            aabb_collision(player_rect, wall_rect)
-        });
-
-        if let Some((interactable_transform, interactable)) = interactable {
-            interactable.interact(interactable_transform, game_state);
-            break;
+        //let interactables: Vec<(_, _)> = p1.iter().map(|(t, i)| (t, i)).collect();
+    
+        for (transform, position) in p0.iter() {
+    
+            let player_rect = Rect::from_center_size(Vec2::new(transform.translation.x, transform.translation.y), Vec2::new(32.0, 32.0));
+    
+            let interactable: Option<&(bevy::prelude::Transform, Interactable)> = cache.0.iter().find(|(interactable_transform, interactable)| {
+                let wall_rect = Rect::from_center_size(
+                    Vec2::new(interactable_transform.translation.x, interactable_transform.translation.y),
+                    Vec2::new(32.0, 32.0),
+                );
+                aabb_collision(player_rect, wall_rect)
+            });
+    
+            if let Some((interactable_transform, interactable)) = interactable {
+                interactable.interact(interactable_transform, game_state);
+                break;
+            }
         }
     }
 }
@@ -353,12 +352,25 @@ fn update_cache(
     collider_query: Query<(&Transform, &Collider), With<Collider>>,
     input: Res<ButtonInput<KeyCode>>, 
 ) {
-    if(!input.pressed(KeyCode::KeyP)) {
-        return;
+    if(input.just_pressed(KeyCode::KeyP)) {
+        update_interactable_cache(cache_interactables, interactable_query);
+        update_collider_cache(cache_colliders, collider_query);
     }
+}
 
-    update_interactable_cache(cache_interactables, interactable_query);
-    update_collider_cache(cache_colliders, collider_query);
+fn pathfinding(
+    cache: Res<CachedColliders>,
+    start: Position,
+    destination: Position,
+) -> Vec<Position> {
+    
+}
+
+fn rotate_to_direction(
+    start: Position,
+    destination: Position
+) -> Transform.Rotation {
+
 }
 
 /* if direction.length() > 0.0 {
