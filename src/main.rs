@@ -1,6 +1,8 @@
 use bevy::ecs::entity;
 use bevy::math::ops::powf;
 use bevy::prelude::*;
+use bevy::ui::prelude::*;
+use bevy::ui::{PositionType};
 use bevy::sprite::*;
 use bevy::prelude::GltfAssetLabel::Texture;
 use bevy::input::keyboard::KeyCode; // KeyCode fix
@@ -25,6 +27,10 @@ use std::hash::Hasher;
 use std::cmp::Ordering;
 //use approx::abs_diff_eq::AbsDiffEq;
 use approx::AbsDiffEq;
+use serde::Deserialize;
+use serde_json::*;
+use std::fs::File;
+use std::io::BufReader;
 
 const WINDOW_WIDTH: f32 = 640.0;
 const WINDOW_HEIGHT: f32 = 480.0;
@@ -37,15 +43,66 @@ const PATH_MARGIN: i32 = 5;
 const PATH_DRAW_MARGIN: i32 = 10;
 const PATH_MOVEMENT_SPEED: u32 = 10;
 
+const WALKING_LIMIT: usize = 40;
+
 //static GAME_STATE: Lazy<Arc<RwLock<GameState>>> = Lazy::new(|| {
 //    Arc::new(RwLock::new(GameState::Exploring))
 //});
+
+#[derive(Debug, Deserialize)]
+pub struct Choice {
+    pub event: u32,
+    pub text: String,
+    pub next: Option<String>,
+}
+
+impl Default for Choice {
+    fn default() -> Self {
+        Choice {
+            event: 0,
+            text: String::new(),
+            next: None,
+        }
+    }
+}
+
+
+#[derive(Debug, Deserialize)]
+pub struct DialogueLine {
+    pub id: String,
+    pub speaker: String,
+    pub text: String,
+    pub next: Option<String>,
+    pub choices: Option<Vec<Choice>>,
+}
 
 #[derive(Debug, Clone, Copy)]
 enum GameState {
     Exploring,
     Interacting,
     Battle
+}
+
+pub struct DialogueData(pub HashMap<String, DialogueLine>);
+
+impl Default for DialogueData {
+    fn default() -> Self {
+        DialogueData(HashMap::new())
+    }
+}
+
+pub struct DialogueState {
+    pub current_id: Option<String>,
+    pub active: bool,
+}
+
+impl Default for DialogueState {
+    fn default() -> Self {
+        DialogueState {
+            current_id: None,
+            active: false,
+        }
+    }
 }
 
 impl Default for GameState {
@@ -75,18 +132,34 @@ struct Collider{
 #[derive(Component, Clone)]
 struct Interactable {
     name: String,
+    dialogue_id: String,
 }
 
 #[derive(Component)]
 struct MainCamera;
 
 impl Interactable {
-    fn interact(&self, transform: &bevy::prelude::Transform, mut game_state: GameState) {
+    fn interact(
+        &self, transform: &bevy::prelude::Transform,
+        mut game_state: GameState,
+        mut commands: Commands,
+        mut state: ResMut<Dialogue_State>,
+        data: Res<Dialogue_Data>,
+        asset_server: Res<AssetServer>,
+        mut box_query: Query<(Entity, &Children), With<DialogueBox>>,
+        text_query: Query<Entity, With<DialogueText>>,
+        button_query: Query<Entity, With<ChoiceButton>>,
+    ) {
         // code to handle interaction goes here
         let previous_state = game_state.clone();
         game_state = GameState::Interacting;
         println!("Interacting, game state: {:?}", game_state);
+        state.0.current_id = Some(self.dialogue_id.clone());
+        state.0.active = true;
+        display_dialogue(commands, &state, data, asset_server, box_query, text_query, button_query);
         game_state = previous_state;
+        //state.0.current_id = None;
+        //state.0.active = false;
         println!("Interaction finished, game state: {:?}", game_state);
         println!("Interacted with {}, on transform: {:?}", self.name, transform);
     }
@@ -158,6 +231,8 @@ fn main() {
         .insert_resource(CachedColliders(Vec::new()))
         .insert_resource(Game_State(GameState::Exploring))
         .insert_resource(Global_Variables(GlobalVariables::default()))
+        .insert_resource(Dialogue_State(DialogueState::default()))
+        .insert_resource(Selected_Choice(Choice::default()))
         .add_systems(Startup, setup)
         .add_systems(Update, player_movement)
         .add_systems(Update, interact)
@@ -189,6 +264,15 @@ struct CachedInteractables(Vec<(Transform, Interactable)>);
 #[derive(Resource, Default)]
 pub struct CachedColliders(Vec<(Transform, Collider)>);
 
+#[derive(Resource, Default)]
+pub struct Dialogue_State(DialogueState);
+
+#[derive(Resource, Default)]
+pub struct Dialogue_Data(pub HashMap<String, DialogueLine>);
+
+#[derive(Resource, Default)]
+pub struct Selected_Choice(Choice);
+
 #[derive(Component)]
 struct MoveAlongPath {
     path: Vec<IVec2>,
@@ -196,7 +280,61 @@ struct MoveAlongPath {
     timer: Timer,
 }
 
+#[derive(Component)]
+struct DialogueText;
+
+#[derive(Component)]
+struct ChoiceButton {
+    next_id: String,
+}
+
+#[derive(Component)]
+struct DialogueBox;
+
 fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
+
+    let dialogue_data = load_dialogue();
+    commands.insert_resource(Dialogue_Data(dialogue_data));
+
+    commands
+        .spawn((
+            /* Node {
+            /* style: Style {
+                width: Val::Percent(100.0),
+                height: Val::Px(200.0),
+                display: Display::Flex,
+                flex_direction: FlexDirection::Column,
+                justify_content: JustifyContent::Start,
+                align_items: AlignItems::Start,
+                padding: UiRect::all(Val::Px(10.0)),
+                ..default()
+            }, */
+            background_color: BackgroundColor(Color::srgb(0.8, 0.8, 0.8)),
+            ..default()
+        }, */
+            DialogueBox,
+        ))
+        .with_children(|parent| {
+            parent.spawn((
+                /* Text::from(
+                    "".to_string(),
+                    TextStyle {
+                        font: asset_server.load("fonts/FiraSans-Bold.ttf"),
+                        font_size: 24.0,
+                        color: Color::WHITE,
+                    },
+                ) */
+                // .with_text_alignment(TextAlignment::Left),
+                TextFont {
+                        //font: asset_server.load("fonts/FiraSans-Bold.ttf"),
+                        font_size: 24.0,
+                        ..Default::default()
+                    },
+                TextColor(Color::WHITE),
+                Text::new(""),
+                DialogueText,
+            ));
+        });
     
     commands
     .spawn(Camera2d::default())
@@ -257,7 +395,7 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
             },
             Transform::from_xyz(x as f32 * 32.0, 5.0 * 32.0, 0.0),
             Position { x: x * 32, y: 5 * 32 },
-            Interactable { name: "Test interactable".to_string() },
+            Interactable { name: "Test interactable".to_string(), dialogue_id: "Interactable 1".to_string() },
         ));
     }
 }
@@ -405,6 +543,14 @@ fn interact<'a>(
     game_state: ResMut<Game_State>,
     cache: Res<CachedInteractables>,
     input: Res<ButtonInput<KeyCode>>, 
+    mut dialogue_state: ResMut<Dialogue_State>,
+    dialogue_data: Res<Dialogue_Data>,
+    selected_choice: Res<Selected_Choice>,
+    mut commands: Commands,
+    asset_server: Res<AssetServer>,
+    mut box_query: Query<(Entity, &Children), With<DialogueBox>>,
+    text_query: Query<Entity, With<DialogueText>>,
+    button_query: Query<Entity, With<ChoiceButton>>,
 ) {
     if (input.just_pressed(KeyCode::KeyX)) {
         
@@ -437,7 +583,8 @@ fn interact<'a>(
                     });
             
                     if let Some((interactable_transform, interactable)) = interactable {
-                        interactable.interact(interactable_transform, game_state.0);
+                        dialogue_state.0.active = true;
+                        interactable.interact(interactable_transform, game_state.0, commands, dialogue_state, dialogue_data, asset_server, box_query, text_query, button_query);
                         break;
                     }
                 }
@@ -446,7 +593,50 @@ fn interact<'a>(
                 
             }
             GameState::Interacting => {
+
+            }
+            _ => {}
+        }
+    }
+    else if (input.just_pressed(KeyCode::Space)) {
+        match game_state.0 {
+            GameState::Exploring => {
+
+            }
+            GameState::Battle => {
                 
+            }
+            GameState::Interacting => {
+                if let Some(current_id) = &dialogue_state.0.current_id {
+                    if let Some(line) = dialogue_data.0.get(current_id) {
+                        /* if let Some(next_id) = &line.next {
+                            let next_id_parts: Vec<&str> = next_id.split_whitespace().collect();
+                            if next_id_parts[0] == "#(CHOICE)" {
+                                let choices: &Vec<Choice> = line.choices.as_ref().unwrap();
+                                for choice in choices {
+                                    
+                                }
+                            }
+                            else {
+                                dialogue_state.current_id = Some(next_id.clone());
+                            }
+                        }
+                        else {
+                            dialogue_state.active = false;
+                        } */
+                        let current_choices = &line.choices;
+                        if current_choices.is_some() {
+                            dialogue_state.0.current_id = selected_choice.0.next.clone();
+                            handle_choice_event(selected_choice.0.event);
+                        }
+                        else {
+                            dialogue_state.0.current_id = line.next.clone();
+                            if dialogue_state.0.current_id.is_none() {
+                                dialogue_state.0.active = false;
+                            }
+                        }
+                    }
+                }
             }
             _ => {}
         }
@@ -688,6 +878,11 @@ pub fn pathfinding(
     goal: Position,
     margin: i32
 ) -> Vec<Position> {
+
+    if !is_walkable(start, &cache) || !is_walkable(goal, &cache) {
+        return Vec::new();
+    }
+
     let mut open_set = BinaryHeap::new();
     open_set.push(Node {
         position: start,
@@ -887,8 +1082,19 @@ fn mouse_click(
         let player_entity = entity;
         //let (mut transform, mut position) = p0.iter_mut().next().unwrap();
         
-        let path = find_path(*position, game_state.0, cache, camera_query, windows, PATH_MARGIN);
+        let path_ops = find_path(*position, game_state.0, cache, camera_query, windows, PATH_DRAW_MARGIN);
+        if path_ops.is_none() {
+            return;
+        }
+        let path = path_ops.unwrap();
+        if path.is_empty() {
+            return;
+        }
         let path_len = path.len();
+        if path_len > WALKING_LIMIT {
+            println!("Path too long");
+            return;
+        }
 
         println!("path len: {}", path_len);
 
@@ -929,8 +1135,19 @@ fn mouse_click(
 
         println!("Reached");
         
-        let path = find_path(*position, game_state.0, cache, camera_query, windows, PATH_DRAW_MARGIN);
+        let path_ops = find_path(*position, game_state.0, cache, camera_query, windows, PATH_DRAW_MARGIN);
+        if path_ops.is_none() {
+            return;
+        }
+        let path = path_ops.unwrap();
+        if path.is_empty() {
+            return;
+        }
         let path_len = path.len();
+        if path_len > WALKING_LIMIT {
+            println!("Path too long");
+            return;
+        }
 
         println!("path len: {}", path_len);
 
@@ -964,12 +1181,12 @@ fn find_path(
     camera_query: Query<(&Camera, &GlobalTransform), With<MainCamera>>,
     windows: Query<&Window>,
     margin: i32
-) -> Vec<Position> {
+) -> Option<Vec<Position>> {
     match game_state {
         GameState::Exploring => {
             
-            let (camera, camera_transform) = camera_query.single();
-            let window = windows.single();
+            let (camera, camera_transform) = camera_query.single().expect("Failed to get camera");
+            let window = windows.single().expect("Failed to get window");
             
             if let Some(screen_pos) = window.cursor_position() {
 
@@ -979,7 +1196,7 @@ fn find_path(
 
                 let _target_position = match camera.viewport_to_world_2d(camera_transform, screen_pos) {
                     Ok(target_position) => target_position,
-                    Err(_) => return Vec::new(),
+                    Err(_) => return None,
                 };
 
                 println!("Target position: ({}, {})", _target_position.x, _target_position.y);
@@ -992,23 +1209,24 @@ fn find_path(
                 let path = pathfinding(cache, current_position, target_position, margin);
                 if path.is_empty() {
                     println!("No path found, it is empty");
+                    return None;
                 }
 
-                return path; 
+                return Some(path); 
             }
             else {
                 println!("No cursor position");
-                return Vec::new();
+                return None;
             }
         }
         GameState::Interacting => {
-            return Vec::new();
+            return None;
         }
         GameState::Battle => {
-            return Vec::new();
+            return None;
         }
         _ => {
-            return Vec::new();
+            return None;
         }
     }
 }
@@ -1052,8 +1270,21 @@ fn draw_distance_system(
         
             println!("Reached");
             
-            let path = find_path(*position, game_state.0, cache, camera_query, windows, PATH_DRAW_MARGIN);
+            //let path = find_path(*position, game_state.0, cache, camera_query, windows, PATH_DRAW_MARGIN);
+            //let path_len = path.len();
+            let path_ops = find_path(*position, game_state.0, cache, camera_query, windows, PATH_DRAW_MARGIN);
+            if path_ops.is_none() {
+                return;
+            }
+            let path = path_ops.unwrap();
+            if path.is_empty() {
+                return;
+            }
             let path_len = path.len();
+            if path_len > WALKING_LIMIT {
+                println!("Path too long");
+                return;
+            }
         
             println!("path len: {}", path_len);
         
@@ -1139,3 +1370,159 @@ fn draw_distance_system(
         }
     }
 } */
+
+
+fn load_dialogue() -> HashMap<String, DialogueLine> {
+    let file = File::open("dialogues/example.json").unwrap();
+    let reader = BufReader::new(file);
+    let dialogue_lines: Vec<DialogueLine> = serde_json::from_reader(reader).unwrap();
+    dialogue_lines
+        .into_iter()
+        .map(|line| (line.id.clone(), line))
+        .collect()
+}
+
+/* fn show_dialogue(
+    mut query: Query<&mut Text>,
+    dialogue_data: Res<DialogueData>,
+    mut state: ResMut<DialogueState>,
+) {
+    if let Some(current_id) = &state.current_id {
+        if let Some(line) = dialogue_data.0.get(current_id) {
+            for mut text in query.iter_mut() {
+                text.0 = format!("{}: {}", line.speaker, line.text);
+            }
+        }
+    }
+} */
+
+fn display_dialogue(
+    mut commands: Commands,
+    mut state: &ResMut<Dialogue_State>,
+    data: Res<Dialogue_Data>,
+    asset_server: Res<AssetServer>,
+    mut box_query: Query<(Entity, &Children), With<DialogueBox>>,
+    text_query: Query<Entity, With<DialogueText>>,
+    button_query: Query<Entity, With<ChoiceButton>>,
+) {
+    if let Some(current_id) = &state.0.current_id {
+        if let Some(dialogue) = data.0.get(current_id) {
+            println!("Dialogue found: {}", dialogue.text);
+            let (box_entity, children) = box_query.single_mut().unwrap();
+
+            // Remove old choice buttons
+            for child in children.iter() {
+                if button_query.get(child).is_ok() {
+                    commands.entity(child).despawn();
+                }
+            }
+
+            // Update dialogue text
+            for child in children.iter() {
+                if text_query.get(child).is_ok() {
+                    commands.entity(child).insert(
+                    (
+                            /* Text::from_section(
+                                format!("{}: {}", dialogue.speaker, dialogue.text),
+                                TextStyle {
+                                    font: asset_server.load("fonts/FiraSans-Bold.ttf"),
+                                    font_size: 24.0,
+                                    color: Color::WHITE,
+                                },
+                            ) */
+                           //.with_text_alignment(TextAlignment::Left),
+                           Text::new(format!("{}: {}", dialogue.speaker, dialogue.text)),
+                           TextFont {
+                                    //font: asset_server.load("fonts/FiraSans-Bold.ttf"),
+                                    font_size: 24.0,
+                                    ..Default::default()
+                                },
+                            TextColor(Color::WHITE),
+                            Transform::from_translation(Vec3::new(0.0, 0.0, 0.0)),
+                            GlobalTransform::default(),
+                        ),
+                    );
+                }
+            }
+
+            // Add new choice buttons
+
+            let choices = &dialogue.choices;
+
+            match choices {
+                Some(choices_v) => {
+                    for choice in choices_v {
+                        commands.entity(box_entity).with_children(|parent| {
+                            parent
+                                .spawn((
+                                    Button {
+                                        ..default()
+                                    },
+                                    /* Style {
+                                        size: Size::new(Val::Px(200.0), Val::Px(40.0)),
+                                        margin: UiRect::all(Val::Px(5.0)),
+                                        justify_content: JustifyContent::Center,
+                                        align_items: AlignItems::Center,
+                                    }, */
+                                    BackgroundColor(Color::srgb(0.5, 0.8, 0.5)),
+                                    ChoiceButton {
+                                        next_id: choice.next.as_ref().unwrap().clone(),
+                                    },
+                                ))
+                                .with_children(|btn| {
+                                    btn.spawn((
+                                        /* Text::from_section(
+                                            &choice.text,
+                                            TextStyle {
+                                                font: asset_server.load("fonts/FiraSans-Bold.ttf"),
+                                                font_size: 20.0,
+                                                color: Color::WHITE,
+                                            },
+                                        ) */
+                                       //.with_text_alignment(TextAlignment::Left),
+                                       Text::new(&choice.text),
+                                       TextFont {
+                                                //font: asset_server.load("fonts/FiraSans-Bold.ttf"),
+                                                font_size: 20.0,
+                                                ..Default::default()
+                                            },
+                                        TextColor(Color::WHITE),
+                                        Transform::from_translation(Vec3::new(0.0, 0.0, 0.0)),
+                                        GlobalTransform::default(),
+                                    ));
+                                });
+                            });
+                    }
+                }
+                None => {
+                    println!("No choices found for ID: {}", current_id);
+                }
+            }
+            
+        }
+        else {
+            println!("No dialogue found for ID: {}", current_id);
+        }
+    }
+}
+
+fn handle_choice_clicks(
+    mut interaction_query: Query<(&Interaction, &ChoiceButton), (Changed<Interaction>, With<Button>)>,
+    mut state: ResMut<Dialogue_State>,
+) {
+    for (interaction, choice) in interaction_query.iter_mut() {
+        if *interaction == Interaction::Pressed {
+            state.0.current_id = Some(choice.next_id.clone());
+        }
+    }
+}
+
+fn handle_choice_event(
+    event: u32,
+) {
+    match event {
+        0 => println!("Choice 1 selected"),
+        1 => println!("Choice 2 selected"),
+        _ => println!("Invalid choice"),
+    }
+}

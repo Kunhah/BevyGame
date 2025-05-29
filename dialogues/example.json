@@ -1,0 +1,224 @@
+[
+   {
+    "id": "The last goodbye 1",
+    "speaker": "???",
+    "text": "It seems that everyone is awake.",
+    "next": "The last goodbye 2",
+    "choices": null
+  },
+  {
+    "id": "The last goodbye 2",
+    "speaker": "???",
+    "text": "I have a lot to talk with you all about.",
+    "next": "The last goodbye 3",
+    "choices": null
+  },
+  {
+    "id": "The last goodbye 3",
+    "speaker": "Gustav",
+    "text": "But first let me introduce myself, I am Gustav.",
+    "next": "The last goodbye 4",
+    "choices": null
+  },
+  {
+    "id": "The last goodbye 4",
+    "speaker": "Gustav",
+    "text": "Everyone...",
+    "next": "#(CHOICE) The last goodbye 5",
+    "choices": null
+  },
+  {
+    "id": "#(CHOICE) The last goodbye 5",
+    "speaker": "Gustav",
+    "text": "It is a pleasure to make your acquaintance.",
+    "choices": [
+      {
+        "event": 0,
+        "text": "The pleasure is mine",
+        "next": "The last goodbye 6"
+      },
+      {
+        "event": 0,
+        "text": "Who are you?",
+        "next": "The last goodbye 9"
+      }
+    ]
+  },
+  {
+    "id": "The last goodbye 6",
+    "speaker": "Gustav",
+    "text": "I hope we can mantain such good comunication for the time it has to come.",
+    "next": "The last goodbye 7",
+    "choices": null
+  },
+  {
+    "id": "The last goodbye 7",
+    "speaker": "Gustav",
+    "text": "After all, we have much to discuss.",
+    "next": "#(CHOICE) The last goodbye 11",
+    "choices": null
+  },
+  {
+    "id": "The last goodbye 8",
+    "speaker": "Gustav",
+    "text": "Let's start with the contract that you all signed with me.",
+    "next": "The last goodbye 9",
+    "choices": null
+  },
+  {
+    "id": "The last goodbye 9",
+    "speaker": "Gustav",
+    "text": "I am a merchant, a contractor, a trader of deals, that appears in the moment of need.",
+    "next": "The last goodbye 10",
+    "choices": null
+  },
+  {
+    "id": "The last goodbye 10",
+    "speaker": "Gustav",
+    "text": "And you all made a deal, when signing the contract.",
+    "next": "#(CHOICE) The last goodbye 11",
+    "choices": null
+  },
+  {
+    "id": "#(CHOICE) The last goodbye 11",
+    "speaker": "Gustav",
+    "text": "Does everyone remember the terms of the contract?",
+    "choices": [
+      {
+        "event": 0,
+        "text": "I can't remember signing a contract",
+        "next": "The last goodbye 12"
+      },
+      {
+        "event": 0,
+        "text": "Why am I here? What is this place?",
+        "next": "The last goodbye 15"
+      },
+      {
+        "event": 0,
+        "text": "Just tell me the terms",
+        "next": "The last goodbye 18"
+      },
+      {
+        "event": 0,
+        "text": "*Get up and leave",
+        "next": "The last goodbye 21"
+      }
+    ]
+  },
+  {
+    "id": "The last goodbye 12",
+    "speaker": "Gustav",
+    "text": "Well that is inconvenient, but don't worry, I guarantee that you made a good choice, and I will do my part by making you remember all the important details.",
+    "next": "The last goodbye 24",
+    "choices": null
+  },
+  {
+    "id": "The last goodbye 13",
+    "speaker": "Gustav",
+    "text": "And you all made a deal, when signing the contract.",
+    "next": "The last goodbye 14",
+    "choices": null
+  },
+  {
+    "id": "The last goodbye 14",
+    "speaker": "Gustav",
+    "text": "Does everyone remember the terms of the contract?",
+    "next": "The last goodbye 15",
+    "choices": null
+  },
+  {
+    "id": "The last goodbye 15",
+    "speaker": "Gustav",
+    "text": "I will explain to you briefly.",
+    "next": "The last goodbye 16",
+    "choices": null
+  },
+  {
+    "id": "The last goodbye 16",
+    "speaker": "Gustav",
+    "text": "I call this place, The Last Goodbye, a place that exists between the world of the dead, and the world of the living.",
+    "next": "The last goodbye 17",
+    "choices": null
+  },
+  {
+    "id": "The last goodbye 17",
+    "speaker": "Gustav",
+    "text": "And you are here to fulfil your part of the contract.",
+    "next": "The last goodbye 24",
+    "choices": null
+  },
+  {
+    "id": "The last goodbye 18",
+    "speaker": "Gustav",
+    "text": "Direct to the point, I like your way of thinking",
+    "next": "The last goodbye 24",
+    "choices": null
+  },
+  {
+    "id": "The last goodbye 19",
+    "speaker": "Gustav",
+    "text": "And you all made a deal, when signing the contract.",
+    "next": "The last goodbye 20",
+    "choices": null
+  },
+  {
+    "id": "The last goodbye 20",
+    "speaker": "Gustav",
+    "text": "Does everyone remember the terms of the contract?",
+    "next": "The last goodbye 24",
+    "choices": null
+  },
+  {
+    "id": "The last goodbye 21",
+    "speaker": "",
+    "text": "*You look around, and see no doors, no windows, no exit, just a room with with decorated walls.",
+    "next": "The last goodbye 22",
+    "choices": null
+  },
+  {
+    "id": "The last goodbye 22",
+    "speaker": "Gustav",
+    "text": "Did you liked the place? This is where I bring my colaborators to discuss their contracts.",
+    "next": "The last goodbye 23",
+    "choices": null
+  },
+  {
+    "id": "The last goodbye 23",
+    "speaker": "Gustav",
+    "text": "If you are in a hurry, I suggest you to be patient, we have a lot to talk.",
+    "next": "The last goodbye 24",
+    "choices": null
+  },
+  {
+    "id": "The last goodbye 24",
+    "speaker": "Gustav",
+    "text": "Before we start talking about the contract, I will first ask everyone to introduce yourself.",
+    "next": "The last goodbye 25",
+    "choices": null
+  },
+
+
+  {
+    "id": "Interactable 1",
+    "speaker": "Gustav",
+    "text": "Hello contractor",
+    "next": "The last goodbye 25",
+    "choices": null
+  },
+  {
+    "id": "Interactable 2",
+    "speaker": "Gustav",
+    "text": "Are you having fun?",
+    "next": "Interactable 2",
+    "choices": null
+  },
+  {
+    "id": "Interactable 3",
+    "speaker": "Gustav",
+    "text": "I hope yes",
+    "next": "Interactable 3",
+    "choices": null
+  }
+  
+]
