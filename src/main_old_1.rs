@@ -19,12 +19,14 @@ use std::sync::RwLockReadGuard;
 use std::sync::RwLockWriteGuard;
 use once_cell::sync::Lazy;
 use bevy::prelude::Circle;
+//use svg::*;
 use std::collections::BinaryHeap;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::hash::Hash;
 use std::hash::Hasher;
 use std::cmp::Ordering;
+//use approx::abs_diff_eq::AbsDiffEq;
 use approx::AbsDiffEq;
 use serde::Deserialize;
 use serde_json::*;
@@ -43,6 +45,10 @@ const PATH_DRAW_MARGIN: i32 = 10;
 const PATH_MOVEMENT_SPEED: u32 = 10;
 
 const WALKING_LIMIT: usize = 40;
+
+//static GAME_STATE: Lazy<Arc<RwLock<GameState>>> = Lazy::new(|| {
+//    Arc::new(RwLock::new(GameState::Exploring))
+//});
 
 #[derive(SystemSet, Debug, Hash, PartialEq, Eq, Clone)]
 enum DialogueSet {
@@ -161,16 +167,19 @@ impl Interactable {
         mut box_query: Query<(Entity, &Children), With<DialogueBox>>,
         text_query: Query<Entity, With<DialogueText>>,
         button_query: Query<Entity, With<ChoiceButton>>,
-        mut dialogue_trigger: ResMut<DialogueTrigger>,
     ) {
         // code to handle interaction goes here
-        //let previous_state = game_state.clone();
+        let previous_state = game_state.clone();
         game_state = GameState::Interacting;
         println!("Interacting, game state: {:?}", game_state);
         state.0.current_id = Some(self.dialogue_id.clone());
         state.0.active = true;
-        println!("Triggered");
-        dialogue_trigger.0 = true;
+        //display_dialogue(commands, &state, data, asset_server, box_query, text_query, button_query);
+        //game_state = previous_state;
+        //state.0.current_id = None;
+        //state.0.active = false;
+        //println!("Interaction finished, game state: {:?}", game_state);
+        //println!("Interacted with {}, on transform: {:?}", self.name, transform);
     }
 }
 
@@ -192,6 +201,10 @@ fn fade_out_system(mut commands: Commands, time: Res<Time>, mut query: Query<(En
         }
     }
 }
+
+/* // New resource to keep track of the collision grid
+#[derive(Resource)]
+struct CollisionGrid(Vec<Vec<bool>>); */
 
 #[derive(Component)]
 struct AnimationIndices {
@@ -364,7 +377,6 @@ fn spawn_dialogue_box(
                 ));
             });
         trigger.0 = false;
-        println!("Dialogue box spawned");
         just_spawned.0 = true;
     }
 }
@@ -377,7 +389,26 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
     commands
     .spawn(Camera2d::default())
     .insert(MainCamera);
+    //.insert(Player)
+    //.insert(Position { x: 0, y: 0 });
 
+    //commands.insert_resource(CachedInteractables(Vec::new()));
+    //commands.insert_resource(CachedColliders(Vec::new()));
+    
+
+    //let texture_handle = asset_server.load("character.png");
+
+    // Create a new collision grid
+    /* let mut collision_grid = vec![vec![false; GRID_WIDTH]; GRID_HEIGHT];
+
+    // Add some walls to the collision grid
+    collision_grid[4][5] = true;
+    collision_grid[4][6] = true;
+
+    // Insert the collision grid as a resource
+    commands.insert_resource(CollisionGrid(collision_grid)); */
+
+    // Spawn the player
     commands.spawn((
         Sprite {
             image: asset_server.load("character.png"),
@@ -420,17 +451,18 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
 }
 
 fn player_movement(
-
+    /* mut query: Query<(&mut Transform, &mut Position), With<Player>>,
+    collider_query: Query<&Transform, With<Collider>>, */
     mut param_set: ParamSet<(
         Query<(&mut Transform, &mut Position), With<Player>>,
-
+        //Query<&Transform, With<Collider>>,
     )>,
     game_state: Res<Game_State>,
     cache: Res<CachedColliders>,
     input: Res<ButtonInput<KeyCode>>, 
     time: Res<Time>,
     mut index: ResMut<Selected_Choice_Index>,
-
+    //collision_grid: Res<CollisionGrid>,
 ) {
     let mut direction = Vec2::ZERO;
 
@@ -453,23 +485,36 @@ fn player_movement(
         match game_state.0 {
             GameState::Exploring => {
                 if direction.x != 0.0 && direction.y != 0.0 {
-
-                    let diagonal_speed = movement_speed / (2.0_f32.sqrt());;
+                    // Diagonal movement
+                    let diagonal_speed = movement_speed / (2.0_f32.sqrt());
+                     // First, collect all collider data safely
+                    //let p1 = param_set.p1();
+                    //let colliders: Vec<_> = p1.iter().cloned().collect();
+                    //let colliders: Vec<_> = p1.iter().collect();
         
                     let mut p0 = param_set.p0();
         
                     for (mut transform, mut position) in p0.iter_mut() {
                         let new_x = transform.translation.x + direction.x * diagonal_speed;
                         let new_y = transform.translation.y + direction.y * diagonal_speed;
-
+        
+                        // Check if the new position is within the collision grid
+                        /* let grid_x = (new_x / 32.0) as usize;
+                        let grid_y = (new_y / 32.0) as usize; */
                         transform.rotation = Quat::from_rotation_z(
                             rotate_to_direction(transform.translation.x, transform.translation.y, new_x, new_y),
                         );
         
                         if ((new_x.abs() as u32) < GRID_WIDTH) && ((new_y.abs() as u32) < GRID_HEIGHT) {
-
+                            /* transform.translation.x = new_x;
+                            transform.translation.y = new_y;
+                            position.x = new_x as i32;
+                            position.y = new_y as i32; */
+        
+                             // Collision detection
                             let player_rect = Rect::from_center_size(Vec2::new(new_x, new_y), Vec2::new(32.0, 32.0));
-
+        
+                            // Check collision using AABB
                             let collision = cache.0.iter().any(|wall_transform| {
                                 let wall_rect = Rect::from_center_size(
                                     Vec2::new(wall_transform.0.translation.x, wall_transform.0.translation.y),
@@ -487,19 +532,30 @@ fn player_movement(
                         }
                     }
                 } else {
-
+        
+                    //let p1 = param_set.p1();
+                    //let colliders: Vec<_> = p1.iter().cloned().collect();
+                    // Horizontal or vertical movement
                     for (mut transform, mut position) in param_set.p0().iter_mut() {
                         let new_x = transform.translation.x + direction.x * movement_speed;
                         let new_y = transform.translation.y + direction.y * movement_speed;
         
+                        // Check if the new position is within the collision grid
+                        /* let grid_x = (new_x / 32.0) as usize;
+                        let grid_y = (new_y / 32.0) as usize; */
                         transform.rotation = Quat::from_rotation_z(
                             rotate_to_direction(transform.translation.x, transform.translation.y, new_x, new_y),
                         );
         
                         if ((new_x.abs() as u32) < GRID_WIDTH) && ((new_y.abs() as u32) < GRID_HEIGHT) {
+                            /* transform.translation.x = new_x;
+                            transform.translation.y = new_y;
+                            position.x = new_x as i32;
+                            position.y = new_y as i32; */
         
                             let player_rect = Rect::from_center_size(Vec2::new(new_x, new_y), Vec2::new(32.0, 32.0));
-
+        
+                            // Check collision using AABB
                             let collision = cache.0.iter().any(|wall_transform| {
                                 let wall_rect = Rect::from_center_size(
                                     Vec2::new(wall_transform.0.translation.x, wall_transform.0.translation.y),
@@ -519,8 +575,10 @@ fn player_movement(
                 }
             }
             GameState::Battle => {
+                //direction = direction.normalize();
             }
             GameState::Interacting => {
+                //direction = direction.normalize();
             }
         }
         
@@ -562,6 +620,8 @@ fn gui_selection(
 fn interact<'a>(
     mut param_set: ParamSet<(
         Query<(&Transform, &Position), With<Player>>,
+        //Query<(&Transform, &Interactable), With<Interactable>>,
+        //Query<&Interactable, With<Interactable>>
     )>,
     mut game_state: ResMut<Game_State>,
     cache: Res<CachedInteractables>,
@@ -581,8 +641,19 @@ fn interact<'a>(
         
         match game_state.0 {
             GameState::Exploring => {
-
+                //let p1 = param_set.p1();
+        
+                /* let interactables: Vec<(Transform, Interactable)> = param_set
+                    .p1()
+                    .iter()
+                    .map(|(t, i)| (t, i)) 
+                    .collect(); */
+            
+                //let interactables: Vec<(Rc<&Transform>, Rc<&Interactable>)> = p1.iter().map(|(t, i)| (Rc::new(t), Rc::new(i))).collect();
+                
                 let p0 = param_set.p0();
+            
+                //let interactables: Vec<(_, _)> = p1.iter().map(|(t, i)| (t, i)).collect();
             
                 for (transform, position) in p0.iter() {
             
@@ -599,7 +670,9 @@ fn interact<'a>(
                     if let Some((interactable_transform, interactable)) = interactable {
                         game_state.0 = GameState::Interacting;
                         dialogue_state.0.active = true;
-                        interactable.interact(interactable_transform, game_state.0, commands, dialogue_state, dialogue_data, asset_server, box_query, text_query, button_query, dialogue_trigger);
+                        dialogue_trigger.0 = true;
+                        println!("Triggered");
+                        interactable.interact(interactable_transform, game_state.0, commands, dialogue_state, dialogue_data, asset_server, box_query, text_query, button_query);
                         break;
                     }
                 }
@@ -625,7 +698,21 @@ fn interact<'a>(
                 println!("Space pressed when interacting");
                 if let Some(current_id) = &dialogue_state.0.current_id {
                     if let Some(line) = dialogue_data.0.get(current_id) {
-
+                        /* if let Some(next_id) = &line.next {
+                            let next_id_parts: Vec<&str> = next_id.split_whitespace().collect();
+                            if next_id_parts[0] == "#(CHOICE)" {
+                                let choices: &Vec<Choice> = line.choices.as_ref().unwrap();
+                                for choice in choices {
+                                    
+                                }
+                            }
+                            else {
+                                dialogue_state.current_id = Some(next_id.clone());
+                            }
+                        }
+                        else {
+                            dialogue_state.active = false;
+                        } */
                         let current_choices = &line.choices;
                         if current_choices.is_some() {
                             if selected_choice.0.next.is_none() {
@@ -690,6 +777,149 @@ fn update_cache(
     }
 }
 
+/* #[derive(Clone, Copy, Debug)]
+struct Coord {
+    x: f32,
+    y: f32,
+}
+
+impl PartialEq for Coord {
+    fn eq(&self, other: &Self) -> bool {
+        self.x.abs_diff_eq(&other.x, 1e-6) && self.y.abs_diff_eq(&other.y, 1e-6)
+    }
+}
+
+impl Eq for Coord {}
+
+impl Hash for Coord {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.x.to_bits().hash(state);
+        self.y.to_bits().hash(state);
+    }
+}
+
+
+#[derive(Copy, Clone)]
+struct Node_P {
+    translation: Coord,
+    cost: f32,         // f = g + h
+    priority: f32,     // used for ordering
+}
+
+impl PartialEq for Node_P {
+    fn eq(&self, other: &Self) -> bool {
+        self.translation.x.abs_diff_eq(&other.translation.x, 1e-6) &&
+        self.translation.y.abs_diff_eq(&other.translation.y, 1e-6) &&
+        self.cost == other.cost &&
+        self.priority == other.priority
+    }
+}
+
+impl Eq for Node_P {}
+
+impl Ord for Node_P {
+    fn cmp(&self, other: &Self) -> Ordering {
+        other.priority.cmp(&self.priority) // reverse for min-heap
+            .then_with(|| self.cost.cmp(&other.cost))
+    }
+}
+impl PartialOrd for Node_P {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+fn distance(a: Coord, b: Coord) -> f32 {
+    (a.x - b.x).abs() + (a.y - b.y).abs()
+}
+
+fn is_walkable(pos: Coord, cache: &CachedColliders) -> bool {
+    let pos_center = Vec2::new(pos.x as f32 * 32.0 + 16.0, pos.y as f32 * 32.0 + 16.0);
+    let player_rect = Rect::from_center_size(pos_center, Vec2::new(32.0, 32.0));
+
+    !cache.0.iter().any(|(wall_transform, _)| {
+        let wall_rect = Rect::from_center_size(
+            wall_transform.translation.truncate(),
+            Vec2::new(32.0, 32.0),
+        );
+        aabb_collision(player_rect, wall_rect)
+    })
+}
+
+fn pathfinding(
+    cache: Res<CachedColliders>,
+    start: Coord,
+    destination: Coord,
+) -> Option<Vec<Coord>> {
+    let mut circle = Circle::new(10.0);
+    //circle.set("r", "10");
+    //circle.set("fill", "red");
+    let mut open_set = BinaryHeap::new();
+    let coord = Coord { x: start.x, y: start.y };
+    open_set.push(Node_P {
+        translation: coord,
+        cost: 0.0,
+        priority: distance(start, destination),
+    });
+
+    let mut came_from: HashMap<Coord, Coord> = HashMap::new();
+    let mut g_score: HashMap<Coord, f32> = HashMap::new();
+    g_score.insert(coord, 0.0);
+
+    let mut visited: HashSet<Coord> = HashSet::new();
+
+    while let Some(current) = open_set.pop() {
+        if (current.translation.x - destination.x).abs() <= 0.2 && (current.translation.y - destination.y).abs() <= 0.2 {
+            // reconstruct path
+            let mut path = vec![destination];
+            let mut curr = destination;
+            while let Some(&prev) = came_from.get(&curr) {
+                path.push(prev);
+                curr = prev;
+            }
+            path.reverse();
+            return Some(path);
+        }
+
+        if visited.contains(&current.translation) {
+            continue;
+        }
+        visited.insert(current.translation);
+
+        let neighbors = [
+            Coord { x: current.translation.x + 1.0, y: current.translation.y },
+            Coord { x: current.translation.x - 1.0, y: current.translation.y },
+            Coord { x: current.translation.x, y: current.translation.y + 1.0 },
+            Coord { x: current.translation.x, y: current.translation.y - 1.0 },
+        ];
+
+        for neighbor in neighbors {
+            if neighbor.x < 0.0 || neighbor.y < 0.0 || 
+                neighbor.x >= GRID_WIDTH as f32 || neighbor.y >= GRID_HEIGHT as f32 {
+                continue;
+            }
+
+            if !is_walkable(neighbor, &cache) {
+                continue;
+            }
+
+            let tentative_g: f32 = g_score.get(&current.translation).unwrap_or(&f32::MAX) + 1.0;
+            if tentative_g < *g_score.get(&neighbor).unwrap_or(&f32::MAX) {
+                came_from.insert(neighbor, current.translation);
+                g_score.insert(neighbor, tentative_g);
+
+                open_set.push(Node_P {
+                    translation: neighbor,
+                    cost: tentative_g,
+                    priority: tentative_g + distance(neighbor, destination),
+                });
+            }
+        }
+    }
+
+    None // No path found
+} */
+
 #[derive(Copy, Clone, Eq, PartialEq)]
 struct Node_P {
     position: Position,
@@ -697,6 +927,11 @@ struct Node_P {
     priority: i32,     // used for ordering
 }
 
+/* impl Ord for Node_P {
+    fn cmp(&self, other: &Self) -> Ordering {
+        (self.cost + self.priority).cmp(&(other.cost + other.priority))
+    }
+} */
 impl Ord for Node_P {
     fn cmp(&self, other: &Self) -> Ordering {
         other.priority.cmp(&self.priority) // reverse for min-heap
@@ -761,21 +996,38 @@ pub fn pathfinding(
 
     let mut visited: HashSet<Position> = HashSet::new();
 
+    //println!("Reached before the while loop");
+
     while !((next_Node_P.position.x - goal.x).abs() < margin && (next_Node_P.position.y - goal.y).abs() < margin) {
 
+        //println!("Reached the while loop 1");
+
+        //let mut current = next_Node_P;
+
+    //while let Some(current) = open_set.pop() {
+        /* if current.position.x - goal.x < 2 && current.position.y - goal.y < 2 {
+            // reconstruct path
+            
+        }
+ */
+        //println!("Reached the while loop 2");
         if visited.contains(&next_Node_P.position) {
             next_Node_P = open_set.pop().unwrap();
             continue;
         }
+        //println!("Reached the while loop 3");
         if visited.len() > 1000 {
             let mut previou_Node_P_position = next_Node_P.position;
             while previou_Node_P_position != start {
                 println!("Previous Node_P: {:#?}", previou_Node_P_position);
                 previou_Node_P_position = came_from.get(&previou_Node_P_position).unwrap().clone();
             }
+            //println!("visited too many Node_Ps, \nstart {:#?}, \ngoal {:#?}, \nend {:#?}", start, goal, next_Node_P.position);
             break;
         }
+        //println!("Reached the while loop 4");
         visited.insert(next_Node_P.position);
+        //println!("Reached the while loop 5");
 
         let neighbors = [
             Position { x: next_Node_P.position.x + margin, y: next_Node_P.position.y - margin },
@@ -787,7 +1039,8 @@ pub fn pathfinding(
             Position { x: next_Node_P.position.x - margin, y: next_Node_P.position.y },
             Position { x: next_Node_P.position.x - margin, y: next_Node_P.position.y + margin },
         ];
-
+        //println!("Reached the while loop 6");
+        //println!("neighbors: {:#?}", neighbors);
 
         for neighbor in neighbors {
 
@@ -803,9 +1056,9 @@ pub fn pathfinding(
             };
 
             let tentative_g = g_score.get(&next_Node_P.position).unwrap_or(&i32::MAX) + movement_cost;
-
+            //println!("tentative_g: {} g_score: {}", tentative_g, g_score.get(&neighbor).unwrap_or(&i32::MAX));
             if tentative_g < *g_score.get(&neighbor).unwrap_or(&i32::MAX) {
-
+                //println!("Added neighbor: ({}, {})", neighbor.x, neighbor.y);
                 came_from.insert(neighbor, next_Node_P.position);
                 g_score.insert(neighbor, tentative_g);
 
@@ -816,15 +1069,18 @@ pub fn pathfinding(
                 });
             }
             else {
-;
+                //println!("Skipped neighbor: ({}, {})", neighbor.x, neighbor.y);
             }
         }
         let old_Node_P = next_Node_P;
-
+        //println!("next_Node_P before: ({}, {})", next_Node_P.position.x, next_Node_P.position.y);
         next_Node_P = open_set.pop().unwrap();
-
+        //println!("next_Node_P after: ({}, {})", next_Node_P.position.x, next_Node_P.position.y);
         if next_Node_P == old_Node_P {
             for Node_P in open_set.iter() {
+                //println!("Open set: ({}, {})", Node_P.position.x, Node_P.position.y);
+                //println!("Cost: {}", Node_P.cost);
+                //println!("Priority: {}\n", Node_P.priority);
             }
             println!("Failed to find path");
             break;
@@ -840,7 +1096,13 @@ pub fn pathfinding(
     }
     path.reverse();
 
+    //println!("Finished, \nstart {:#?}, \ngoal {:#?}, \nend {:#?}", start, goal, next_Node_P.position);
+    //println!("Path length: {}", path.len());
     return path;
+
+    /* println!("Pathfinding failed");
+
+    vec![]  */// No path found
 }
 
 fn rotate_to_direction(
@@ -881,6 +1143,10 @@ fn follow_path_system(
                 movement.current_index += 1;
             } else {
                 commands.entity(entity).remove::<MoveAlongPath>();
+                //commands.entity(entity).despawn();
+                // Finished path
+                // You can optionally remove the component here
+                // query.entity(entity).remove::<MoveAlongPath>();
             }
         }
     }
@@ -901,6 +1167,8 @@ fn toggle_camera_lock(
 fn mouse_click(
     mut param_set: ParamSet<(
         Query<(Entity, &mut Transform, &mut Position), With<Player>>,
+        //Query<(&Transform, &Interactable), With<Interactable>>,
+        //Query<&Interactable, With<Interactable>>
     )>,
     game_state: Res<Game_State>,
     camera_query: Query<(&Camera, &GlobalTransform), With<MainCamera>>,
@@ -917,6 +1185,7 @@ fn mouse_click(
         let (entity, mut transform, mut position) = p0.iter_mut().next().unwrap();
 
         let player_entity = entity;
+        //let (mut transform, mut position) = p0.iter_mut().next().unwrap();
         
         let path_ops = find_path(*position, game_state.0, cache, camera_query, windows, PATH_DRAW_MARGIN);
         if path_ops.is_none() {
@@ -942,6 +1211,27 @@ fn mouse_click(
                 timer: Timer::from_seconds(0.3, TimerMode::Repeating),
             });
         }
+
+        /* if path_len > 1 {
+            let mut i = 1;
+            let mut timer = Timer::from_seconds(0.5, TimerMode::Repeating); // adjust the speed here
+    
+            while i < path_len {
+                if timer.tick(time.delta()).just_finished() {
+                    let next_tile = path[i]; // index 0 is current tile
+                    // convert to world position:
+                    let target_x = next_tile.x as f32;
+                    let target_y = next_tile.y as f32;
+                    transform.rotation = Quat::from_rotation_z(rotate_to_direction(transform.translation.x, transform.translation.y, target_x, target_y));
+                    transform.translation.x = target_x;
+                    transform.translation.y = target_y;
+                    position.x = next_tile.x;
+                    position.y = next_tile.y;
+                    i += 1;
+                    timer.reset(); // reset the timer for the next step
+                }
+            }
+        } */
     }
     else if input.just_pressed(MouseButton::Right) {
 
@@ -1127,6 +1417,66 @@ fn draw_distance_system(
     }   
 }
 
+/* if direction.length() > 0.0 {
+    if direction.x != 0.0 && direction.y != 0.0 {
+        // Diagonal movement
+        let diagonal_speed = movement_speed / (2.0_f32.sqrt());
+        // First, detect collisions and store the results
+        let collisions: Vec<bool> = param_set.p0().iter().zip(param_set.p1().iter()).map(|((transform, _), wall_transform)| {
+            let player_rect = Rect::from_center_size(Vec2::new(transform.translation.x, transform.translation.y), Vec2::new(32.0, 32.0));
+            let wall_rect = Rect::from_center_size(Vec2::new(wall_transform.translation.x, wall_transform.translation.y), Vec2::new(32.0, 32.0));
+            aabb_collision(player_rect, wall_rect)
+        }).collect();
+
+        // Then, update the positions based on the collision results
+        for (i, (mut transform, mut position)) in param_set.p0().iter_mut().enumerate() {
+            let new_x = transform.translation.x + direction.x * diagonal_speed;
+            let new_y = transform.translation.y + direction.y * diagonal_speed;
+
+            // Check if the new position is within the collision grid
+            let grid_x = (new_x / 32.0) as usize;
+            let grid_y = (new_y / 32.0) as usize;
+
+            if grid_x < GRID_WIDTH && grid_y < GRID_HEIGHT {
+                if !collisions[i] {
+                    transform.translation.x = new_x;
+                    transform.translation.y = new_y;
+                    position.x = new_x as i32;
+                    position.y = new_y as i32;
+                }
+            }
+        }
+    } else {
+        // Horizontal or vertical movement
+        // First, detect collisions and store the results
+        let collisions: Vec<bool> = param_set.p0().iter().zip(param_set.p1().iter()).map(|((transform, _), wall_transform)| {
+            let player_rect = Rect::from_center_size(Vec2::new(transform.translation.x, transform.translation.y), Vec2::new(32.0, 32.0));
+            let wall_rect = Rect::from_center_size(Vec2::new(wall_transform.translation.x, wall_transform.translation.y), Vec2::new(32.0, 32.0));
+            aabb_collision(player_rect, wall_rect)
+        }).collect();
+
+        // Then, update the positions based on the collision results
+        for (i, (mut transform, mut position)) in param_set.p0().iter_mut().enumerate() {
+            let new_x = transform.translation.x + direction.x * movement_speed;
+            let new_y = transform.translation.y + direction.y * movement_speed;
+
+            // Check if the new position is within the collision grid
+            let grid_x = (new_x / 32.0) as usize;
+            let grid_y = (new_y / 32.0) as usize;
+
+            if grid_x < GRID_WIDTH && grid_y < GRID_HEIGHT {
+                if !collisions[i] {
+                    transform.translation.x = new_x;
+                    transform.translation.y = new_y;
+                    position.x = new_x as i32;
+                    position.y = new_y as i32;
+                }
+            }
+        }
+    }
+} */
+
+
 fn load_dialogue() -> HashMap<String, DialogueLine> {
     let file = File::open("dialogues/example.json").unwrap();
     let reader = BufReader::new(file);
@@ -1136,6 +1486,20 @@ fn load_dialogue() -> HashMap<String, DialogueLine> {
         .map(|line| (line.id.clone(), line))
         .collect()
 }
+
+/* fn show_dialogue(
+    mut query: Query<&mut Text>,
+    dialogue_data: Res<DialogueData>,
+    mut state: ResMut<DialogueState>,
+) {
+    if let Some(current_id) = &state.current_id {
+        if let Some(line) = dialogue_data.0.get(current_id) {
+            for mut text in query.iter_mut() {
+                text.0 = format!("{}: {}", line.speaker, line.text);
+            }
+        }
+    }
+} */
 
 fn display_dialogue(
     mut commands: Commands,
@@ -1165,11 +1529,19 @@ fn display_dialogue(
                     if text_query.get(child).is_ok() {
                         commands.entity(child).insert(
                         (
-
+                                /* Text::from_section(
+                                    format!("{}: {}", dialogue.speaker, dialogue.text),
+                                    TextStyle {
+                                        font: asset_server.load("fonts/FiraSans-Bold.ttf"),
+                                        font_size: 24.0,
+                                        color: Color::WHITE,
+                                    },
+                                ) */
+                               //.with_text_alignment(TextAlignment::Left),
                                Text::new(format!("{}: {}", dialogue.speaker, dialogue.text)),
                                TextFont {
                                         //font: asset_server.load("fonts/FiraSans-Bold.ttf"),
-                                        font_size: 20.0,
+                                        font_size: 24.0,
                                         ..Default::default()
                                     },
                                 TextColor(Color::WHITE),
@@ -1206,37 +1578,26 @@ fn display_dialogue(
                                             align_items: AlignItems::Center,
                                             ..default()
                                         },
-                                        // BackgroundColor(if is_selected {
-                                        //     Color::srgb(0.25, 0.4, 0.25) // highlighted color
-                                        // } else {
-                                        //     Color::srgb(0.15, 0.3, 0.15) // normal color
-                                        // }),
+                                        BackgroundColor(if is_selected {
+                                            Color::srgb(0.25, 0.4, 0.25) // highlighted color
+                                        } else {
+                                            Color::srgb(0.15, 0.3, 0.15) // normal color
+                                        }),
                                         ChoiceButton {
                                             next_id: choice.next.as_ref().unwrap().clone(),
                                         },
                                     ))
                                     .with_children(|btn| {
-                                        // Spawn the border text
                                         btn.spawn((
                                             Text::new(&choice.text),
                                             TextFont {
-                                                font_size: 16.0,
-                                                ..Default::default()
-                                            },
-                                            TextColor(Color::BLACK), // border color
-                                            Transform::from_translation(Vec3::new(1.0, -1.0, 0.0)), // slight offset
-                                            GlobalTransform::default(),
-                                        ));
-                                        btn.spawn((
-                                            Text::new(&choice.text),
-                                            TextFont {
-                                                font_size: 16.0,
+                                                font_size: 20.0,
                                                 ..Default::default()
                                             },
                                             TextColor(if is_selected {
-                                                Color::WHITE // highlighted text color
+                                                Color::BLACK // highlighted text color
                                             } else {
-                                                Color::srgb(0.35, 0.35, 0.35) // normal text color
+                                                Color::WHITE // normal text color
                                             }),
                                             Transform::from_translation(Vec3::new(0.0, 0.0, 0.0)),
                                             GlobalTransform::default(),

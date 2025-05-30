@@ -203,21 +203,21 @@
     "id": "Interactable 1",
     "speaker": "Gustav",
     "text": "Hello contractor",
-    "next": "The last goodbye 25",
+    "next": "Interactable 2",
     "choices": null
   },
   {
     "id": "Interactable 2",
     "speaker": "Gustav",
     "text": "Are you having fun?",
-    "next": "Interactable 2",
+    "next": "Interactable 3",
     "choices": null
   },
   {
     "id": "Interactable 3",
     "speaker": "Gustav",
     "text": "I hope yes",
-    "next": "Interactable 3",
+    "next": null,
     "choices": null
   }
   
