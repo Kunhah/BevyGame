@@ -1223,16 +1223,6 @@ fn display_dialogue(
                                                 font_size: 16.0,
                                                 ..Default::default()
                                             },
-                                            TextColor(Color::BLACK), // border color
-                                            Transform::from_translation(Vec3::new(1.0, -1.0, 0.0)), // slight offset
-                                            GlobalTransform::default(),
-                                        ));
-                                        btn.spawn((
-                                            Text::new(&choice.text),
-                                            TextFont {
-                                                font_size: 16.0,
-                                                ..Default::default()
-                                            },
                                             TextColor(if is_selected {
                                                 Color::WHITE // highlighted text color
                                             } else {
