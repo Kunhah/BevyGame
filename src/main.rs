@@ -2,6 +2,7 @@ use bevy::core_pipeline::core_2d::graph::input;
 use bevy::ecs::entity;
 use bevy::math::ops::powf;
 use bevy::prelude::*;
+use bevy::window::WindowMode;
 use bevy::ui::prelude::*;
 use bevy::ui::{PositionType};
 use bevy::sprite::*;
@@ -31,9 +32,9 @@ use serde_json::*;
 use std::fs::File;
 use std::io::BufReader;
 
-const WINDOW_WIDTH: f32 = 640.0;
-const WINDOW_HEIGHT: f32 = 480.0;
-const PLAYER_SPEED: f32 = 200.0;
+const WINDOW_WIDTH: f32 = 1920.0;
+const WINDOW_HEIGHT: f32 = 1080.0;
+const PLAYER_SPEED: f32 = 100.0;
 
 const GRID_WIDTH: u32 = 15000;
 const GRID_HEIGHT: u32 = 15000;
@@ -227,6 +228,7 @@ fn main() {
             primary_window: Some(Window {
                 title: "Seirei Kuni".to_string(),
                 resolution: (WINDOW_WIDTH, WINDOW_HEIGHT).into(),
+                mode: WindowMode::Fullscreen(None, None),
                 ..default()
             }),
             ..default()
@@ -340,28 +342,43 @@ fn spawn_dialogue_box(
             .spawn((
                 Node {
                     width: Val::Percent(100.0),
-                    height: Val::Px(200.0),
+                    height: Val::Percent(100.0), // Full screen container
                     display: Display::Flex,
                     flex_direction: FlexDirection::Column,
-                    justify_content: JustifyContent::Start,
-                    align_items: AlignItems::Start,
-                    padding: UiRect::all(Val::Px(10.0)),
+                    justify_content: JustifyContent::End, // Align to bottom
+                    align_items: AlignItems::Center,      // Center horizontally
+                    padding: UiRect::all(Val::Px(0.0)),   // No padding on container
                     ..default()
-            },
-                BackgroundColor(Color::srgb(0.15, 0.15, 0.15)),
-                DialogueBox,
+                },
+                BackgroundColor(Color::NONE), // Transparent background
             ))
             .with_children(|parent| {
-                parent.spawn((
-                    TextFont {
-                            //font: asset_server.load("fonts/FiraSans-Bold.ttf"),
-                            font_size: 16.0,
-                            ..Default::default()
+                parent
+                    .spawn((
+                        Node {
+                            width: Val::Percent(100.0),
+                            height: Val::Px(200.0),
+                            display: Display::Flex,
+                            flex_direction: FlexDirection::Column,
+                            justify_content: JustifyContent::Start,
+                            align_items: AlignItems::Start,
+                            padding: UiRect::all(Val::Px(12.0)),
+                            ..default()
                         },
-                    TextColor(Color::WHITE),
-                    Text::new(""),
-                    DialogueText,
-                ));
+                        BackgroundColor(Color::srgb(0.15, 0.15, 0.15)),
+                        DialogueBox,
+                    ))
+                    .with_children(|box_node| {
+                        box_node.spawn((
+                            TextFont {
+                                font_size: 16.0,
+                                ..Default::default()
+                            },
+                            TextColor(Color::WHITE),
+                            Text::new(""),
+                            DialogueText,
+                        ));
+                    });
             });
         trigger.0 = false;
         println!("Dialogue box spawned");
@@ -1159,31 +1176,27 @@ fn display_dialogue(
                         commands.entity(child).despawn();
                     }
                 }
-    
+
                 // Update dialogue text
                 for child in children.iter() {
                     if text_query.get(child).is_ok() {
                         commands.entity(child).insert(
                         (
-
-                               Text::new(format!("{}: {}", dialogue.speaker, dialogue.text)),
-                               TextFont {
-                                        //font: asset_server.load("fonts/FiraSans-Bold.ttf"),
-                                        font_size: 20.0,
-                                        ..Default::default()
-                                    },
-                                TextColor(Color::WHITE),
-                                Transform::from_translation(Vec3::new(0.0, 0.0, 0.0)),
-                                GlobalTransform::default(),
-                            ),
-                        );
+                            Text::new(format!("{}: {}", dialogue.speaker, dialogue.text)),
+                            TextFont {
+                                font_size: 20.0,
+                                ..Default::default()
+                            },
+                            TextColor(Color::srgb(0.9, 0.9, 0.9)), // Softer white for comfort
+                            Transform::from_translation(Vec3::new(0.0, 0.0, 0.0)),
+                            GlobalTransform::default(),
+                        ));
                     }
                 }
-    
+
                 // Add new choice buttons
-    
                 let choices = &dialogue.choices;
-    
+
                 match choices {
                     Some(choices_v) => {
                         index.0 %= choices_v.len() as u8;
@@ -1199,34 +1212,33 @@ fn display_dialogue(
                                             ..default()
                                         },
                                         Node {
-                                            width: Val::Px(200.0),
-                                            height: Val::Px(40.0),
-                                            margin: UiRect::all(Val::Px(5.0)),
+                                            width: Val::Px(240.0), // Wider for cleaner text
+                                            height: Val::Px(45.0),
+                                            margin: UiRect::vertical(Val::Px(4.0)),
                                             justify_content: JustifyContent::Center,
                                             align_items: AlignItems::Center,
                                             ..default()
                                         },
-                                        // BackgroundColor(if is_selected {
-                                        //     Color::srgb(0.25, 0.4, 0.25) // highlighted color
-                                        // } else {
-                                        //     Color::srgb(0.15, 0.3, 0.15) // normal color
-                                        // }),
+                                        BackgroundColor(if is_selected {
+                                            Color::srgb(0.25, 0.45, 0.25) // Highlighted
+                                        } else {
+                                            Color::srgb(0.15, 0.25, 0.15) // Normal
+                                        }),
                                         ChoiceButton {
                                             next_id: choice.next.as_ref().unwrap().clone(),
                                         },
                                     ))
                                     .with_children(|btn| {
-                                        // Spawn the border text
                                         btn.spawn((
                                             Text::new(&choice.text),
                                             TextFont {
-                                                font_size: 16.0,
+                                                font_size: 17.0, // Slightly larger
                                                 ..Default::default()
                                             },
                                             TextColor(if is_selected {
-                                                Color::WHITE // highlighted text color
+                                                Color::WHITE
                                             } else {
-                                                Color::srgb(0.35, 0.35, 0.35) // normal text color
+                                                Color::srgb(0.7, 0.7, 0.7) // Softer gray
                                             }),
                                             Transform::from_translation(Vec3::new(0.0, 0.0, 0.0)),
                                             GlobalTransform::default(),
@@ -1235,24 +1247,21 @@ fn display_dialogue(
                                 });
                             }
                         }
-                    
+
                     None => {
                         println!("No choices found for ID: {}", current_id);
                     }
                 }
-            }
-            else {
+            } else {
                 println!("No dialogue box found, it has not spawned yet");
             }
-            
-        }
-        else {
+
+        } else {
             println!("No dialogue found for ID: {}", current_id);
         }
-    }
-    else {
+    } else {
         println!("No current ID, time to despawn");
-        
+
         for (box_entity, children) in box_query.iter_mut() {
             for child in children.iter() {
                 if button_query.get(child).is_ok() {
@@ -1265,6 +1274,7 @@ fn display_dialogue(
         //spawn_dialogue_box(&mut commands);        
     }
 }
+
 
 fn handle_choice_clicks(
     mut interaction_query: Query<(&Interaction, &ChoiceButton), (Changed<Interaction>, With<Button>)>,
