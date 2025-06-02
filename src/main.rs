@@ -2,9 +2,9 @@ use bevy::core_pipeline::core_2d::graph::input;
 use bevy::ecs::entity;
 use bevy::math::ops::powf;
 use bevy::prelude::*;
-use bevy::window::WindowMode;
 use bevy::ui::prelude::*;
 use bevy::ui::{PositionType};
+use bevy::window::{WindowMode, MonitorSelection, VideoModeSelection};
 use bevy::sprite::*;
 use bevy::prelude::GltfAssetLabel::Texture;
 use bevy::input::keyboard::KeyCode; // KeyCode fix
@@ -31,19 +31,29 @@ use serde::Deserialize;
 use serde_json::*;
 use std::fs::File;
 use std::io::BufReader;
+use bitflags::bitflags;
 
 const WINDOW_WIDTH: f32 = 1920.0;
 const WINDOW_HEIGHT: f32 = 1080.0;
-const PLAYER_SPEED: f32 = 100.0;
+const PLAYER_SPEED: f32 = 200.0;
 
 const GRID_WIDTH: u32 = 15000;
 const GRID_HEIGHT: u32 = 15000;
 
 const PATH_MARGIN: i32 = 5;
-const PATH_DRAW_MARGIN: i32 = 10;
-const PATH_MOVEMENT_SPEED: u32 = 10;
+const PATH_DRAW_MARGIN: i32 = 4;
+const PATH_MOVEMENT_SPEED: u32 = 20;
 
-const WALKING_LIMIT: usize = 40;
+const WALKING_LIMIT: usize = 10*PATH_DRAW_MARGIN as usize;
+
+bitflags! {
+    struct Flags: u128 {
+        const FLAG1 = 1 << 0; // 0000 0001
+        const FLAG2 = 1 << 1; // 0000 0010
+        const FLAG3 = 1 << 2; // 0000 0100
+        const FLAG4 = 1 << 3; // 0000 1000
+    }
+}
 
 #[derive(SystemSet, Debug, Hash, PartialEq, Eq, Clone)]
 enum DialogueSet {
@@ -228,7 +238,7 @@ fn main() {
             primary_window: Some(Window {
                 title: "Seirei Kuni".to_string(),
                 resolution: (WINDOW_WIDTH, WINDOW_HEIGHT).into(),
-                mode: WindowMode::Fullscreen(None, None),
+                //mode: WindowMode::Fullscreen(MonitorSelection::Current, VideoModeSelection::Current),
                 ..default()
             }),
             ..default()
@@ -243,6 +253,8 @@ fn main() {
         .insert_resource(Selected_Choice_Index(0))
         .insert_resource(DialogueTrigger(false))
         .insert_resource(DialogueJustSpawned(false))
+        .insert_resource(Next_Id(HashMap::new()))
+        .insert_resource(Conditionals(Flags::empty()))
         .add_systems(Startup, setup)
         .add_systems(Update, player_movement)
         .add_systems(Update, update_cache)
@@ -306,6 +318,12 @@ pub struct Selected_Choice(Choice);
 
 #[derive(Resource, Default)]
 pub struct Selected_Choice_Index(u8);
+
+#[derive(Resource, Default)]
+pub struct Next_Id(pub HashMap<String, String>);
+
+#[derive(Resource)]
+pub struct Conditionals(Flags);
 
 #[derive(Component)]
 struct MoveAlongPath {
@@ -555,7 +573,7 @@ fn gui_selection(
     mut box_query: Query<(Entity, &Children), With<DialogueBox>>,
     text_query: Query<Entity, With<DialogueText>>,
     button_query: Query<Entity, With<ChoiceButton>>,
-    mut selected: ResMut<Selected_Choice>
+    mut selected: ResMut<Selected_Choice>,
 ) {
     if input.just_pressed(KeyCode::KeyW) || input.just_pressed(KeyCode::KeyS) || input.just_pressed(KeyCode::KeyA) || input.just_pressed(KeyCode::KeyD) {
         let vertical = input.just_pressed(KeyCode::KeyS) as i8 - input.just_pressed(KeyCode::KeyW) as i8;
@@ -593,6 +611,8 @@ fn interact<'a>(
     text_query: Query<Entity, With<DialogueText>>,
     button_query: Query<Entity, With<ChoiceButton>>,
     mut index: ResMut<Selected_Choice_Index>,
+    mut next_id_map: ResMut<Next_Id>,
+    mut conditionals: ResMut<Conditionals>
 ) {
     if (input.just_pressed(KeyCode::KeyX)) {
         
@@ -648,11 +668,11 @@ fn interact<'a>(
                             if selected_choice.0.next.is_none() {
                                 return;
                             }
-                            dialogue_state.0.current_id = selected_choice.0.next.clone();
-                            handle_choice_event(selected_choice.0.event);
+                            dialogue_state.0.current_id = handle_next_id(selected_choice.0.next.clone(), &next_id_map);
+                            handle_choice_event(selected_choice.0.event, next_id_map, conditionals);
                         }
                         else {
-                            dialogue_state.0.current_id = line.next.clone();
+                            dialogue_state.0.current_id = handle_next_id(line.next.clone(), &next_id_map);
                             if dialogue_state.0.current_id.is_none() {
                                 dialogue_state.0.active = false;
                                 game_state.0 = GameState::Exploring;
@@ -1275,24 +1295,31 @@ fn display_dialogue(
     }
 }
 
-
-fn handle_choice_clicks(
-    mut interaction_query: Query<(&Interaction, &ChoiceButton), (Changed<Interaction>, With<Button>)>,
-    mut state: ResMut<Dialogue_State>,
-) {
-    for (interaction, choice) in interaction_query.iter_mut() {
-        if *interaction == Interaction::Pressed {
-            state.0.current_id = Some(choice.next_id.clone());
-        }
-    }
-}
-
 fn handle_choice_event(
     event: u32,
+    mut next_id_map: ResMut<Next_Id>,
+    mut conditionals: ResMut<Conditionals>
 ) {
     match event {
         0 => println!("Choice 1 selected"),
         1 => println!("Choice 2 selected"),
         _ => println!("Invalid choice"),
     }
+}
+
+fn handle_next_id(
+    id: Option<String>,
+    next_id_map: &ResMut<Next_Id>
+) -> Option<String> {
+    let return_id = match id {
+        None => None,
+        Some(id) => {
+            let next_id = match next_id_map.0.get(&id) {
+                None => Some(id.clone()),
+                Some(next_id) => Some(next_id.clone()),
+            };
+            next_id
+        },
+    };
+    return_id
 }
