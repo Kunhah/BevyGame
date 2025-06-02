@@ -3,6 +3,7 @@ use bevy::ecs::entity;
 use bevy::math::ops::powf;
 use bevy::prelude::*;
 use bevy::ui::prelude::*;
+use bevy::ecs::event::Events;
 use bevy::ui::{PositionType};
 use bevy::window::{WindowMode, MonitorSelection, VideoModeSelection};
 use bevy::sprite::*;
@@ -44,7 +45,7 @@ const PATH_MARGIN: i32 = 5;
 const PATH_DRAW_MARGIN: i32 = 4;
 const PATH_MOVEMENT_SPEED: u32 = 20;
 
-const WALKING_LIMIT: usize = 10*PATH_DRAW_MARGIN as usize;
+const WALKING_LIMIT: usize = 600/PATH_DRAW_MARGIN as usize;
 
 bitflags! {
     struct Flags: u128 {
@@ -115,6 +116,7 @@ impl Default for DialogueData {
 pub struct DialogueState {
     pub current_id: Option<String>,
     pub active: bool,
+    pub just_spawned: bool
 }
 
 impl Default for DialogueState {
@@ -122,6 +124,7 @@ impl Default for DialogueState {
         DialogueState {
             current_id: None,
             active: false,
+            just_spawned: false
         }
     }
 }
@@ -165,14 +168,15 @@ impl Interactable {
     fn interact(
         &self, transform: &bevy::prelude::Transform,
         mut game_state: GameState,
-        mut commands: Commands,
+        //mut commands: Commands,
         mut state: ResMut<Dialogue_State>,
-        data: Res<Dialogue_Data>,
-        asset_server: Res<AssetServer>,
-        mut box_query: Query<(Entity, &Children), With<DialogueBox>>,
-        text_query: Query<Entity, With<DialogueText>>,
-        button_query: Query<Entity, With<ChoiceButton>>,
-        mut dialogue_trigger: ResMut<DialogueTrigger>,
+        //data: Res<Dialogue_Data>,
+        //asset_server: Res<AssetServer>,
+        //mut box_query: Query<(Entity, &Children), With<DialogueBox>>,
+        //text_query: Query<Entity, With<DialogueText>>,
+        //button_query: Query<Entity, With<ChoiceButton>>,
+        //mut dialogue_trigger: ResMut<DialogueTrigger>,
+        mut events_dialogue_box: ResMut<Events<DialogueBoxTriggerEvent>>,
     ) {
         // code to handle interaction goes here
         //let previous_state = game_state.clone();
@@ -181,7 +185,9 @@ impl Interactable {
         state.0.current_id = Some(self.dialogue_id.clone());
         state.0.active = true;
         println!("Triggered");
-        dialogue_trigger.0 = true;
+        //dialogue_trigger.0 = true;
+        let event = DialogueBoxTriggerEvent {};
+        events_dialogue_box.send(event);
     }
 }
 
@@ -251,12 +257,15 @@ fn main() {
         .insert_resource(Dialogue_State(DialogueState::default()))
         .insert_resource(Selected_Choice(Choice::default()))
         .insert_resource(Selected_Choice_Index(0))
-        .insert_resource(DialogueTrigger(false))
-        .insert_resource(DialogueJustSpawned(false))
+        //.insert_resource(DialogueTrigger(false))
+        //.insert_resource(DialogueJustSpawned(false))
         .insert_resource(Next_Id(HashMap::new()))
         .insert_resource(Conditionals(Flags::empty()))
+        .insert_resource(Events::<DialogueBoxTriggerEvent>::default())
+        .insert_resource(Events::<DialogueTriggerEvent>::default())
         .add_systems(Startup, setup)
         .add_systems(Update, player_movement)
+        .add_systems(Update, toggle_camera_lock)
         .add_systems(Update, update_cache)
         .add_systems(Update, mouse_click)
         .add_systems(Update, follow_path_system)
@@ -270,19 +279,26 @@ fn main() {
 
 fn create_first_dialogue(
     mut commands: Commands,
-    state: ResMut<Dialogue_State>,
+    mut state: ResMut<Dialogue_State>,
     data: Res<Dialogue_Data>,
-    asset_server: Res<AssetServer>,
     box_query: Query<(Entity, &Children), With<DialogueBox>>,
     text_query: Query<Entity, With<DialogueText>>,
     button_query: Query<Entity, With<ChoiceButton>>,
-    mut just_spawned: ResMut<DialogueJustSpawned>,
     mut index: ResMut<Selected_Choice_Index>,
-    mut selected: ResMut<Selected_Choice>
+    mut selected: ResMut<Selected_Choice>,
+    mut events_dialogue: ResMut<Events<DialogueTriggerEvent>>,
 ) {
-    if just_spawned.0 {
-        display_dialogue(commands, &state, data, asset_server, box_query, text_query, button_query, index, selected);
-        just_spawned.0 = false;
+    for _event in events_dialogue.drain() {
+        println!("Spawing first dialogue");
+        state.0.just_spawned = true; // Set flag
+    }
+
+    // Run dialogue display in the next frame
+    if state.0.just_spawned {
+        if box_query.iter().next().is_some() {
+            display_dialogue(&mut commands, &mut state, &data, box_query, text_query, button_query, &mut index, &mut selected);
+            state.0.just_spawned = false;
+        }
     }
 }
 
@@ -343,18 +359,26 @@ struct ChoiceButton {
 #[derive(Component)]
 struct DialogueBox;
 
-#[derive(Resource)]
+/* #[derive(Resource)]
 struct DialogueTrigger(bool);
 
 #[derive(Resource, Default)]
-struct DialogueJustSpawned(bool);
+struct DialogueJustSpawned(bool); */
+
+#[derive(Event)]
+struct DialogueBoxTriggerEvent {
+}
+
+#[derive(Event)]
+struct DialogueTriggerEvent {
+}
 
 fn spawn_dialogue_box(
     mut commands: Commands,
-    mut trigger: ResMut<DialogueTrigger>,
-    mut just_spawned: ResMut<DialogueJustSpawned>,
+    mut events_dialogue_box: ResMut<Events<DialogueBoxTriggerEvent>>,
+    mut events_dialogue: ResMut<Events<DialogueTriggerEvent>>,
 ) {
-    if trigger.0 {
+    for event in events_dialogue_box.drain() {
         println!("Function called");
         commands
             .spawn((
@@ -398,9 +422,12 @@ fn spawn_dialogue_box(
                         ));
                     });
             });
-        trigger.0 = false;
+        //trigger.0 = false;
         println!("Dialogue box spawned");
-        just_spawned.0 = true;
+        let event = DialogueTriggerEvent {};
+        events_dialogue.send(event);
+        //just_spawned.0 = true;
+        println!("Spawn message sent");
     }
 }
 
@@ -411,7 +438,9 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
     
     commands
     .spawn(Camera2d::default())
-    .insert(MainCamera);
+    .insert(MainCamera)
+    .insert(Transform::from_xyz(0.0, 0.0, 0.0))
+    .insert(Position { x: 0, y: 0 });
 
     commands.spawn((
         Sprite {
@@ -458,13 +487,15 @@ fn player_movement(
 
     mut param_set: ParamSet<(
         Query<(&mut Transform, &mut Position), With<Player>>,
-
+        Query<(&mut Transform, &mut Position), With<MainCamera>>,
+        ResMut<Global_Variables>,
     )>,
+    //mut camera: Query<(&mut Transform, &mut Position), With<MainCamera>>,
     game_state: Res<Game_State>,
     cache: Res<CachedColliders>,
     input: Res<ButtonInput<KeyCode>>, 
     time: Res<Time>,
-    mut index: ResMut<Selected_Choice_Index>,
+    //mut index: ResMut<Selected_Choice_Index>,
 
 ) {
     let mut direction = Vec2::ZERO;
@@ -484,12 +515,17 @@ fn player_movement(
 
     let movement_speed = PLAYER_SPEED * time.delta_secs();
 
+    let camera_locked = param_set.p2().0.camera_locked;
+
     if direction.length() > 0.0 {
         match game_state.0 {
             GameState::Exploring => {
+                let mut new_x_out: Option<f32> = None;
+                let mut new_y_out: Option<f32> = None;
+
                 if direction.x != 0.0 && direction.y != 0.0 {
 
-                    let diagonal_speed = movement_speed / (2.0_f32.sqrt());;
+                    let diagonal_speed = movement_speed / (2.0_f32.sqrt());
         
                     let mut p0 = param_set.p0();
         
@@ -497,12 +533,49 @@ fn player_movement(
                         let new_x = transform.translation.x + direction.x * diagonal_speed;
                         let new_y = transform.translation.y + direction.y * diagonal_speed;
 
+                        new_x_out = Some(new_x);
+                        new_y_out = Some(new_y);
+
                         transform.rotation = Quat::from_rotation_z(
                             rotate_to_direction(transform.translation.x, transform.translation.y, new_x, new_y),
                         );
         
                         if ((new_x.abs() as u32) < GRID_WIDTH) && ((new_y.abs() as u32) < GRID_HEIGHT) {
 
+                            let player_rect = Rect::from_center_size(Vec2::new(new_x, new_y), Vec2::new(32.0, 32.0));
+
+                            let collision = cache.0.iter().any(|wall_transform| {
+                                let wall_rect = Rect::from_center_size(
+                                    Vec2::new(wall_transform.0.translation.x, wall_transform.0.translation.y),
+                                    Vec2::new(32.0, 32.0),
+                                );
+                                aabb_collision(player_rect, wall_rect)
+                            });
+        
+                            if !collision {
+                                transform.translation.x = new_x;
+                                transform.translation.y = new_y;
+                                position.x = new_x as i32;
+                                position.y = new_y as i32;
+
+                            }
+                        }
+                    }
+                } else {
+
+                    for (mut transform, mut position) in param_set.p0().iter_mut() {
+                        let new_x = transform.translation.x + direction.x * movement_speed;
+                        let new_y = transform.translation.y + direction.y * movement_speed;
+
+                        new_x_out = Some(new_x);
+                        new_y_out = Some(new_y);
+        
+                        transform.rotation = Quat::from_rotation_z(
+                            rotate_to_direction(transform.translation.x, transform.translation.y, new_x, new_y),
+                        );
+        
+                        if ((new_x.abs() as u32) < GRID_WIDTH) && ((new_y.abs() as u32) < GRID_HEIGHT) {
+        
                             let player_rect = Rect::from_center_size(Vec2::new(new_x, new_y), Vec2::new(32.0, 32.0));
 
                             let collision = cache.0.iter().any(|wall_transform| {
@@ -521,35 +594,16 @@ fn player_movement(
                             }
                         }
                     }
-                } else {
-
-                    for (mut transform, mut position) in param_set.p0().iter_mut() {
-                        let new_x = transform.translation.x + direction.x * movement_speed;
-                        let new_y = transform.translation.y + direction.y * movement_speed;
-        
-                        transform.rotation = Quat::from_rotation_z(
-                            rotate_to_direction(transform.translation.x, transform.translation.y, new_x, new_y),
-                        );
-        
-                        if ((new_x.abs() as u32) < GRID_WIDTH) && ((new_y.abs() as u32) < GRID_HEIGHT) {
-        
-                            let player_rect = Rect::from_center_size(Vec2::new(new_x, new_y), Vec2::new(32.0, 32.0));
-
-                            let collision = cache.0.iter().any(|wall_transform| {
-                                let wall_rect = Rect::from_center_size(
-                                    Vec2::new(wall_transform.0.translation.x, wall_transform.0.translation.y),
-                                    Vec2::new(32.0, 32.0),
-                                );
-                                aabb_collision(player_rect, wall_rect)
-                            });
-        
-                            if !collision {
-                                transform.translation.x = new_x;
-                                transform.translation.y = new_y;
-                                position.x = new_x as i32;
-                                position.y = new_y as i32;
-                            }
-                        }
+                }
+                if camera_locked && (new_x_out.is_some() || new_y_out.is_some()) {
+                    println!("moving camera");
+                    let new_x = new_x_out.unwrap();
+                    let new_y = new_y_out.unwrap();
+                    for (mut transform_c, mut position_c) in param_set.p1().iter_mut() {
+                        transform_c.translation.x = new_x;
+                        transform_c.translation.y = new_y;
+                        position_c.x = new_x as i32;
+                        position_c.y = new_y as i32;
                     }
                 }
             }
@@ -587,7 +641,7 @@ fn gui_selection(
             GameState::Interacting => {
                 index.0 = index.0.wrapping_add(vertical as u8);
                     println!("index: {}", index.0);
-                    display_dialogue(commands, &state, data, asset_server, box_query, text_query, button_query, index, selected);
+                    display_dialogue(&mut commands, &mut state, &data, box_query, text_query, button_query, &mut index, &mut selected);
             }
         }
     }
@@ -597,26 +651,27 @@ fn gui_selection(
 fn interact<'a>(
     mut param_set: ParamSet<(
         Query<(&Transform, &Position), With<Player>>,
+        Res<ButtonInput<KeyCode>>, 
     )>,
+    //input: Res<ButtonInput<KeyCode>>, 
     mut game_state: ResMut<Game_State>,
     cache: Res<CachedInteractables>,
-    input: Res<ButtonInput<KeyCode>>, 
     mut dialogue_state: ResMut<Dialogue_State>,
     dialogue_data: Res<Dialogue_Data>,
     mut selected_choice: ResMut<Selected_Choice>,
-    mut dialogue_trigger: ResMut<DialogueTrigger>,
     mut commands: Commands,
-    asset_server: Res<AssetServer>,
     mut box_query: Query<(Entity, &Children), With<DialogueBox>>,
     text_query: Query<Entity, With<DialogueText>>,
     button_query: Query<Entity, With<ChoiceButton>>,
     mut index: ResMut<Selected_Choice_Index>,
     mut next_id_map: ResMut<Next_Id>,
-    mut conditionals: ResMut<Conditionals>
+    mut conditionals: ResMut<Conditionals>,
+    mut events_dialogue_box: ResMut<Events<DialogueBoxTriggerEvent>>,
 ) {
-    if (input.just_pressed(KeyCode::KeyX)) {
+    if (param_set.p1().just_pressed(KeyCode::KeyX)) {
         
         match game_state.0 {
+
             GameState::Exploring => {
 
                 let p0 = param_set.p0();
@@ -636,7 +691,7 @@ fn interact<'a>(
                     if let Some((interactable_transform, interactable)) = interactable {
                         game_state.0 = GameState::Interacting;
                         dialogue_state.0.active = true;
-                        interactable.interact(interactable_transform, game_state.0, commands, dialogue_state, dialogue_data, asset_server, box_query, text_query, button_query, dialogue_trigger);
+                        interactable.interact(interactable_transform, game_state.0, dialogue_state, events_dialogue_box);
                         break;
                     }
                 }
@@ -650,8 +705,10 @@ fn interact<'a>(
             _ => {}
         }
     }
-    else if (input.just_pressed(KeyCode::Space)) {
+    else if param_set.p1().just_pressed(KeyCode::Space) || param_set.p1().just_pressed(KeyCode::Enter) {
+
         match game_state.0 {
+
             GameState::Exploring => {
 
             }
@@ -678,7 +735,7 @@ fn interact<'a>(
                                 game_state.0 = GameState::Exploring;
                             }
                         }
-                        display_dialogue(commands, &dialogue_state, dialogue_data, asset_server, box_query, text_query, button_query, index, selected_choice);
+                        display_dialogue(&mut commands, &mut dialogue_state, &dialogue_data, box_query, text_query, button_query, &mut index, &mut selected_choice);
                     }
                 }
             }
@@ -853,7 +910,7 @@ pub fn pathfinding(
                 });
             }
             else {
-;
+
             }
         }
         let old_Node_P = next_Node_P;
@@ -925,13 +982,42 @@ fn follow_path_system(
 }
 
 fn toggle_camera_lock(
-    mut commands: Commands,
+    mut param_set: ParamSet<(
+        Query<(&mut Transform, &mut Position), With<Player>>,
+        Query<(&mut Transform, &mut Position), With<MainCamera>>,
+        ResMut<Global_Variables>,
+    )>,
     input: Res<ButtonInput<KeyCode>>,
-    mut global_variables: ResMut<Global_Variables>,
 ) {
     if input.just_pressed(KeyCode::KeyL) {
-        
-        global_variables.0.camera_locked = !global_variables.0.camera_locked;
+
+        //param_set.p2().0.camera_locked = !param_set.p2().0.camera_locked;     
+        if !param_set.p2().0.camera_locked {
+            param_set.p2().0.camera_locked = true;
+
+            let mut position_x: i32 = 0;
+            let mut position_y: i32 = 0;
+            let mut transform_x: f32 = 0.0;
+            let mut transform_y: f32 = 0.0;
+
+            for (player_transform, player_position) in param_set.p0().iter_mut() {
+                position_x = player_position.x;
+                position_y = player_position.y;
+                transform_x = player_transform.translation.x;
+                transform_y = player_transform.translation.y;
+            }
+
+            for (mut camera_transform, mut camera_position) in param_set.p1().iter_mut() {
+                camera_position.x = position_x;
+                camera_position.y = position_y;
+                camera_transform.translation.x = transform_x;
+                camera_transform.translation.y = transform_y;
+            }
+        }  
+        else {
+            param_set.p2().0.camera_locked = false;
+        }
+        println!("Camera locked: {}", param_set.p2().0.camera_locked); 
     }
 }
 
@@ -1034,7 +1120,9 @@ fn find_path(
     windows: Query<&Window>,
     margin: i32
 ) -> Option<Vec<Position>> {
+
     match game_state {
+        
         GameState::Exploring => {
             
             let (camera, camera_transform) = camera_query.single().expect("Failed to get camera");
@@ -1095,7 +1183,7 @@ fn enter_battle(
         };
     }
 }
-
+/* 
 fn draw_distance_system(
     mut param_set: ParamSet<(
         Query<(Entity, &mut Transform, &mut Position), With<Player>>,
@@ -1162,7 +1250,7 @@ fn draw_distance_system(
             }
         }
     }   
-}
+} */
 
 fn load_dialogue() -> HashMap<String, DialogueLine> {
     let file = File::open("dialogues/example.json").unwrap();
@@ -1175,15 +1263,14 @@ fn load_dialogue() -> HashMap<String, DialogueLine> {
 }
 
 fn display_dialogue(
-    mut commands: Commands,
-    mut state: &ResMut<Dialogue_State>,
-    data: Res<Dialogue_Data>,
-    asset_server: Res<AssetServer>,
+    mut commands: &mut Commands,
+    mut state: &mut ResMut<Dialogue_State>,
+    data: &Res<Dialogue_Data>,
     mut box_query: Query<(Entity, &Children), With<DialogueBox>>,
     text_query: Query<Entity, With<DialogueText>>,
     button_query: Query<Entity, With<ChoiceButton>>,
-    mut index: ResMut<Selected_Choice_Index>,
-    mut selected: ResMut<Selected_Choice>
+    mut index: &mut ResMut<Selected_Choice_Index>,
+    mut selected: &mut ResMut<Selected_Choice>
 ) {
     if let Some(current_id) = &state.0.current_id {
         if let Some(dialogue) = data.0.get(current_id) {
