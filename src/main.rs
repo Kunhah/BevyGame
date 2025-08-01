@@ -1,7 +1,8 @@
 use bevy::core_pipeline::core_2d::graph::input;
-use bevy::ecs::entity;
+use bevy::ecs::{entity, query};
 use bevy::math::ops::powf;
 use bevy::prelude::*;
+use bevy::render::camera;
 use bevy::ui::prelude::*;
 use bevy::ecs::event::Events;
 use bevy::ui::{PositionType};
@@ -33,6 +34,19 @@ use serde_json::*;
 use std::fs::File;
 use std::io::BufReader;
 use bitflags::bitflags;
+use noise::{NoiseFn, Perlin};
+
+const SEGMENT_SIZE: f32 = 8.0;
+const LIGHT_ALPHA: f32 = 0.15;
+const LIGHT_WIDTH: f32 = 2.0;
+const NOISE_SCALE: f64 = 0.2;
+const MAX_DISTANCE_LIGHT: f32 = 200.0;
+
+const MAX_DISTANCE_RENDER: f32 = 1000.0;
+const MAX_DISTANCE_COLLISION: f32 = 10.0;
+
+const MAX_OBJECTS: usize = 4;
+const MAX_LEVELS: usize = 5;
 
 const WINDOW_WIDTH: f32 = 1920.0;
 const WINDOW_HEIGHT: f32 = 1080.0;
@@ -152,7 +166,14 @@ impl Default for GlobalVariables {
 // New component to mark walls
 #[derive(Component, Clone)]
 struct Collider{
-    name: String,
+    pub bounds: Rect,
+}
+
+pub struct QuadtreeNode {
+    pub bounds: Rect,
+    pub level: usize,
+    pub objects: Vec<Collider>,
+    pub children: Option<[Box<QuadtreeNode>; 4]>,
 }
 
 #[derive(Component, Clone)]
@@ -321,6 +342,9 @@ struct Global_Variables(GlobalVariables);
 struct CachedInteractables(Vec<(Transform, Interactable)>);
 
 #[derive(Resource, Default)]
+struct QuadTree(QuadtreeNode);
+
+#[derive(Resource, Default)]
 pub struct CachedColliders(Vec<(Transform, Collider)>);
 
 #[derive(Resource, Default)]
@@ -431,7 +455,29 @@ fn spawn_dialogue_box(
     }
 }
 
-fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
+fn setup(
+    mut commands: Commands, 
+    asset_server: Res<AssetServer>,
+    query: Query<(Entity, &Transform), With<Collider>>,
+) {
+
+    let mut quadtree = QuadtreeNode::new(
+        Rect::from_center_size(Vec2::ZERO, Vec2::splat(2048.0)),
+        0,
+    );
+
+    // Insert all colliders into the quadtree
+    for (_, transform) in &query {
+        let pos = transform.translation.truncate();
+        let rect = Rect::from_center_size(pos, Vec2::splat(32.0));
+
+        quadtree.insert(Collider {
+            bounds: rect,
+        });
+    }
+
+    // Save the quadtree as a Bevy resource
+    commands.insert_resource(QuadTree(quadtree));
 
     let dialogue_data = load_dialogue();
     commands.insert_resource(Dialogue_Data(dialogue_data));
@@ -464,7 +510,7 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
             },
             Transform::from_xyz(x as f32 * 32.0, 5.0 * 32.0, 0.0),
             Position { x: x * 32, y: 5 * 32 },
-            Collider { name: "Wall".to_string() },
+            Collider { bounds: Rect::from_center_size(Vec2::new(x as f32 * 32.0, 5.0 * 32.0), Vec2::splat(32.0)) },
         ));
     }
 
@@ -493,8 +539,11 @@ fn player_movement(
     //mut camera: Query<(&mut Transform, &mut Position), With<MainCamera>>,
     game_state: Res<Game_State>,
     cache: Res<CachedColliders>,
+    quad_tree: Res<QuadTree>,
     input: Res<ButtonInput<KeyCode>>, 
     time: Res<Time>,
+    mut commands: Commands,
+    query: Query<(Entity, &LightSegment)>
     //mut index: ResMut<Selected_Choice_Index>,
 
 ) {
@@ -516,6 +565,8 @@ fn player_movement(
     let movement_speed = PLAYER_SPEED * time.delta_secs();
 
     let camera_locked = param_set.p2().0.camera_locked;
+
+    let camera_position = param_set.p1().single().unwrap().0.translation.truncate();
 
     if direction.length() > 0.0 {
         match game_state.0 {
@@ -541,22 +592,32 @@ fn player_movement(
                         );
         
                         if ((new_x.abs() as u32) < GRID_WIDTH) && ((new_y.abs() as u32) < GRID_HEIGHT) {
-
-                            let player_rect = Rect::from_center_size(Vec2::new(new_x, new_y), Vec2::new(32.0, 32.0));
-
-                            let collision = cache.0.iter().any(|wall_transform| {
-                                let wall_rect = Rect::from_center_size(
-                                    Vec2::new(wall_transform.0.translation.x, wall_transform.0.translation.y),
-                                    Vec2::new(32.0, 32.0),
-                                );
-                                aabb_collision(player_rect, wall_rect)
-                            });
+                            
+                            // let collision = cache.0.iter().any(|wall_transform| {
+                            //     let player_vec2 = Vec2::new(new_x, new_y);
+                            //     let wall_vec2 = Vec2::new(wall_transform.0.translation.x, wall_transform.0.translation.y);
+                            //     if wall_vec2.distance_squared(player_vec2) > MAX_DISTANCE_COLLISION {
+                            //         return false;
+                            //     }
+                            //     let player_rect = Rect::from_center_size(player_vec2, Vec2::new(32.0, 32.0));
+                            //     let wall_rect = Rect::from_center_size(
+                            //         wall_vec2,
+                            //         Vec2::new(32.0, 32.0),
+                            //     );
+                            //     aabb_collision(player_rect, wall_rect)
+                            // });
+                            let new_pos = Position{x: new_x as i32, y: new_y as i32};
+                            //let collision = is_walkable(new_pos, &quad_tree);
         
-                            if !collision {
+                            if is_walkable(new_pos, &quad_tree) {
                                 transform.translation.x = new_x;
                                 transform.translation.y = new_y;
                                 position.x = new_x as i32;
                                 position.y = new_y as i32;
+
+                                let player_vec2 = Vec2::new(new_x, new_y);
+                                cleanup_light_segments(&mut commands, query);
+                                emit_light(&mut commands, &time, player_vec2, camera_position, &quad_tree);
 
                             }
                         }
@@ -575,22 +636,33 @@ fn player_movement(
                         );
         
                         if ((new_x.abs() as u32) < GRID_WIDTH) && ((new_y.abs() as u32) < GRID_HEIGHT) {
+                            
+                            // let collision = cache.0.iter().any(|wall_transform| {
+                            //     let player_vec2 = Vec2::new(new_x, new_y);
+                            //     let wall_vec2 = Vec2::new(wall_transform.0.translation.x, wall_transform.0.translation.y);
+                            //     if wall_vec2.distance_squared(player_vec2) > MAX_DISTANCE_COLLISION {
+                            //         return false;
+                            //     }
+                            //     let player_rect = Rect::from_center_size(player_vec2, Vec2::new(32.0, 32.0));
+                            //     let wall_rect = Rect::from_center_size(
+                            //         wall_vec2,
+                            //         Vec2::new(32.0, 32.0),
+                            //     );
+                            //     aabb_collision(player_rect, wall_rect)
+                            // });
+                            let new_pos = Position{x: new_x as i32, y: new_y as i32};
+                            //let collision = is_walkable(new_pos, &quad_tree);
         
-                            let player_rect = Rect::from_center_size(Vec2::new(new_x, new_y), Vec2::new(32.0, 32.0));
-
-                            let collision = cache.0.iter().any(|wall_transform| {
-                                let wall_rect = Rect::from_center_size(
-                                    Vec2::new(wall_transform.0.translation.x, wall_transform.0.translation.y),
-                                    Vec2::new(32.0, 32.0),
-                                );
-                                aabb_collision(player_rect, wall_rect)
-                            });
-        
-                            if !collision {
+                            if is_walkable(new_pos, &quad_tree) {
                                 transform.translation.x = new_x;
                                 transform.translation.y = new_y;
                                 position.x = new_x as i32;
                                 position.y = new_y as i32;
+
+                                let player_vec2 = Vec2::new(new_x, new_y);
+                                cleanup_light_segments(&mut commands, query);
+                                emit_light(&mut commands, &time, player_vec2, camera_position, &quad_tree);
+
                             }
                         }
                     }
@@ -761,26 +833,64 @@ fn update_interactable_cache(
         .collect();
 }
 
-fn update_collider_cache(
-    mut cache: ResMut<CachedColliders>,
-    query: Query<(&Transform, &Collider), With<Collider>>,
+// fn update_collider_cache(
+//     mut cache: ResMut<CachedColliders>,
+//     //query: Query<(&Transform, &Collider), With<Collider>>,
+//     quadTree: Res<QuadTree>,
+// ) {
+//     cache.0 = query
+//         .iter()
+//         .map(|(t, i)| (t.clone(), i.clone()))
+//         .collect();
+// }
+
+fn update_quad_tree(
+    //mut cache: ResMut<CachedColliders>,
+    query: Query<(Entity, &Transform), With<Collider>>,
+    mut quadTree: ResMut<QuadTree>,
 ) {
-    cache.0 = query
-        .iter()
-        .map(|(t, i)| (t.clone(), i.clone()))
-        .collect();
+    let mut quadtree = QuadtreeNode::new(
+        Rect::from_center_size(Vec2::ZERO, Vec2::splat(2048.0)),
+        0,
+    );
+
+    // Insert all colliders into the quadtree
+    for (_, transform) in &query {
+        let pos = transform.translation.truncate();
+        let rect = Rect::from_center_size(pos, Vec2::splat(32.0));
+
+        quadtree.insert(Collider {
+            bounds: rect,
+        });
+    }
+
+    quadTree.0 = quadtree;
 }
+
 
 fn update_cache(
     cache_interactables: ResMut<CachedInteractables>,
-    cache_colliders: ResMut<CachedColliders>,
+    //cache_colliders: ResMut<CachedColliders>,
     interactable_query: Query<(&Transform, &Interactable), With<Interactable>>,
-    collider_query: Query<(&Transform, &Collider), With<Collider>>,
+    query: Query<(Entity, &Transform), With<Collider>>,
+    mut quadTree: ResMut<QuadTree>,
+    //collider_query: Query<(&Transform, &Collider), With<Collider>>,
+    //query: Query<(Entity, &Transform)>,
     input: Res<ButtonInput<KeyCode>>, 
 ) {
+    let mut quadtree = QuadtreeNode::new(Rect::from_center_size(Vec2::ZERO, Vec2::splat(2048.0)), 0);
+
+    // for (entity, transform) in &query {
+    //     let pos = transform.translation.truncate();
+    //     let rect = Rect::from_center_size(pos, Vec2::splat(32.0));
+    //     quadtree.insert(Collider { bounds: rect });
+    // }
+
+
     if(input.just_pressed(KeyCode::KeyP)) {
         update_interactable_cache(cache_interactables, interactable_query);
-        update_collider_cache(cache_colliders, collider_query);
+        update_quad_tree(query, quadTree);
+        //update_collider_cache(cache_colliders, collider_query);
     }
 }
 
@@ -809,30 +919,52 @@ fn distance(a: Position, b: Position) -> i32 {
     (10.0 * ((powf((a.x - b.x).abs() as f32, 2.0) + powf((a.y - b.y).abs() as f32, 2.0)).sqrt())).round() as i32
 }
 
-fn is_walkable(pos: Position, cache: &CachedColliders) -> bool {
+// fn distance_vec2(a: &Vec2, b: &Vec2) -> f32 {
+//     10.0 * ((powf((a.x - b.x).abs(), 2.0) + powf((a.y - b.y).abs(), 2.0)))
+// }
+
+fn is_walkable_move(pos: Position, quad_tree: &QuadTree) -> bool { // Test it without quadtree to see diference in performance
+
     if pos.x.abs() as u32 > GRID_WIDTH || pos.y.abs() as u32 > GRID_HEIGHT {
         return false;
     }
+
     let pos_center = Vec2::new(pos.x as f32, pos.y as f32);
     let player_rect = Rect::from_center_size(pos_center, Vec2::new(32.0, 32.0));
 
-    !cache.0.iter().any(|(wall_transform, _)| {
-        let wall_rect = Rect::from_center_size(
-            wall_transform.translation.truncate(),
-            Vec2::new(32.0, 32.0),
-        );
-        aabb_collision(player_rect, wall_rect)
+    let mut possible_colliders: Vec<&Collider> = Vec::new();
+    quad_tree.0.query(player_rect, &mut possible_colliders);
+
+    !possible_colliders.iter().any(|collider| {
+        aabb_collision(player_rect, collider.bounds)
     })
 }
 
+fn is_walkable_path(pos: Position, quad_tree: &QuadTree) -> bool { // Use a different algorithm since it is something that is moving. Maybe I will, maybe not
+
+    if pos.x.abs() as u32 > GRID_WIDTH || pos.y.abs() as u32 > GRID_HEIGHT {
+        return false;
+    }
+
+    let pos_center = Vec2::new(pos.x as f32, pos.y as f32);
+    let player_rect = Rect::from_center_size(pos_center, Vec2::new(32.0, 32.0));
+
+    let mut possible_colliders: Vec<&Collider> = Vec::new();
+    quad_tree.0.query(player_rect, &mut possible_colliders);
+
+    !possible_colliders.iter().any(|collider| {
+        aabb_collision(player_rect, collider.bounds)
+    })
+}
 pub fn pathfinding(
-    cache: Res<CachedColliders>,
+    //cache: Res<CachedColliders>,
+    quad_tree: Res<QuadTree>,
     start: Position,
     goal: Position,
     margin: i32
 ) -> Vec<Position> {
 
-    if !is_walkable(start, &cache) || !is_walkable(goal, &cache) {
+    if !is_walkable(start, &quad_tree) || !is_walkable(goal, &quad_tree) {
         return Vec::new();
     }
 
@@ -885,7 +1017,7 @@ pub fn pathfinding(
 
         for neighbor in neighbors {
 
-            if !is_walkable(neighbor, &cache) {
+            if !is_walkable(neighbor, &quad_tree) {
                 println!("Skipped neighbor collider: ({}, {})", neighbor.x, neighbor.y);
                 continue;
             }
@@ -951,15 +1083,20 @@ fn rotate_to_direction(
 
 fn follow_path_system(
     mut commands: Commands,
-    mut query: Query<(&mut Transform, &mut Position, &mut MoveAlongPath, Entity)>,
+    mut query: Query<(&mut Transform, &mut Position, &mut MoveAlongPath, Entity), Without<MainCamera>>,
+    camera_query: Query<(&Transform, &Position), With<MainCamera>>,
+    quad_tree: Res<QuadTree>,
     time: Res<Time>,
+    light_query: Query<Entity, &LightSegment>>,
     mut global_variables: ResMut<Global_Variables>,
 ) {
+    let camera_position = camera_query.single().unwrap().0.translation.truncate();
     global_variables.0.moving = true;
     for (mut transform, mut position, mut movement, entity) in query.iter_mut() {
         //movement.timer = Timer::from_seconds(0.1, TimerMode::Once);
         if movement.timer.tick(time.delta() * PATH_MOVEMENT_SPEED).just_finished() {
             if movement.current_index < movement.path.len() {
+
                 let next_tile = movement.path[movement.current_index];
                 let target_x = next_tile.x as f32;
                 let target_y = next_tile.y as f32;
@@ -973,6 +1110,10 @@ fn follow_path_system(
                 position.y = next_tile.y;
 
                 movement.current_index += 1;
+
+                cleanup_light_segments(&mut commands, light_query);
+                emit_light(&mut commands, &time, transform.translation.truncate(), camera_position, &quad_tree);
+
             } else {
                 commands.entity(entity).remove::<MoveAlongPath>();
             }
@@ -1027,7 +1168,8 @@ fn mouse_click(
     )>,
     game_state: Res<Game_State>,
     camera_query: Query<(&Camera, &GlobalTransform), With<MainCamera>>,
-    cache: Res<CachedColliders>,
+    //cache: Res<CachedColliders>,
+    quad_tree: Res<QuadTree>,
     input: Res<ButtonInput<MouseButton>>,
     windows: Query<&Window>,
     mut commands: Commands,
@@ -1041,7 +1183,7 @@ fn mouse_click(
 
         let player_entity = entity;
         
-        let path_ops = find_path(*position, game_state.0, cache, camera_query, windows, PATH_DRAW_MARGIN);
+        let path_ops = find_path(*position, game_state.0, quad_tree, camera_query, windows, PATH_DRAW_MARGIN);
         if path_ops.is_none() {
             return;
         }
@@ -1073,7 +1215,7 @@ fn mouse_click(
 
         println!("Reached");
         
-        let path_ops = find_path(*position, game_state.0, cache, camera_query, windows, PATH_DRAW_MARGIN);
+        let path_ops = find_path(*position, game_state.0, quad_tree, camera_query, windows, PATH_DRAW_MARGIN);
         if path_ops.is_none() {
             return;
         }
@@ -1115,7 +1257,8 @@ fn mouse_click(
 fn find_path(
     position: Position,
     game_state: GameState,
-    cache: Res<CachedColliders>,
+    //cache: Res<CachedColliders>,
+    quad_tree: Res<QuadTree>,
     camera_query: Query<(&Camera, &GlobalTransform), With<MainCamera>>,
     windows: Query<&Window>,
     margin: i32
@@ -1146,7 +1289,7 @@ fn find_path(
                     y: _target_position.y as i32,
                 };
 
-                let path = pathfinding(cache, current_position, target_position, margin);
+                let path = pathfinding(quad_tree, current_position, target_position, margin);
                 if path.is_empty() {
                     println!("No path found, it is empty");
                     return None;
@@ -1409,4 +1552,257 @@ fn handle_next_id(
         },
     };
     return_id
+}
+
+
+struct Ray {
+    origin: Vec2,
+    direction: Vec2, // Should be normalized
+}
+
+fn ray_intersects_segment(ray_origin: Vec2, ray_dir: Vec2, p1: Vec2, p2: Vec2) -> Option<Vec2> {
+    let v1 = ray_origin - p1;
+    let v2 = p2 - p1;
+    let v3 = Vec2::new(-ray_dir.y, ray_dir.x);
+
+    let dot = v2.dot(v3);
+    if dot.abs() < f32::EPSILON {
+        return None; // Parallel
+    }
+
+    let t1 = v2.perp_dot(v1) / dot;
+    let t2 = v1.dot(v3) / dot;
+
+    if t1 >= 0.0 && t2 >= 0.0 && t2 <= 1.0 {
+        Some(ray_origin + ray_dir * t1)
+    } else {
+        None
+    }
+}
+
+fn raycast_against_rect(ray: &Ray, rect: Rect) -> Option<Vec2> {
+    let Rect { min, max } = rect;
+
+    let corners = [
+        Vec2::new(min.x, min.y),
+        Vec2::new(max.x, min.y),
+        Vec2::new(max.x, max.y),
+        Vec2::new(min.x, max.y),
+    ];
+
+    let edges = [
+        (corners[0], corners[1]),
+        (corners[1], corners[2]),
+        (corners[2], corners[3]),
+        (corners[3], corners[0]),
+    ];
+
+    edges.iter()
+        .filter_map(|(start, end)| ray_intersects_segment(ray.origin, ray.direction, *start, *end))
+        .min_by(|a, b| {
+            let da = a.distance_squared(ray.origin);
+            let db = b.distance_squared(ray.origin);
+            da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
+        })
+}
+
+#[derive(Component)]
+struct LightSegment<'a> {
+    emissor: &'a Entity,
+}
+
+fn spawn_light_ray_segments(
+    commands: &mut Commands,
+    origin: &Vec2,
+    hit: Vec2,
+    perlin: &Perlin,
+    time: f32,
+) {
+    let direction = hit - origin;
+    let length = direction.length();
+    let dir_normalized = direction.normalize();
+    let segment_count = (length / SEGMENT_SIZE).ceil() as usize;
+
+    for i in 0..segment_count {
+        let t = i as f32 / segment_count as f32;
+        let base_pos = origin + dir_normalized * t * length;
+
+        // Apply Perlin noise offset (vertical to ray direction)
+        let perp = Vec2::new(-dir_normalized.y, dir_normalized.x);
+        let noise_val = perlin.get([
+            base_pos.x as f64 * NOISE_SCALE,
+            base_pos.y as f64 * NOISE_SCALE,
+            time as f64 * 0.5,
+        ]) as f32;
+
+        let offset = perp * noise_val * 3.0;
+        let final_pos = base_pos + offset;
+
+        commands.spawn((
+            Sprite {
+                color: Color::srgba(1.0, 1.0, 0.8, LIGHT_ALPHA),
+                custom_size: Some(Vec2::new(SEGMENT_SIZE, LIGHT_WIDTH)),
+                ..default()
+            },
+            Transform {
+                translation: final_pos.extend(5.0),
+                rotation: Quat::from_rotation_z(dir_normalized.y.atan2(dir_normalized.x)),
+                ..default()
+            },
+            GlobalTransform::default(), 
+            Visibility::Inherited,
+            InheritedVisibility::default(),
+            ViewVisibility::default(), 
+            LightSegment,
+        ));
+    }
+}
+
+fn cleanup_light_segments(mut commands: &mut Commands, query: Query<(Entity, &LightSegment)>, emissor: &Entity) {
+    for (entity, light_segment) in &query {
+        if light_segment.emissor != emissor { continue; }
+        commands.entity(entity).despawn();
+    }
+}
+
+fn emit_light(
+    mut commands: &mut Commands,
+    time: &Res<Time>,
+    origin: Vec2,
+    camera_position: Vec2,
+    //player_query: Query<&Transform, With<Player>>, // it doesn't need to be the player
+    //cache: &Res<CachedColliders>,
+    quadTree: &Res<QuadTree>,
+) {
+    if origin.distance_squared(camera_position) <= MAX_DISTANCE_RENDER {
+    
+        //let player_pos = player_query.single().unwrap().translation.truncate();
+        for i in 0..72 {
+
+            let angle_deg = i as f32 * 5.0;
+            let angle_rad = angle_deg.to_radians();
+
+            let ray_dir = Vec2::new(angle_rad.cos(), angle_rad.sin()); // unit circle direction
+
+            let ray = Ray {
+                origin,
+                direction: ray_dir.normalize(),
+            };
+
+            let perlin = Perlin::new(42);
+
+            let mut nearby = Vec::new();
+            let ray_bounds = Rect::from_center_size(ray.origin, Vec2::splat(300.0)); // light radius
+            //cached_colliders.quadtree.query(ray_bounds, &mut nearby);
+            quadTree.0.query(ray_bounds, &mut nearby);
+
+            for collider in nearby  {
+                
+                // let rect = Rect::from_center_size(
+                //     collider.translation.truncate(),
+                //     Vec2::splat(32.0),
+                // );
+
+                if let Some(hit) = raycast_against_rect(&ray, collider.bounds) {
+                    spawn_light_ray_segments(
+                        &mut commands,
+                        &ray.origin,
+                        hit,
+                        &perlin,
+                        time.elapsed_secs(),
+                    );
+                    break; // stop after first collision
+                }
+            }
+        }
+    }
+}
+
+impl QuadtreeNode {
+
+    pub fn new(bounds: Rect, level: usize) -> Self {
+        Self {
+            bounds,
+            level,
+            objects: Vec::new(),
+            children: None,
+        }
+    }
+    
+    fn subdivide(&mut self) {
+        let center = self.bounds.center();
+        let half_size = self.bounds.size() / 2.0;
+    
+        let [min, max] = [self.bounds.min, self.bounds.max];
+        let mid = center;
+    
+        self.children = Some([
+            Box::new(QuadtreeNode::new(Rect::from_corners(min, mid), self.level + 1)), // bottom-left
+            Box::new(QuadtreeNode::new(Rect::from_corners(Vec2::new(mid.x, min.y), Vec2::new(max.x, mid.y)), self.level + 1)), // bottom-right
+            Box::new(QuadtreeNode::new(Rect::from_corners(Vec2::new(min.x, mid.y), Vec2::new(mid.x, max.y)), self.level + 1)), // top-left
+            Box::new(QuadtreeNode::new(Rect::from_corners(mid, max), self.level + 1)), // top-right
+        ]);
+    }
+    
+    pub fn insert(&mut self, collider: Collider) {
+        if !aabb_collision(self.bounds, collider.bounds) {
+            return;
+        }
+    
+        if self.children.is_some() {
+            if let Some(children) = &mut self.children {
+                for child in children.iter_mut() {
+                    if child.bounds.contains(collider.bounds.center()) {
+                        child.insert(collider);
+                        return;
+                    }
+                }
+            }
+        }
+    
+        self.objects.push(collider);
+    
+        if self.objects.len() > MAX_OBJECTS && self.level < MAX_LEVELS {
+            if self.children.is_none() {
+                self.subdivide();
+            }
+    
+            if let Some(children) = &mut self.children {
+                let mut reinsert = Vec::new();
+                std::mem::swap(&mut self.objects, &mut reinsert);
+                for obj in reinsert {
+                    self.insert(obj);
+                }
+            }
+        }
+    }
+    
+    pub fn query<'a>(&'a self, area: Rect, found: &mut Vec<&'a Collider>) {
+        if !aabb_collision(self.bounds, area) {
+            return;
+        }
+    
+        for collider in &self.objects {
+            if aabb_collision(collider.bounds, area) {
+                found.push(collider);
+            }
+        }
+    
+        if let Some(children) = &self.children {
+            for child in children {
+                child.query(area, found);
+            }
+        }
+    }
+}
+
+impl Default for QuadtreeNode {
+    fn default() -> Self {
+        Self {
+            bounds: Rect::new(0.0, 0.0, 0.0, 0.0),
+            level: 0,
+            objects: Vec::new(),
+            children: None,
+        }
+    }
 }
