@@ -3,6 +3,7 @@ use bevy::ecs::{entity, query};
 use bevy::math::ops::powf;
 use bevy::prelude::*;
 use bevy::render::camera;
+use bevy::render::view::RenderLayers;
 use bevy::ui::prelude::*;
 use bevy::ecs::event::Events;
 use bevy::ui::{PositionType};
@@ -35,6 +36,9 @@ use std::fs::File;
 use std::io::BufReader;
 use bitflags::bitflags;
 use noise::{NoiseFn, Perlin};
+
+mod light_plugin;
+use light_plugin::*;
 
 const SEGMENT_SIZE: f32 = 8.0;
 const LIGHT_ALPHA: f32 = 0.15;
@@ -270,6 +274,8 @@ fn main() {
             }),
             ..default()
         }))
+        .add_plugins(DefaultPlugins.set(ImagePlugin::default_nearest()))
+        .add_plugins(LightPlugin) // ✅ your plugin
         .insert_resource(ClearColor(Color::srgb(0.1, 0.1, 0.1)))
         .insert_resource(CachedInteractables(Vec::new()))
         .insert_resource(CachedColliders(Vec::new()))
@@ -295,6 +301,7 @@ fn main() {
         .add_systems(Update, interact.in_set(DialogueSet::Interact).after(DialogueSet::Spawn))
         .add_systems(Update, create_first_dialogue)
         .add_systems(Update, gui_selection)
+        //.add_systems(Update, update_light_params)
         .run();
 }
 
@@ -343,6 +350,9 @@ struct CachedInteractables(Vec<(Transform, Interactable)>);
 
 #[derive(Resource, Default)]
 struct QuadTree(QuadtreeNode);
+
+#[derive(Resource)]
+pub struct DayCycle(u8); // every unit is 10 minutes, 60 is equal to 06:00
 
 #[derive(Resource, Default)]
 pub struct CachedColliders(Vec<(Transform, Collider)>);
@@ -511,6 +521,11 @@ fn setup(
             Transform::from_xyz(x as f32 * 32.0, 5.0 * 32.0, 0.0),
             Position { x: x * 32, y: 5 * 32 },
             Collider { bounds: Rect::from_center_size(Vec2::new(x as f32 * 32.0, 5.0 * 32.0), Vec2::splat(32.0)) },
+            Visibility::Visible,
+            InheritedVisibility::default(),
+            ViewVisibility::default(),
+            RenderLayers::layer(1),                  // only the occlusion camera sees it
+            Occluder,
         ));
     }
 
@@ -543,7 +558,7 @@ fn player_movement(
     input: Res<ButtonInput<KeyCode>>, 
     time: Res<Time>,
     mut commands: Commands,
-    query: Query<(Entity, &LightSegment)>
+    //query: Query<(Entity, &LightSegment)>
     //mut index: ResMut<Selected_Choice_Index>,
 
 ) {
@@ -609,15 +624,16 @@ fn player_movement(
                             let new_pos = Position{x: new_x as i32, y: new_y as i32};
                             //let collision = is_walkable(new_pos, &quad_tree);
         
-                            if is_walkable(new_pos, &quad_tree) {
+                            if is_walkable_move(new_pos, &quad_tree) {
                                 transform.translation.x = new_x;
                                 transform.translation.y = new_y;
                                 position.x = new_x as i32;
                                 position.y = new_y as i32;
 
                                 let player_vec2 = Vec2::new(new_x, new_y);
-                                cleanup_light_segments(&mut commands, query);
-                                emit_light(&mut commands, &time, player_vec2, camera_position, &quad_tree);
+                                // FUNCTIONS TO UPDATE THE LIGHT GOES HERE:
+                                // cleanup_light_segments(&mut commands, query);
+                                // emit_light(&mut commands, &time, player_vec2, camera_position, &quad_tree);
 
                             }
                         }
@@ -653,15 +669,16 @@ fn player_movement(
                             let new_pos = Position{x: new_x as i32, y: new_y as i32};
                             //let collision = is_walkable(new_pos, &quad_tree);
         
-                            if is_walkable(new_pos, &quad_tree) {
+                            if is_walkable_move(new_pos, &quad_tree) {
                                 transform.translation.x = new_x;
                                 transform.translation.y = new_y;
                                 position.x = new_x as i32;
                                 position.y = new_y as i32;
 
                                 let player_vec2 = Vec2::new(new_x, new_y);
-                                cleanup_light_segments(&mut commands, query);
-                                emit_light(&mut commands, &time, player_vec2, camera_position, &quad_tree);
+                                // FUNCTIONS TO UPDATE THE LIGHT GOES HERE:
+                                // cleanup_light_segments(&mut commands, query);
+                                // emit_light(&mut commands, &time, player_vec2, camera_position, &quad_tree);
 
                             }
                         }
@@ -964,7 +981,7 @@ pub fn pathfinding(
     margin: i32
 ) -> Vec<Position> {
 
-    if !is_walkable(start, &quad_tree) || !is_walkable(goal, &quad_tree) {
+    if !is_walkable_path(start, &quad_tree) || !is_walkable_path(goal, &quad_tree) {
         return Vec::new();
     }
 
@@ -1017,7 +1034,7 @@ pub fn pathfinding(
 
         for neighbor in neighbors {
 
-            if !is_walkable(neighbor, &quad_tree) {
+            if !is_walkable_path(neighbor, &quad_tree) {
                 println!("Skipped neighbor collider: ({}, {})", neighbor.x, neighbor.y);
                 continue;
             }
@@ -1087,7 +1104,7 @@ fn follow_path_system(
     camera_query: Query<(&Transform, &Position), With<MainCamera>>,
     quad_tree: Res<QuadTree>,
     time: Res<Time>,
-    light_query: Query<Entity, &LightSegment>>,
+    // light_query: Query<Entity, &LightSegment>>,
     mut global_variables: ResMut<Global_Variables>,
 ) {
     let camera_position = camera_query.single().unwrap().0.translation.truncate();
@@ -1111,8 +1128,9 @@ fn follow_path_system(
 
                 movement.current_index += 1;
 
-                cleanup_light_segments(&mut commands, light_query);
-                emit_light(&mut commands, &time, transform.translation.truncate(), camera_position, &quad_tree);
+                // FUNCTIONS TO UPDATE THE LIGHT GOES HERE:
+                // cleanup_light_segments(&mut commands, light_query);
+                // emit_light(&mut commands, &time, transform.translation.truncate(), camera_position, &quad_tree);
 
             } else {
                 commands.entity(entity).remove::<MoveAlongPath>();
@@ -1555,168 +1573,168 @@ fn handle_next_id(
 }
 
 
-struct Ray {
-    origin: Vec2,
-    direction: Vec2, // Should be normalized
-}
+// struct Ray {
+//     origin: Vec2,
+//     direction: Vec2, // Should be normalized
+// }
 
-fn ray_intersects_segment(ray_origin: Vec2, ray_dir: Vec2, p1: Vec2, p2: Vec2) -> Option<Vec2> {
-    let v1 = ray_origin - p1;
-    let v2 = p2 - p1;
-    let v3 = Vec2::new(-ray_dir.y, ray_dir.x);
+// fn ray_intersects_segment(ray_origin: Vec2, ray_dir: Vec2, p1: Vec2, p2: Vec2) -> Option<Vec2> {
+//     let v1 = ray_origin - p1;
+//     let v2 = p2 - p1;
+//     let v3 = Vec2::new(-ray_dir.y, ray_dir.x);
 
-    let dot = v2.dot(v3);
-    if dot.abs() < f32::EPSILON {
-        return None; // Parallel
-    }
+//     let dot = v2.dot(v3);
+//     if dot.abs() < f32::EPSILON {
+//         return None; // Parallel
+//     }
 
-    let t1 = v2.perp_dot(v1) / dot;
-    let t2 = v1.dot(v3) / dot;
+//     let t1 = v2.perp_dot(v1) / dot;
+//     let t2 = v1.dot(v3) / dot;
 
-    if t1 >= 0.0 && t2 >= 0.0 && t2 <= 1.0 {
-        Some(ray_origin + ray_dir * t1)
-    } else {
-        None
-    }
-}
+//     if t1 >= 0.0 && t2 >= 0.0 && t2 <= 1.0 {
+//         Some(ray_origin + ray_dir * t1)
+//     } else {
+//         None
+//     }
+// }
 
-fn raycast_against_rect(ray: &Ray, rect: Rect) -> Option<Vec2> {
-    let Rect { min, max } = rect;
+// fn raycast_against_rect(ray: &Ray, rect: Rect) -> Option<Vec2> {
+//     let Rect { min, max } = rect;
 
-    let corners = [
-        Vec2::new(min.x, min.y),
-        Vec2::new(max.x, min.y),
-        Vec2::new(max.x, max.y),
-        Vec2::new(min.x, max.y),
-    ];
+//     let corners = [
+//         Vec2::new(min.x, min.y),
+//         Vec2::new(max.x, min.y),
+//         Vec2::new(max.x, max.y),
+//         Vec2::new(min.x, max.y),
+//     ];
 
-    let edges = [
-        (corners[0], corners[1]),
-        (corners[1], corners[2]),
-        (corners[2], corners[3]),
-        (corners[3], corners[0]),
-    ];
+//     let edges = [
+//         (corners[0], corners[1]),
+//         (corners[1], corners[2]),
+//         (corners[2], corners[3]),
+//         (corners[3], corners[0]),
+//     ];
 
-    edges.iter()
-        .filter_map(|(start, end)| ray_intersects_segment(ray.origin, ray.direction, *start, *end))
-        .min_by(|a, b| {
-            let da = a.distance_squared(ray.origin);
-            let db = b.distance_squared(ray.origin);
-            da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
-        })
-}
+//     edges.iter()
+//         .filter_map(|(start, end)| ray_intersects_segment(ray.origin, ray.direction, *start, *end))
+//         .min_by(|a, b| {
+//             let da = a.distance_squared(ray.origin);
+//             let db = b.distance_squared(ray.origin);
+//             da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
+//         })
+// }
 
-#[derive(Component)]
-struct LightSegment<'a> {
-    emissor: &'a Entity,
-}
+// #[derive(Component)]
+// struct LightSegment<'a> {
+//     emissor: &'a Entity,
+// }
 
-fn spawn_light_ray_segments(
-    commands: &mut Commands,
-    origin: &Vec2,
-    hit: Vec2,
-    perlin: &Perlin,
-    time: f32,
-) {
-    let direction = hit - origin;
-    let length = direction.length();
-    let dir_normalized = direction.normalize();
-    let segment_count = (length / SEGMENT_SIZE).ceil() as usize;
+// fn spawn_light_ray_segments(
+//     commands: &mut Commands,
+//     origin: &Vec2,
+//     hit: Vec2,
+//     perlin: &Perlin,
+//     time: f32,
+// ) {
+//     let direction = hit - origin;
+//     let length = direction.length();
+//     let dir_normalized = direction.normalize();
+//     let segment_count = (length / SEGMENT_SIZE).ceil() as usize;
 
-    for i in 0..segment_count {
-        let t = i as f32 / segment_count as f32;
-        let base_pos = origin + dir_normalized * t * length;
+//     for i in 0..segment_count {
+//         let t = i as f32 / segment_count as f32;
+//         let base_pos = origin + dir_normalized * t * length;
 
-        // Apply Perlin noise offset (vertical to ray direction)
-        let perp = Vec2::new(-dir_normalized.y, dir_normalized.x);
-        let noise_val = perlin.get([
-            base_pos.x as f64 * NOISE_SCALE,
-            base_pos.y as f64 * NOISE_SCALE,
-            time as f64 * 0.5,
-        ]) as f32;
+//         // Apply Perlin noise offset (vertical to ray direction)
+//         let perp = Vec2::new(-dir_normalized.y, dir_normalized.x);
+//         let noise_val = perlin.get([
+//             base_pos.x as f64 * NOISE_SCALE,
+//             base_pos.y as f64 * NOISE_SCALE,
+//             time as f64 * 0.5,
+//         ]) as f32;
 
-        let offset = perp * noise_val * 3.0;
-        let final_pos = base_pos + offset;
+//         let offset = perp * noise_val * 3.0;
+//         let final_pos = base_pos + offset;
 
-        commands.spawn((
-            Sprite {
-                color: Color::srgba(1.0, 1.0, 0.8, LIGHT_ALPHA),
-                custom_size: Some(Vec2::new(SEGMENT_SIZE, LIGHT_WIDTH)),
-                ..default()
-            },
-            Transform {
-                translation: final_pos.extend(5.0),
-                rotation: Quat::from_rotation_z(dir_normalized.y.atan2(dir_normalized.x)),
-                ..default()
-            },
-            GlobalTransform::default(), 
-            Visibility::Inherited,
-            InheritedVisibility::default(),
-            ViewVisibility::default(), 
-            LightSegment,
-        ));
-    }
-}
+//         commands.spawn((
+//             Sprite {
+//                 color: Color::srgba(1.0, 1.0, 0.8, LIGHT_ALPHA),
+//                 custom_size: Some(Vec2::new(SEGMENT_SIZE, LIGHT_WIDTH)),
+//                 ..default()
+//             },
+//             Transform {
+//                 translation: final_pos.extend(5.0),
+//                 rotation: Quat::from_rotation_z(dir_normalized.y.atan2(dir_normalized.x)),
+//                 ..default()
+//             },
+//             GlobalTransform::default(), 
+//             Visibility::Inherited,
+//             InheritedVisibility::default(),
+//             ViewVisibility::default(), 
+//             LightSegment,
+//         ));
+//     }
+// }
 
-fn cleanup_light_segments(mut commands: &mut Commands, query: Query<(Entity, &LightSegment)>, emissor: &Entity) {
-    for (entity, light_segment) in &query {
-        if light_segment.emissor != emissor { continue; }
-        commands.entity(entity).despawn();
-    }
-}
+// fn cleanup_light_segments(mut commands: &mut Commands, query: Query<(Entity, &LightSegment)>, emissor: &Entity) {
+//     for (entity, light_segment) in &query {
+//         if light_segment.emissor != emissor { continue; }
+//         commands.entity(entity).despawn();
+//     }
+// }
 
-fn emit_light(
-    mut commands: &mut Commands,
-    time: &Res<Time>,
-    origin: Vec2,
-    camera_position: Vec2,
-    //player_query: Query<&Transform, With<Player>>, // it doesn't need to be the player
-    //cache: &Res<CachedColliders>,
-    quadTree: &Res<QuadTree>,
-) {
-    if origin.distance_squared(camera_position) <= MAX_DISTANCE_RENDER {
+// fn emit_light(
+//     mut commands: &mut Commands,
+//     time: &Res<Time>,
+//     origin: Vec2,
+//     camera_position: Vec2,
+//     //player_query: Query<&Transform, With<Player>>, // it doesn't need to be the player
+//     //cache: &Res<CachedColliders>,
+//     quadTree: &Res<QuadTree>,
+// ) {
+//     if origin.distance_squared(camera_position) <= MAX_DISTANCE_RENDER {
     
-        //let player_pos = player_query.single().unwrap().translation.truncate();
-        for i in 0..72 {
+//         //let player_pos = player_query.single().unwrap().translation.truncate();
+//         for i in 0..72 {
 
-            let angle_deg = i as f32 * 5.0;
-            let angle_rad = angle_deg.to_radians();
+//             let angle_deg = i as f32 * 5.0;
+//             let angle_rad = angle_deg.to_radians();
 
-            let ray_dir = Vec2::new(angle_rad.cos(), angle_rad.sin()); // unit circle direction
+//             let ray_dir = Vec2::new(angle_rad.cos(), angle_rad.sin()); // unit circle direction
 
-            let ray = Ray {
-                origin,
-                direction: ray_dir.normalize(),
-            };
+//             let ray = Ray {
+//                 origin,
+//                 direction: ray_dir.normalize(),
+//             };
 
-            let perlin = Perlin::new(42);
+//             let perlin = Perlin::new(42);
 
-            let mut nearby = Vec::new();
-            let ray_bounds = Rect::from_center_size(ray.origin, Vec2::splat(300.0)); // light radius
-            //cached_colliders.quadtree.query(ray_bounds, &mut nearby);
-            quadTree.0.query(ray_bounds, &mut nearby);
+//             let mut nearby = Vec::new();
+//             let ray_bounds = Rect::from_center_size(ray.origin, Vec2::splat(300.0)); // light radius
+//             //cached_colliders.quadtree.query(ray_bounds, &mut nearby);
+//             quadTree.0.query(ray_bounds, &mut nearby);
 
-            for collider in nearby  {
+//             for collider in nearby  {
                 
-                // let rect = Rect::from_center_size(
-                //     collider.translation.truncate(),
-                //     Vec2::splat(32.0),
-                // );
+//                 // let rect = Rect::from_center_size(
+//                 //     collider.translation.truncate(),
+//                 //     Vec2::splat(32.0),
+//                 // );
 
-                if let Some(hit) = raycast_against_rect(&ray, collider.bounds) {
-                    spawn_light_ray_segments(
-                        &mut commands,
-                        &ray.origin,
-                        hit,
-                        &perlin,
-                        time.elapsed_secs(),
-                    );
-                    break; // stop after first collision
-                }
-            }
-        }
-    }
-}
+//                 if let Some(hit) = raycast_against_rect(&ray, collider.bounds) {
+//                     spawn_light_ray_segments(
+//                         &mut commands,
+//                         &ray.origin,
+//                         hit,
+//                         &perlin,
+//                         time.elapsed_secs(),
+//                     );
+//                     break; // stop after first collision
+//                 }
+//             }
+//         }
+//     }
+// }
 
 impl QuadtreeNode {
 
