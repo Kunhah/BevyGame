@@ -290,6 +290,7 @@ fn main() {
         .insert_resource(Conditionals(Flags::empty()))
         .insert_resource(Events::<DialogueBoxTriggerEvent>::default())
         .insert_resource(Events::<DialogueTriggerEvent>::default())
+        .insert_resource(DayCycle(480)) // every unit is 1 minute, 480 is equal to 08:00
         .add_systems(Startup, setup)
         .add_systems(Update, player_movement)
         .add_systems(Update, toggle_camera_lock)
@@ -352,7 +353,11 @@ struct CachedInteractables(Vec<(Transform, Interactable)>);
 struct QuadTree(QuadtreeNode);
 
 #[derive(Resource)]
-pub struct DayCycle(u8); // every unit is 10 minutes, 60 is equal to 06:00
+pub struct DayCycle(u32);
+// It is scaled by << 4 (* 16), to be directly compatible with duration of effects, to display the time in hors and minutes:
+// temp_x = x >> 4
+// h = temp_x / 60
+// m = temp_x % 60
 
 #[derive(Resource, Default)]
 pub struct CachedColliders(Vec<(Transform, Collider)>);
