@@ -40,6 +40,9 @@ use noise::{NoiseFn, Perlin};
 mod light_plugin;
 use light_plugin::*;
 
+mod combat_plugin;
+use combat_plugin::*;
+
 const SEGMENT_SIZE: f32 = 8.0;
 const LIGHT_ALPHA: f32 = 0.15;
 const LIGHT_WIDTH: f32 = 2.0;
