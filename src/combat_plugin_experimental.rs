@@ -1,16 +1,6 @@
 use bevy::prelude::*;
 use rand::Rng;
 use std::collections::VecDeque;
-use bevy::ecs::system::command::{insert_batch, insert_resource};
-use bevy::prelude::*;
-use std::fmt::Debug;
-use std::f32::consts::PI;
-use serde::{Serialize, Deserialize};
-use std::cmp::Ordering;
-use std::sync::Arc;
-use std::sync::RwLock;
-use std::fs;
-use std::f64::log;
 
 /// -----------------------------
 /// Components & Types
@@ -154,18 +144,6 @@ pub struct StatModifier {
 #[derive(Component, Debug)]
 pub struct Experience(pub u32);
 
-#[derive(Component, Debug)]
-pub struct Level(pub u32);
-
-#[derive(Component, Debug)]
-pub struct AccumulatedAgility(pub u32);
-
-impl Default for AccumulatedAgility {
-    fn default() -> Self {
-        Self(0)
-    }
-}
-
 /// AI parameters (kept as component)
 #[derive(Component, Debug)]
 pub struct AIParameters {
@@ -194,35 +172,35 @@ impl Default for AIParameters {
 /// Events (FULL EVENTS model)
 /// -----------------------------
 
-#[derive(Debug, Clone, Message)]
+#[derive(Debug, Clone)]
 pub struct AttackIntentEvent {
     pub attacker: Entity,
     pub target: Entity,
     pub ability_id: Option<u16>, // optional: which ability triggered the attack
 }
 
-#[derive(Debug, Clone, Message)]
+#[derive(Debug, Clone)]
 pub struct BeforeAttackEvent {
     pub attacker: Entity,
     pub target: Entity,
     pub context: AttackContext,
 }
 
-#[derive(Debug, Clone, Message)]
+#[derive(Debug, Clone)]
 pub struct AttackExecuteEvent {
     pub attacker: Entity,
     pub target: Entity,
     pub context: AttackContext,
 }
 
-#[derive(Debug, Clone, Message)]
+#[derive(Debug, Clone)]
 pub struct BeforeHitEvent {
     pub attacker: Entity,
     pub target: Entity,
     pub context: AttackContext,
 }
 
-#[derive(Debug, Clone, Message)]
+#[derive(Debug, Clone)]
 pub struct DamageEvent {
     pub attacker: Entity,
     pub target: Entity,
@@ -230,25 +208,7 @@ pub struct DamageEvent {
     pub damage_type: DamageType,
 }
 
-#[derive(Debug, Clone, Message)]
-pub struct HealEvent {
-    pub healer: Entity,
-    pub target: Entity,
-    pub amount: u32,
-}
-
-#[derive(Debug, Clone, Message)]
-pub struct ApplyBuffEvent {
-    pub applier: Entity,
-    pub target: Entity,
-    pub stat: Stat,
-    pub multiplier: f32,
-    pub duration_in_ticks: u32,
-    pub additional_effects: Option<Vec<AbilityEffect>>,
-    pub applied_at: u32,
-}
-
-#[derive(Debug, Clone, Message)]
+#[derive(Debug, Clone)]
 pub struct AfterHitEvent {
     pub attacker: Entity,
     pub target: Entity,
@@ -256,7 +216,200 @@ pub struct AfterHitEvent {
     pub damage_type: DamageType,
 }
 
-#[derive(Debug, Clone, Message)]
+#[derive(Debug, Clone)]
+pub struct AfterAttackEvent {
+    pub attacker: Entity,
+    pub target: Entity,
+    pub context: AttackContext,
+}
+
+#[derive(Component, Debug)]
+pub struct CharacterId(pub u32);
+
+#[derive(Component, Debug)]
+pub struct Name(pub String);
+
+#[derive(Component, Debug)]
+pub struct Class(pub String);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stat {
+    Health,
+    HealthRegen,
+    Magic,
+    MagicRegen,
+    Stamina,
+    StaminaRegen,
+    Lethality,
+    Hit,
+    Agility,
+    Mind,
+    Morale,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum DamageType {
+    Physical,
+    Fire,
+    Ice,
+    True,
+}
+
+/// Current / max / regen components
+#[derive(Component, Debug)]
+pub struct Health {
+    pub current: i32,
+    pub max: i32,
+    pub regen: i32,
+}
+
+#[derive(Component, Debug)]
+pub struct Magic {
+    pub current: i32,
+    pub max: i32,
+    pub regen: i32,
+}
+
+#[derive(Component, Debug)]
+pub struct Stamina {
+    pub current: i32,
+    pub max: i32,
+    pub regen: i32,
+}
+
+/// Base stats that describe the character (unchanged by temporary modifiers)
+#[derive(Component, Debug)]
+pub struct CombatStats {
+    pub base_lethality: i32,
+    pub base_hit: i32,
+    pub base_armor: i32,
+    pub base_agility: i32,
+    pub base_mind: i32,
+    pub base_morale: i32,
+    pub movement: i32,
+}
+
+/// XP / Level
+#[derive(Component, Debug)]
+pub struct Experience(pub u32); // raw XP; level is experience >> 16 as original
+
+#[derive(Component, Debug)]
+pub struct Level(pub u8);
+
+/// Accumulated agility for turn system (like your original accumulated_agility)
+#[derive(Component, Debug)]
+pub struct AccumulatedAgility(pub u32);
+
+/// Abilities placeholder (extend later)
+#[derive(Component, Debug, Default)]
+pub struct Abilities(pub Vec<u16>);
+
+/// Equipment slots hold Entities referencing equipment items
+#[derive(Component, Debug, Default)]
+pub struct EquipmentSlots {
+    pub weapon: Option<Entity>,
+    pub armor: Option<Entity>,
+    pub accessories: Vec<Entity>,
+}
+
+/// Tag components for class-specific logic (optional; systems can query these)
+#[derive(Component, Debug)]
+pub struct PaladinBehavior;
+
+#[derive(Component, Debug)]
+pub struct RogueBehavior;
+
+/// Equipment entity
+#[derive(Component, Debug)]
+pub struct Equipment {
+    pub id: u32,
+    pub name: String,
+    pub lethality: i32,
+    pub hit: i32,
+    pub armor: i32,
+    pub agility: i32,
+    pub mind: i32,
+    pub morale: i32,
+}
+
+/// Equipment Hooks & Buffs (same as before)
+#[derive(Clone, Debug)]
+pub enum EquipHook {
+    BeforeAttackMultiplier { stat: Stat, multiplier: f32, duration_turns: u32 },
+    BeforeHitFlatDamage { flat: i32 },
+}
+
+#[derive(Component, Debug)]
+pub struct EquipmentHooks(pub Vec<EquipHook>);
+
+#[derive(Component, Debug)]
+pub struct Buff {
+    pub stat: Stat,
+    pub multiplier: f32,
+    pub remaining_turns: u32,
+    pub source: Option<Entity>,
+}
+
+#[derive(Component, Debug)]
+pub struct StatModifiers(pub Vec<StatModifier>);
+
+#[derive(Clone, Debug)]
+pub struct StatModifier {
+    pub stat: Stat,
+    pub multiplier: f32,
+    pub expires_in_turns: Option<u32>,
+    pub source: Option<Entity>,
+}
+
+/// -----------------------------
+/// Events (extended)
+/// -----------------------------
+
+#[derive(Debug, Clone)]
+pub struct AttackIntentEvent {
+    pub attacker: Entity,
+    pub target: Entity,
+    pub ability_id: Option<u16>,
+}
+
+#[derive(Debug, Clone)]
+pub struct BeforeAttackEvent {
+    pub attacker: Entity,
+    pub target: Entity,
+    pub context: AttackContext,
+}
+
+#[derive(Debug, Clone)]
+pub struct AttackExecuteEvent {
+    pub attacker: Entity,
+    pub target: Entity,
+    pub context: AttackContext,
+}
+
+#[derive(Debug, Clone)]
+pub struct BeforeHitEvent {
+    pub attacker: Entity,
+    pub target: Entity,
+    pub context: AttackContext,
+}
+
+#[derive(Debug, Clone)]
+pub struct DamageEvent {
+    pub attacker: Entity,
+    pub target: Entity,
+    pub amount: i32,
+    pub damage_type: DamageType,
+}
+
+#[derive(Debug, Clone)]
+pub struct AfterHitEvent {
+    pub attacker: Entity,
+    pub target: Entity,
+    pub amount: i32,
+    pub damage_type: DamageType,
+}
+
+#[derive(Debug, Clone)]
 pub struct AfterAttackEvent {
     pub attacker: Entity,
     pub target: Entity,
@@ -264,13 +417,13 @@ pub struct AfterAttackEvent {
 }
 
 /// XP / leveling events
-#[derive(Debug, Clone, Message)]
+#[derive(Debug, Clone)]
 pub struct XPGainEvent {
     pub receiver: Entity,
     pub amount: u32,
 }
 
-#[derive(Debug, Clone, Message)]
+#[derive(Debug, Clone)]
 pub struct LevelUpEvent {
     pub who: Entity,
     pub old_level: u8,
@@ -278,26 +431,16 @@ pub struct LevelUpEvent {
 }
 
 /// Turn & timeline events
-#[derive(Debug, Clone, Message)]
+#[derive(Debug, Clone)]
 pub struct TurnOrderCalculatedEvent; // signals the TurnOrder resource was updated
 
-#[derive(Debug, Clone, Message)]
+#[derive(Debug, Clone)]
 pub struct TurnStartEvent {
     pub who: Entity,
 }
 
-#[derive(Debug, Clone, Message)]
+#[derive(Debug, Clone)]
 pub struct TurnEndEvent {
-    pub who: Entity,
-}
-
-#[derive(Debug, Clone, Message)]
-pub struct RoundStartEvent {
-    pub who: Entity,
-}
-
-#[derive(Debug, Clone, Message)]
-pub struct RoundEndEvent {
     pub who: Entity,
 }
 
@@ -326,11 +469,152 @@ impl Default for AttackContext {
 /// Systems
 /// -----------------------------
 
+/// Startup: spawns example characters and equipment
+fn spawn_examples(mut commands: Commands) {
+    // Example equipment: Silversteel Blade (weapon)
+    let sword = commands
+        .spawn((
+            Equipment {
+                id: 5001,
+                name: "Silversteel Blade".to_string(),
+                lethality: 10,
+                hit: 5,
+                armor: 0,
+                agility: 2,
+                mind: 0,
+                morale: 0,
+            },
+            EquipmentHooks(vec![EquipHook::BeforeAttackMultiplier {
+                stat: Stat::Lethality,
+                multiplier: 1.15,
+                duration_turns: 1,
+            }]),
+        ))
+        .id();
+
+    // Petrus (Paladin) entity
+    let petrus = commands
+        .spawn((
+            Name("Petrus".to_string()),
+            CharacterId(1),
+            Class("Paladin".to_string()),
+            Health {
+                current: 180,
+                max: 180,
+                regen: 2,
+            },
+            Magic {
+                current: 60,
+                max: 60,
+                regen: 1,
+            },
+            Stamina {
+                current: 100,
+                max: 100,
+                regen: 3,
+            },
+            CombatStats {
+                base_lethality: 18,
+                base_hit: 80,
+                base_armor: 20,
+                base_agility: 7,
+                base_mind: 10,
+                base_morale: 95,
+                movement: 5,
+            },
+            EquipmentSlots {
+                weapon: Some(sword),
+                ..Default::default()
+            },
+            Abilities(vec![]),
+            Experience(0),
+            PaladinBehavior,
+            AIParameters {
+                aggressiveness: 6,
+                caution: 4,
+                curiosity: 4,
+                perception: 7,
+                bravery: 9,
+                patience: 6,
+            },
+            StatModifiers(Vec::new()),
+        ))
+        .id();
+
+    // Rina (Rogue) entity
+    let rina = commands
+        .spawn((
+            Name("Rina".to_string()),
+            CharacterId(2),
+            Class("Rogue".to_string()),
+            Health {
+                current: 90,
+                max: 90,
+                regen: 1,
+            },
+            Magic {
+                current: 40,
+                max: 40,
+                regen: 1,
+            },
+            Stamina {
+                current: 80,
+                max: 80,
+                regen: 2,
+            },
+            CombatStats {
+                base_lethality: 14,
+                base_hit: 90,
+                base_armor: 10,
+                base_agility: 14,
+                base_mind: 9,
+                base_morale: 85,
+                movement: 7,
+            },
+            EquipmentSlots::default(),
+            Abilities(vec![]),
+            Experience(0),
+            RogueBehavior,
+            AIParameters {
+                aggressiveness: 5,
+                caution: 7,
+                curiosity: 6,
+                perception: 9,
+                bravery: 6,
+                patience: 4,
+            },
+            StatModifiers(Vec::new()),
+        ))
+        .id();
+
+    // Optional: spawn a buff entity (e.g., Blessing of Courage) applied to Petrus
+    let blessing = commands
+        .spawn((
+            Buff {
+                stat: Stat::Hit,
+                multiplier: 1.10, // +10% hit
+                remaining_turns: 3,
+                source: None,
+            },
+            // link it to Petrus by adding a marker component or by storing ApplyTo resource. Simpler approach:
+        ))
+        .id();
+
+    // For demonstration: attach the buff to petrus by inserting a StatModifier directly
+    commands.entity(petrus).insert(StatModifiers(vec![StatModifier {
+        stat: Stat::Hit,
+        multiplier: 1.10,
+        expires_in_turns: Some(3),
+        source: Some(blessing),
+    }]));
+
+    info!("Spawned Petrus (Entity {:?}) and Rina (Entity {:?}), sword: {:?}", petrus, rina, sword);
+}
 
 /// Process AttackIntentEvent -> send BeforeAttackEvent
 fn process_attack_intent(
-    mut intents: MessageReader<AttackIntentEvent>,
-    mut befores: MessageWriter<BeforeAttackEvent>,
+    mut intents: EventReader<AttackIntentEvent>,
+    mut befores: EventWriter<BeforeAttackEvent>,
     stats_q: Query<&CombatStats>,
 ) {
     for intent in intents.iter() {
@@ -360,7 +644,7 @@ fn process_attack_intent(
 
 /// Generic equipment system: reacts to BeforeAttackEvent and applies stat modifiers when equipment has matching hooks.
 fn equipment_before_attack_listener(
-    mut befores: MessageReader<BeforeAttackEvent>,
+    mut befores: EventReader<BeforeAttackEvent>,
     equipment_q: Query<(Entity, &Equipment, &EquipmentHooks)>,
     slots_q: Query<&EquipmentSlots>,
     mut commands: Commands,
@@ -412,8 +696,8 @@ fn equipment_before_attack_listener(
 
 /// After all BeforeAttack listeners ran, we push an AttackExecuteEvent so the pipeline continues
 fn before_to_execute(
-    mut befores: MessageReader<BeforeAttackEvent>,
-    mut execs: MessageWriter<AttackExecuteEvent>,
+    mut befores: EventReader<BeforeAttackEvent>,
+    mut execs: EventWriter<AttackExecuteEvent>,
 ) {
     for ev in befores.iter() {
         execs.send(AttackExecuteEvent {
@@ -426,8 +710,8 @@ fn before_to_execute(
 
 /// BeforeHit listeners: weapons or buffs may add flat damage or additional multipliers
 fn before_hit_listeners(
-    mut executes: MessageReader<AttackExecuteEvent>,
-    mut before_hits: MessageWriter<BeforeHitEvent>,
+    mut executes: EventReader<AttackExecuteEvent>,
+    mut before_hits: EventWriter<BeforeHitEvent>,
 ) {
     for ev in executes.iter() {
         // For now, forward to BeforeHitEvent; systems can mutate context by listening here (we pass clone)
@@ -441,8 +725,8 @@ fn before_hit_listeners(
 
 /// Execute the hit: compute damage using CombatStats + StatModifiers + context
 fn execute_hit_system(
-    mut before_hits: MessageReader<BeforeHitEvent>,
-    mut damage_writer: MessageWriter<DamageEvent>,
+    mut before_hits: EventReader<BeforeHitEvent>,
+    mut damage_writer: EventWriter<DamageEvent>,
     stats_q: Query<&CombatStats>,
     modifiers_q: Query<&StatModifiers>,
 ) {
@@ -483,8 +767,8 @@ fn execute_hit_system(
 
 /// Apply damage to target's Health and emit AfterHitEvent
 fn apply_damage_system(
-    mut damages: MessageReader<DamageEvent>,
-    mut after_hit_writer: MessageWriter<AfterHitEvent>,
+    mut damages: EventReader<DamageEvent>,
+    mut after_hit_writer: EventWriter<AfterHitEvent>,
     mut health_q: Query<&mut Health>,
 ) {
     for ev in damages.iter() {
@@ -504,8 +788,8 @@ fn apply_damage_system(
 
 /// After hit: allow equipment or buffs to react (e.g., lifesteal)
 fn after_hit_listeners(
-    mut after_hits: MessageReader<AfterHitEvent>,
-    mut after_attack_writer: MessageWriter<AfterAttackEvent>,
+    mut after_hits: EventReader<AfterHitEvent>,
+    mut after_attack_writer: EventWriter<AfterAttackEvent>,
 ) {
     for ev in after_hits.iter() {
         // Could apply on-hit effects here
@@ -518,7 +802,7 @@ fn after_hit_listeners(
 }
 
 /// Cleanup after attack (final stage)
-fn after_attack_finalizers(mut after_attacks: MessageReader<AfterAttackEvent>) {
+fn after_attack_finalizers(mut after_attacks: EventReader<AfterAttackEvent>) {
     for ev in after_attacks.iter() {
         info!("AfterAttack: attacker={:?}, target={:?}", ev.attacker, ev.target);
         // Trigger visual effects, animations, etc. from here
@@ -583,7 +867,7 @@ fn regen_system(mut qh: Query<&mut Health>, qm: Query<&mut Magic>, qs: Query<&mu
 
 /// Example AI system that makes a simple attack intent for demo
 fn demo_ai_system(
-    mut intents: MessageWriter<AttackIntentEvent>,
+    mut intents: EventWriter<AttackIntentEvent>,
     query_chars: Query<Entity, With<CombatStats>>,
 ) {
     // Very naive: if there are at least two entities, make one attack the next
@@ -601,6 +885,59 @@ fn demo_ai_system(
     }
 }
 
+/// Debug print of characters status
+fn debug_print_system(
+    q: Query<(
+        &Name,
+        &CharacterId,
+        &Health,
+        &CombatStats,
+        Option<&StatModifiers>,
+        Option<&EquipmentSlots>,
+    )>,
+) {
+    for (name, id, health, stats, mods, slots) in q.iter() {
+        let mut s = format!(
+            "{}({:?}) HP: {}/{} Leth:{} Hit:{}",
+            name.0, id.0, health.current, health.max, stats.base_lethality, stats.base_hit
+        );
+        if let Some(mods) = mods {
+            if !mods.0.is_empty() {
+                s.push_str(&format!(" Mods: {:?}", mods.0));
+            }
+        }
+        if let Some(slots) = slots {
+            if slots.weapon.is_some() {
+                s.push_str(" WeaponEquipped");
+            }
+        }
+        info!("{}", s);
+    }
+}
+
+/// -----------------------------
+/// Components & Types (extended)
+/// -----------------------------
+
+/// Context shared along the attack pipeline; systems may mutate `meta` or read values.
+#[derive(Debug, Clone)]
+pub struct AttackContext {
+    pub base_lethality: i32,
+    pub base_hit: i32,
+    pub extra_flat_damage: i32,
+    pub multipliers: Vec<StatModifier>,
+}
+
+impl Default for AttackContext {
+    fn default() -> Self {
+        Self {
+            base_lethality: 0,
+            base_hit: 0,
+            extra_flat_damage: 0,
+            multipliers: Vec::new(),
+        }
+    }
+}
 
 /// -----------------------------
 /// Turn Manager resource
@@ -658,7 +995,7 @@ impl TurnManager {
         mut acc_q: &mut Query<&mut AccumulatedAgility>,
         stats_q: &Query<&CombatStats>,
     ) -> Vec<Entity> {
-        let mut rng = rand::rng();
+        let mut rng = rand::thread_rng();
         let mut order: Vec<Entity> = Vec::new();
 
         // iterate participants in stable order
@@ -738,8 +1075,8 @@ fn calculate_xp_award(receiver_experience: u32, enemy_experience: u32) -> u32 {
 
 /// Handle XPGainEvent: add to Experience component and emit LevelUpEvent if level increases
 fn xp_gain_system(
-    mut xp_events: MessageReader<XPGainEvent>,
-    mut xp_writer: MessageWriter<LevelUpEvent>,
+    mut xp_events: EventReader<XPGainEvent>,
+    mut xp_writer: EventWriter<LevelUpEvent>,
     mut qxp: Query<(&mut Experience, &mut Level)>,
 ) {
     for ev in xp_events.iter() {
@@ -765,7 +1102,7 @@ fn xp_gain_system(
 /// The original used strange formulas; here we approximate the same behavior while keeping types safe.
 /// Each function will increase appropriate components.
 fn level_up_system(
-    mut lvl_events: MessageReader<LevelUpEvent>,
+    mut lvl_events: EventReader<LevelUpEvent>,
     mut q_stats: Query<(
         &mut CombatStats,
         Option<&mut Health>,
@@ -847,7 +1184,7 @@ fn compute_turn_order_system(
     mut acc_q: Query<&mut AccumulatedAgility>,
     stats_q: Query<&CombatStats>,
     levels_q: Query<&Level>,
-    mut ev_writer: MessageWriter<TurnOrderCalculatedEvent>,
+    mut ev_writer: EventWriter<TurnOrderCalculatedEvent>,
 ) {
     // recompute threshold / max jitter based on participants
     tm.recompute_params(&stats_q, &levels_q);
@@ -860,7 +1197,7 @@ fn compute_turn_order_system(
     // call tm.calculate_turn_order(mut acc_q, &stats_q)
     // Unfortunately we cannot pass Query into a method expecting &mut Query, so inline behavior here:
 
-    let mut rng = rand::rng();
+    let mut rng = rand::thread_rng();
     for &entity in &tm.participants {
         if let Ok(mut acc) = acc_q.get_mut(entity) {
             let agility = stats_q.get(entity).map(|s| s.base_agility.max(0) as u32).unwrap_or(0);
@@ -885,7 +1222,7 @@ fn compute_turn_order_system(
 }
 
 /// Splits out the next entity from TurnOrder and emits a TurnStartEvent
-fn advance_turn_system(mut turn_order: ResMut<TurnOrder>, mut ev_writer: MessageWriter<TurnStartEvent>) {
+fn advance_turn_system(mut turn_order: ResMut<TurnOrder>, mut ev_writer: EventWriter<TurnStartEvent>) {
     if let Some(next) = turn_order.queue.pop_front() {
         ev_writer.send(TurnStartEvent { who: next });
     }
@@ -894,9 +1231,9 @@ fn advance_turn_system(mut turn_order: ResMut<TurnOrder>, mut ev_writer: Message
 /// Example: when a turn starts for an entity, we allow AI or player to emit AttackIntentEvent.
 /// For simplicity demo AI will fire an intent against any other participant.
 fn on_turn_start_system(
-    mut ev_reader: MessageReader<TurnStartEvent>,
+    mut ev_reader: EventReader<TurnStartEvent>,
     q_participants: Query<Entity, With<CombatStats>>,
-    mut intent_writer: MessageWriter<AttackIntentEvent>,
+    mut intent_writer: EventWriter<AttackIntentEvent>,
 ) {
     for ev in ev_reader.iter() {
         // simple demo: find first entity different from ev.who and issue attack
@@ -918,7 +1255,7 @@ fn on_turn_start_system(
 }
 
 /// At the end of a turn, we emit TurnEndEvent to allow cleanup and buff ticks if you prefer to tie buff durations to turns.
-fn on_turn_end_system(mut ev_reader: MessageReader<TurnEndEvent>, mut _commands: Commands) {
+fn on_turn_end_system(mut ev_reader: EventReader<TurnEndEvent>, mut _commands: Commands) {
     for ev in ev_reader.iter() {
         info!("Turn ended for {:?}", ev.who);
         // You can do per-turn cleanup here if necessary
@@ -928,9 +1265,9 @@ fn on_turn_end_system(mut ev_reader: MessageReader<TurnEndEvent>, mut _commands:
 /// A helper system that consumes TurnOrderCalculatedEvent and then advances the turn automatically.
 /// (Optional: you may want to call advance once per frame or per game tick)
 fn auto_advance_after_order(
-    mut ev_reader: MessageReader<TurnOrderCalculatedEvent>,
+    mut ev_reader: EventReader<TurnOrderCalculatedEvent>,
     mut turn_order: ResMut<TurnOrder>,
-    mut ev_writer: MessageWriter<TurnStartEvent>,
+    mut ev_writer: EventWriter<TurnStartEvent>,
 ) {
     for _ in ev_reader.iter() {
         if let Some(next) = turn_order.queue.pop_front() {
@@ -941,7 +1278,7 @@ fn auto_advance_after_order(
 
 /// Buff tick per turn: when a TurnStartEvent occurs for a character, decrement their buff durations (so durations map to turns).
 fn buff_tick_on_turn_start_system(
-    mut ev_reader: MessageReader<TurnStartEvent>,
+    mut ev_reader: EventReader<TurnStartEvent>,
     mut query_buffs: Query<(Entity, &mut Buff)>,
     mut commands: Commands,
     mut modifiers_q: Query<(Entity, &mut StatModifiers)>,
@@ -988,11 +1325,147 @@ fn buff_tick_on_turn_start_system(
 /// refer to earlier code for full pipeline. We keep the key entry point systems.
 /// -----------------------------
 
+fn process_attack_intent(
+    mut intents: EventReader<AttackIntentEvent>,
+    mut befores: EventWriter<BeforeAttackEvent>,
+    stats_q: Query<&CombatStats>,
+) {
+    for intent in intents.iter() {
+        if let Ok(stats) = stats_q.get(intent.attacker) {
+            let ctx = AttackContext {
+                base_lethality: stats.base_lethality,
+                base_hit: stats.base_hit,
+                extra_flat_damage: 0,
+                multipliers: Vec::new(),
+            };
+            befores.send(BeforeAttackEvent {
+                attacker: intent.attacker,
+                target: intent.target,
+                context: ctx,
+            });
+        } else {
+            befores.send(BeforeAttackEvent {
+                attacker: intent.attacker,
+                target: intent.target,
+                context: AttackContext::default(),
+            });
+        }
+    }
+}
+
+fn before_to_execute(
+    mut befores: EventReader<BeforeAttackEvent>,
+    mut execs: EventWriter<AttackExecuteEvent>,
+) {
+    for ev in befores.iter() {
+        execs.send(AttackExecuteEvent {
+            attacker: ev.attacker,
+            target: ev.target,
+            context: ev.context.clone(),
+        });
+    }
+}
+
+fn before_hit_listeners(
+    mut executes: EventReader<AttackExecuteEvent>,
+    mut before_hits: EventWriter<BeforeHitEvent>,
+) {
+    for ev in executes.iter() {
+        before_hits.send(BeforeHitEvent {
+            attacker: ev.attacker,
+            target: ev.target,
+            context: ev.context.clone(),
+        });
+    }
+}
+
+fn execute_hit_system(
+    mut before_hits: EventReader<BeforeHitEvent>,
+    mut damage_writer: EventWriter<DamageEvent>,
+    stats_q: Query<&CombatStats>,
+    modifiers_q: Query<&StatModifiers>,
+) {
+    for ev in before_hits.iter() {
+        let mut base_leth = ev.context.base_lethality;
+        let _base_hit = ev.context.base_hit;
+        let mut flat = ev.context.extra_flat_damage;
+
+        if let Ok(mods) = modifiers_q.get(ev.attacker) {
+            for m in &mods.0 {
+                if m.stat == Stat::Lethality {
+                    base_leth = ((base_leth as f32) * m.multiplier).round() as i32;
+                }
+            }
+        }
+
+        if let Ok(att_stats) = stats_q.get(ev.attacker) {
+            base_leth += att_stats.base_lethality - ev.context.base_lethality;
+        }
+
+        let final_damage = (base_leth + flat).max(0);
+        damage_writer.send(DamageEvent {
+            attacker: ev.attacker,
+            target: ev.target,
+            amount: final_damage,
+            damage_type: DamageType::Physical,
+        });
+    }
+}
+
+fn apply_damage_system(
+    mut damages: EventReader<DamageEvent>,
+    mut after_hit_writer: EventWriter<AfterHitEvent>,
+    mut health_q: Query<&mut Health>,
+) {
+    for ev in damages.iter() {
+        if let Ok(mut health) = health_q.get_mut(ev.target) {
+            let before = health.current;
+            health.current = (health.current - ev.amount).max(0);
+            let applied = before - health.current;
+            after_hit_writer.send(AfterHitEvent {
+                attacker: ev.attacker,
+                target: ev.target,
+                amount: applied,
+                damage_type: ev.damage_type,
+            });
+        }
+    }
+}
+
+fn after_hit_listeners(
+    mut after_hits: EventReader<AfterHitEvent>,
+    mut after_attack_writer: EventWriter<AfterAttackEvent>,
+) {
+    for ev in after_hits.iter() {
+        after_attack_writer.send(AfterAttackEvent {
+            attacker: ev.attacker,
+            target: ev.target,
+            context: AttackContext::default(),
+        });
+    }
+}
+
+fn after_attack_finalizers(mut after_attacks: EventReader<AfterAttackEvent>) {
+    for ev in after_attacks.iter() {
+        info!("AfterAttack: attacker={:?}, target={:?}", ev.attacker, ev.target);
+    }
+}
 
 /// -----------------------------
 /// Supporting systems
 /// -----------------------------
 
+fn regen_system(mut qh: Query<&mut Health>, mut qm: Query<&mut Magic>, mut qs: Query<&mut Stamina>) {
+    for mut h in qh.iter_mut() {
+        h.current = (h.current + h.regen).min(h.max);
+    }
+    for mut m in qm.iter_mut() {
+        m.current = (m.current + m.regen).min(m.max);
+    }
+    for mut s in qs.iter_mut() {
+        s.current = (s.current + s.regen).min(s.max);
+    }
+}
 
 /// Debug print of characters status
 fn debug_print_system(
@@ -1028,346 +1501,6 @@ fn debug_print_system(
         }
         info!("{}", s);
     }
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub enum AbilityEffect {
-    Heal { floor: u32, ceiling: u32 },
-    Damage { floor: u32, ceiling: u32, damage_type: DamageType },
-    Buff { stat: String, multiplier: f32, effects: Option<Vec<u16>> },   // e.g. "agility", 1.2 multiplier
-    //Debuff { stat: String, multiplier: f32 },
-    //Custom(String),      // for scripting later
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub enum AbilityShape {
-    Radius(f32),
-    Line { length: f32, thickness: f32 },
-    Cone { angle: f32, radius: f32 },
-    Select,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct Ability {
-    pub id: u16, // first 8 bits is level, second 8 bits is sub-id
-    pub next_id: Option<u16>,
-    pub name: String,
-    pub health_cost: i32,
-    pub magic_cost: i32,
-    pub stamina_cost: i32,
-    pub cooldown: u8,
-    pub description: String,
-    pub effects: Vec<AbilityEffect>,
-    pub shape: AbilityShape,
-    pub duration: u8, // 0 for single turn instantenous
-    pub targets: u8,
-}
-
-impl Ability {
-    pub fn get_level(&self) -> u8 { (self.id << 8).try_into().unwrap() }
-    pub fn get_sub_id(&self) -> u8 { (self.id >> 8).try_into().unwrap() }
-}
-
-//
-// === Binary Tree for Abilities ===
-//
-
-#[derive(Clone)]
-pub struct AbilityNode {
-    pub ability: Ability,
-    pub left: Option<Arc<RwLock<AbilityNode>>>,
-    pub right: Option<Arc<RwLock<AbilityNode>>>,
-}
-
-impl AbilityNode {
-    pub fn new(ability: Ability) -> Arc<RwLock<Self>> {
-        Arc::new(RwLock::new(AbilityNode {
-            ability,
-            left: None,
-            right: None,
-        }))
-    }
-}
-
-#[derive(Resource, Clone)]
-pub struct Ability_Tree(AbilityTree);
-
-pub struct AbilityTree {
-    pub root: Option<Arc<RwLock<AbilityNode>>>,
-}
-
-impl AbilityTree {
-    pub fn new() -> Self {
-        AbilityTree { root: None }
-    }
-
-    pub fn insert(&mut self, ability: Ability) {
-        let node = AbilityNode::new(ability.clone());
-
-        match &self.root {
-            None => self.root = Some(node),
-            Some(root) => Self::insert_node(root.clone(), node),
-        }
-    }
-
-    fn insert_node(current: Arc<RwLock<AbilityNode>>, new_node: Arc<RwLock<AbilityNode>>) {
-        
-        // INSERTION MUST BE MADE WITH THE FIRST SUB-ID OF EACH LEVEL IN ORDER, SO THE ENTIRE TREE IS AT THE LEFT AND THE LEVELS ARE ALL ONE IN THE RIGHT OF THE OTHER
-        let new_id = new_node.read().unwrap().ability.id;
-        let current_id = current.read().unwrap().ability.id;
-
-        match new_id.cmp(&current_id) {
-            Ordering::Less => {
-                if let Some(left) = &current.read().unwrap().left {
-                    Self::insert_node(left.clone(), new_node);
-                } else {
-                    current.write().unwrap().left = Some(new_node);
-                }
-            }
-            Ordering::Greater => {
-                if let Some(right) = &current.read().unwrap().right {
-                    Self::insert_node(right.clone(), new_node);
-                } else {
-                    current.write().unwrap().right = Some(new_node);
-                }
-            }
-            Ordering::Equal => {
-                // duplicate ID; ignore or replace
-                current.write().unwrap().ability = new_node.read().unwrap().ability.clone();
-            }
-        }
-    }
-
-    pub fn find(&self, id: u16) -> Option<Ability> {
-        Self::find_node(self.root.clone(), id)
-    }
-
-    fn find_node(node: Option<Arc<RwLock<AbilityNode>>>, id: u16) -> Option<Ability> {
-        if let Some(n) = node {
-            let n_borrow = n.read().unwrap();
-            if id == n_borrow.ability.id {
-                return Some(n_borrow.ability.clone());
-            } else if id < n_borrow.ability.id {
-                return Self::find_node(n_borrow.left.clone(), id);
-            } else {
-                return Self::find_node(n_borrow.right.clone(), id);
-            }
-        }
-        None
-    }
-
-    fn find_all_level(&self, level: u8) -> Option<Vec<Ability>> {
-        let mut current_node = self.root.clone();
-
-        while let Some(n) = current_node {
-            let n_borrow = n.read().unwrap();
-            if n_borrow.ability.get_level() == level {
-                let mut results = Vec::new();
-                Self::collect_level_abilities(self.root.clone(), level, &mut results);
-                return Some(results);
-
-            } else {
-                current_node = n_borrow.right.clone();
-            }
-        }
-        None
-    }
-
-    fn collect_level_abilities(
-        node: Option<Arc<RwLock<AbilityNode>>>,
-        level: u8,
-        results: &mut Vec<Ability>,
-    ) {
-        if let Some(n) = node {
-
-            let n_borrow = n.read().unwrap();
-            results.push(n_borrow.ability.clone());
-
-            // Explore children safely
-            Self::collect_level_abilities(n_borrow.left.clone(), level, results);
-            Self::collect_level_abilities(n_borrow.right.clone(), level, results);
-        }
-    }
-
-    pub fn traverse_all(&self) -> Vec<Ability> {
-        let mut all = Vec::new();
-        Self::collect_all(self.root.clone(), &mut all);
-        all
-    }
-
-    fn collect_all(node: Option<Arc<RwLock<AbilityNode>>>, all: &mut Vec<Ability>) {
-        if let Some(n) = node {
-            let n_borrow = n.read().unwrap();
-            all.push(n_borrow.ability.clone());
-            Self::collect_all(n_borrow.left.clone(), all);
-            Self::collect_all(n_borrow.right.clone(), all);
-        }
-    }
-}
-
-pub fn handle_ability(
-    caster: Entity,
-    ability: &Ability,
-    affected_entities: &Vec<Entity>,
-    now: u32,
-    mut heal_events: MessageWriter<HealEvent>,
-    mut damage_events: MessageWriter<DamageEvent>,
-    mut buff_events: MessageWriter<ApplyBuffEvent>,
-) {
-    for target in affected_entities.iter().copied() {
-        for effect in &ability.effects {
-            match effect {
-                AbilityEffect::Heal { floor, ceiling } => {
-                    let amount = rand::rng().gen_range(*floor..*ceiling);
-                    heal_events.send(HealEvent { healer: caster, target, amount });
-                }
-
-                AbilityEffect::Damage { floor, ceiling, damage_type } => {
-                    let amount = rand::rng().gen_range(*floor..*ceiling);
-                    damage_events.send(DamageEvent {
-                        attacker: caster,
-                        target,
-                        amount,
-                        damage_type: *damage_type,
-                    });
-                }
-
-                AbilityEffect::Buff { stat, multiplier, effects } => {
-                    buff_events.send(ApplyBuffEvent {
-                        applier: caster,
-                        target,
-                        stat: *stat,
-                        multiplier: *multiplier,
-                        duration_in_ticks: ability.duration,
-                        additional_effects: effects.clone(),
-                        applied_at: now,
-                    });
-                }
-            }
-        }
-    }
-
-
-    // TODO: FIND A WAY TO TARGET IN THE NEXT ABILITY, I THINK THAT THE BEST OPTION IS TO CALL THIS MULTIPLE TIMES INSTEAD OF CALLING THIS FUNCTION RECURSIVELY
-
-    // if ability.next_id.is_some() {
-    //     let next_id = ability.next_id.clone().unwrap();
-    //     let next_ability = ability_tree.find(next_id).unwrap();
-    //     let next_affected_characters = get_affected_characters(&next_ability, affected_characters, ); 
-    //     handle_ability(&next_ability, &next_affected_characters)
-    // }
-}
-
-pub fn get_affected_characters(
-    ability: &Ability,
-    player_entity: Entity,
-    cursor_position: (f32, f32),
-    query: &Query<(Entity, &Position)>,
-    player_position_query: &Query<&Position>,
-) -> Vec<Entity> {
-    let mut affected = Vec::new();
-
-    let player_pos = player_position_query.get(player_entity).unwrap();
-    let player_position = (player_pos.x, player_pos.y);
-
-    for (entity, pos) in query.iter() {
-        let target_position = (pos.x, pos.y);
-
-        let is_affected = match &ability.shape {
-            AbilityShape::Radius(radius) => {
-                is_in_radius(*radius, player_position, target_position)
-            }
-
-            AbilityShape::Line { length, thickness } => {
-                is_in_line(*length, *thickness, player_position, cursor_position, target_position)
-            }
-
-            AbilityShape::Cone { angle, radius } => {
-                is_in_cone(*angle, *radius, player_position, cursor_position, target_position)
-            }
-
-            AbilityShape::Select => {
-                distance(target_position, cursor_position) < 0.5
-            }
-        };
-
-        if is_affected {
-            affected.push(entity);
-        }
-    }
-
-    affected
-}
-
-
-//
-// === Geometry Helpers ===
-//
-
-fn distance(a: (f32, f32), b: (f32, f32)) -> f32 {
-    ((a.0 - b.0).powi(2) + (a.1 - b.1).powi(2)).sqrt()
-}
-
-/// Check if position is inside a circle (radius AoE)
-fn is_in_radius(radius: f32, origin: (f32, f32), target: (f32, f32)) -> bool {
-    distance(origin, target) <= radius
-}
-
-/// Check if position is inside a rectangular line AoE
-fn is_in_line(length: f32, thickness: f32, origin: (f32, f32), cursor: (f32, f32), target: (f32, f32)) -> bool {
-    // Direction vector (normalized)
-    let dir = normalize((cursor.0 - origin.0, cursor.1 - origin.1));
-    let to_target = (target.0 - origin.0, target.1 - origin.1);
-
-    // Projection length along the line
-    let proj = dot(to_target, dir);
-
-    if proj < 0.0 || proj > length {
-        return false;
-    }
-
-    // Perpendicular distance to line
-    let closest = (origin.0 + dir.0 * proj, origin.1 + dir.1 * proj);
-    let dist = distance(closest, target);
-    dist <= thickness / 2.0
-}
-
-/// Check if position is inside a cone (angle, radius)
-fn is_in_cone(angle_deg: f32, radius: f32, origin: (f32, f32), cursor: (f32, f32), target: (f32, f32)) -> bool {
-    let dir = normalize((cursor.0 - origin.0, cursor.1 - origin.1));
-    let to_target = (target.0 - origin.0, target.1 - origin.1);
-    let dist = length(to_target);
-
-    if dist > radius {
-        return false;
-    }
-
-    let norm_target = normalize(to_target);
-    let dot_val = dot(dir, norm_target).clamp(-1.0, 1.0);
-    let angle_to_target = dot_val.acos() * (180.0 / PI); // convert to degrees
-
-    angle_to_target <= angle_deg / 2.0
-}
-
-//
-// === Vector Math ===
-//
-
-fn length(v: (f32, f32)) -> f32 {
-    (v.0 * v.0 + v.1 * v.1).sqrt()
-}
-
-fn normalize(v: (f32, f32)) -> (f32, f32) {
-    let len = length(v);
-    if len == 0.0 {
-        (0.0, 0.0)
-    } else {
-        (v.0 / len, v.1 / len)
-    }
-}
-
-fn dot(a: (f32, f32), b: (f32, f32)) -> f32 {
-    a.0 * b.0 + a.1 * b.1
 }
 
 /// -----------------------------
@@ -1481,27 +1614,6 @@ fn spawn_examples(mut commands: Commands, mut tm: ResMut<TurnManager>) {
     // register participants in turn manager
     tm.participants.push(petrus);
     tm.participants.push(rina);
-
-    // Optional: spawn a buff entity (e.g., Blessing of Courage) applied to Petrus
-    let blessing = commands
-        .spawn((
-            Buff {
-                stat: Stat::Hit,
-                multiplier: 1.10, // +10% hit
-                remaining_turns: 3,
-                source: None,
-            },
-            // link it to Petrus by adding a marker component or by storing ApplyTo resource. Simpler approach:
-        ))
-        .id();
-
-    // For demonstration: attach the buff to petrus by inserting a StatModifier directly
-    commands.entity(petrus).insert(StatModifiers(vec![StatModifier {
-        stat: Stat::Hit,
-        multiplier: 1.10,
-        expires_in_turns: Some(3),
-        source: Some(blessing),
-    }]));
 
     info!("Spawned Petrus {:?} and Rina {:?} (sword {:?})", petrus, rina, sword);
 }

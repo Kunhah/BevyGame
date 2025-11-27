@@ -120,10 +120,14 @@ pub struct DialogueLine {
 }
 
 #[derive(Debug, Clone, Copy)]
-enum GameState {
+enum Game_State {
+    MainMenu,
     Exploring,
     Interacting,
-    Battle
+    Shopping,
+    Battle,
+    Traveling,
+    Paused,
 }
 
 pub struct DialogueData(pub HashMap<String, DialogueLine>);
@@ -152,7 +156,7 @@ impl Default for DialogueState {
 
 impl Default for GameState {
     fn default() -> Self {
-        GameState::Exploring
+        Game_State::Exploring
     }
 }
 
@@ -183,6 +187,37 @@ pub struct QuadtreeNode {
     pub children: Option<[Box<QuadtreeNode>; 4]>,
 }
 
+pub struct MapTiles {
+    pub tiles: Vec<Vec<MapTile>>
+}
+
+pub struct MapTile {
+    pub time: u32, // time to travel through, example, mountains will take a lot of time to travel through, forest will take less time, but it will still take more time than plains
+    pub location_id: u32, // id of the place, if entered it will load a place with this id
+    pub type_id: u8, // type of tile, it can be mountais, water, plains, forest, etc
+    pub event_id: Option<u32>,
+    pub items_id: Option<Vec<u32>>,
+}
+
+pub enum TravelingSpeed { // traveling at fast speed will make you not notice events and items, and be easier to ambush. I think I will just assing a multiplier for each speed
+    Slow, // 0.75 times the speed, 75% of chance to notice
+    Normal, // 1 times the speed, 40% of chance to notice
+    Fast // 1.5 times the speed, 10% of chance to notice
+}
+
+pub enum TravelingMethod {
+    Walk, // multiplier is 1
+    Horse, // multiplier is 4.25 on plains, but you can't go through mountains and water
+    Chariot, // multiplier is 4.25 on plains, but you can't go through mountains and water
+    Boat // multiplier is 2.5, the only way to go through water, can only be used on water
+}
+
+/// base costs for each tile will be: // all of those are time in seconds / 4
+/// mountais: 7000 
+/// water: 1350
+/// plains: 1350
+/// forest: 3000
+
 #[derive(Component, Clone)]
 struct Interactable {
     name: String,
@@ -204,11 +239,11 @@ impl Interactable {
         //text_query: Query<Entity, With<DialogueText>>,
         //button_query: Query<Entity, With<ChoiceButton>>,
         //mut dialogue_trigger: ResMut<DialogueTrigger>,
-        mut events_dialogue_box: ResMut<Events<DialogueBoxTriggerEvent>>,
+        mut events_dialogue_box: ResMut<Messages<DialogueBoxTriggerEvent>>,
     ) {
         // code to handle interaction goes here
         //let previous_state = game_state.clone();
-        game_state = GameState::Interacting;
+        game_state = Game_State::Interacting;
         println!("Interacting, game state: {:?}", game_state);
         state.0.current_id = Some(self.dialogue_id.clone());
         state.0.active = true;
@@ -279,10 +314,12 @@ fn main() {
         }))
         .add_plugins(DefaultPlugins.set(ImagePlugin::default_nearest()))
         .add_plugins(LightPlugin) // ✅ your plugin
+        .add_plugins(CombatPlugin) // ✅ your plugin
+        .insert_resource(PlayerMapPosition(Position::default()))
         .insert_resource(ClearColor(Color::srgb(0.1, 0.1, 0.1)))
         .insert_resource(CachedInteractables(Vec::new()))
         .insert_resource(CachedColliders(Vec::new()))
-        .insert_resource(Game_State(GameState::Exploring))
+        .insert_resource(GameState(Game_State::Exploring))
         .insert_resource(Global_Variables(GlobalVariables::default()))
         .insert_resource(Dialogue_State(DialogueState::default()))
         .insert_resource(Selected_Choice(Choice::default()))
@@ -291,8 +328,8 @@ fn main() {
         //.insert_resource(DialogueJustSpawned(false))
         .insert_resource(Next_Id(HashMap::new()))
         .insert_resource(Conditionals(Flags::empty()))
-        .insert_resource(Events::<DialogueBoxTriggerEvent>::default())
-        .insert_resource(Events::<DialogueTriggerEvent>::default())
+        .insert_resource(Messages::<DialogueBoxTriggerEvent>::default())
+        .insert_resource(Messages::<DialogueTriggerEvent>::default())
         .insert_resource(DayCycle(480)) // every unit is 1 minute, 480 is equal to 08:00
         .add_systems(Startup, setup)
         .add_systems(Update, player_movement)
@@ -318,7 +355,7 @@ fn create_first_dialogue(
     button_query: Query<Entity, With<ChoiceButton>>,
     mut index: ResMut<Selected_Choice_Index>,
     mut selected: ResMut<Selected_Choice>,
-    mut events_dialogue: ResMut<Events<DialogueTriggerEvent>>,
+    mut events_dialogue: ResMut<Messages<DialogueTriggerEvent>>,
 ) {
     for _event in events_dialogue.drain() {
         println!("Spawing first dialogue");
@@ -343,8 +380,17 @@ pub struct Position {
     pub y: i32,
 }
 
-#[derive(Resource, Default)]
-struct Game_State(GameState);
+impl Default for Position {
+    fn default() -> Self {
+        Position { x: 0, y: 0 }
+    }
+}
+
+#[derive(Resource)]
+pub struct PlayerMapPosition(pub Position);
+
+#[derive(Resource)]
+struct GameState(Game_State);
 
 #[derive(Resource, Default)]
 struct Global_Variables(GlobalVariables);
@@ -357,10 +403,14 @@ struct QuadTree(QuadtreeNode);
 
 #[derive(Resource)]
 pub struct DayCycle(u32);
-// It is scaled by << 4 (* 16), to be directly compatible with duration of effects, to display the time in hors and minutes:
-// temp_x = x >> 4
-// h = temp_x / 60
-// m = temp_x % 60
+// Previously it was scaled by << 4 (* 16), now one unit represents 4 seconds, this is to be directly compatible with duration of effects, this means, time >> 2 equals 1 second, to display the time in hors and minutes:
+// temp_x = x >> 2
+// d = temp_x / 86400
+// temp_d = temp_x % 86400
+// h = temp_d / 3600
+// temp_h = temp_d % 3600
+// m = temp_h / 60
+// s = temp_h % 60
 
 #[derive(Resource, Default)]
 pub struct CachedColliders(Vec<(Transform, Collider)>);
@@ -407,18 +457,18 @@ struct DialogueTrigger(bool);
 #[derive(Resource, Default)]
 struct DialogueJustSpawned(bool); */
 
-#[derive(Event)]
+#[derive(Event, Message)]
 struct DialogueBoxTriggerEvent {
 }
 
-#[derive(Event)]
+#[derive(Event, Message)]
 struct DialogueTriggerEvent {
 }
 
 fn spawn_dialogue_box(
     mut commands: Commands,
-    mut events_dialogue_box: ResMut<Events<DialogueBoxTriggerEvent>>,
-    mut events_dialogue: ResMut<Events<DialogueTriggerEvent>>,
+    mut events_dialogue_box: ResMut<Messages<DialogueBoxTriggerEvent>>,
+    mut events_dialogue: ResMut<Messages<DialogueTriggerEvent>>,
 ) {
     for event in events_dialogue_box.drain() {
         println!("Function called");
@@ -472,6 +522,9 @@ fn spawn_dialogue_box(
         println!("Spawn message sent");
     }
 }
+
+// TO DO: implement save and load system
+// TO DO: make a visual tile editor and a visual dialogue editor for faster development
 
 fn setup(
     mut commands: Commands, 
@@ -560,7 +613,7 @@ fn player_movement(
         ResMut<Global_Variables>,
     )>,
     //mut camera: Query<(&mut Transform, &mut Position), With<MainCamera>>,
-    game_state: Res<Game_State>,
+    game_state: Res<GameState>,
     cache: Res<CachedColliders>,
     quad_tree: Res<QuadTree>,
     input: Res<ButtonInput<KeyCode>>, 
@@ -715,7 +768,7 @@ fn player_movement(
 
 fn gui_selection(
     input: Res<ButtonInput<KeyCode>>, 
-    game_state: Res<Game_State>,
+    game_state: Res<GameState>,
     mut index: ResMut<Selected_Choice_Index>,
     mut commands: Commands,
     mut state: ResMut<Dialogue_State>,
@@ -751,7 +804,7 @@ fn interact<'a>(
         Res<ButtonInput<KeyCode>>, 
     )>,
     //input: Res<ButtonInput<KeyCode>>, 
-    mut game_state: ResMut<Game_State>,
+    mut game_state: ResMut<GameState>,
     cache: Res<CachedInteractables>,
     mut dialogue_state: ResMut<Dialogue_State>,
     dialogue_data: Res<Dialogue_Data>,
@@ -1192,7 +1245,7 @@ fn mouse_click(
     mut param_set: ParamSet<(
         Query<(Entity, &mut Transform, &mut Position), With<Player>>,
     )>,
-    game_state: Res<Game_State>,
+    game_state: Res<GameState>,
     camera_query: Query<(&Camera, &GlobalTransform), With<MainCamera>>,
     //cache: Res<CachedColliders>,
     quad_tree: Res<QuadTree>,
@@ -1341,23 +1394,121 @@ fn find_path(
 }
 
 fn enter_battle(
-    mut game_state: ResMut<Game_State>,
+    mut game_state: ResMut<GameState>,
     input: Res<ButtonInput<KeyCode>>, 
+    turn_manager: Res<TurnManager>
 ) {
-    if input.just_pressed(KeyCode::KeyB) {
-        match game_state.0 {
-            GameState::Exploring => game_state.0 = GameState::Battle,
-            GameState::Battle => game_state.0 = GameState::Exploring,
-            GameState::Interacting => {}, 
-        };
+    game_state.0 = GameState::Battle;
+    turn_manager.calculate_turn_order();
+}
+
+fn pass_turn(
+    mut game_state: ResMut<GameState>,
+    input: Res<ButtonInput<KeyCode>>, 
+    turn_manager: Res<TurnManager>
+    day_cycle: Res<Day_Cycle>
+) {
+    let next_character = turn_manager.0.pop();
+    let position = find_by_id(next_character.id)
+    center_camera(position, game_state, turn_manager, day_cycle);
+
+    if turn_manager.0.length() == 0 {
+        turn_manager.calculate_turn_order();
+        day_cycle.0++;
     }
 }
+
+fn end_battle(
+    mut game_state: ResMut<GameState>,
+    input: Res<ButtonInput<KeyCode>>, 
+    turn_manager: Res<TurnManager>
+) {
+    game_state.0 = GameState::Exploring;
+    center_camera(player_position(), game_state, turn_manager, day_cycle);
+}
+
+fn get_travel(
+    map_position: Res<PlayerMapPosition>,
+    target_position: Position
+) -> Option<u32> {
+
+    // let path_ops = find_path(*position, game_state.0, quad_tree, camera_query, windows, PATH_DRAW_MARGIN);
+    //     if path_ops.is_none() {
+    //         return;
+    //     }
+    //     let path = path_ops.unwrap();
+    //     if path.is_empty() {
+    //         return;
+    //     }
+    //     let path_len = path.len();
+    //     if path_len > WALKING_LIMIT {
+    //         println!("Path too long");
+    //         return;
+    //     }
+
+    //     println!("path len: {}", path_len);
+
+    //     if path_len > 1 {
+    //         let path_iv2: Vec<IVec2> = path.iter().map(|p| IVec2::new(p.x, p.y)).collect();
+    //         commands.entity(player_entity).insert(MoveAlongPath {
+    //             path: path_iv2,
+    //             current_index: 1, // start at 1 since 0 is the current position
+    //             timer: Timer::from_seconds(0.3, TimerMode::Repeating),
+    //         });
+    //     }
+
+    let time = // TO DO: use the pathfinding algorithm with the map colliders(places that are impossible to pass through, it can be in tiles for simplicity, different tiles can have different times to travel through)
+}
+
+fn confirm_travel(
+    mut game_state: ResMut<GameState>,
+    input: Res<ButtonInput<KeyCode>>, 
+    map_position: Res<PlayerMapPosition>,
+    target_position: Position,
+    day_cycle: Res<Day_Cycle>
+) {
+    let path = 
+
+    // day_cycle += time;
+
+    if path_len > 1 {
+    //         let path_iv2: Vec<IVec2> = path.iter().map(|p| IVec2::new(p.x, p.y)).collect();
+    //         commands.entity(player_entity).insert(MoveAlongPath {
+    //             path: path_iv2,
+    //             current_index: 1, // start at 1 since 0 is the current position
+    //             timer: Timer::from_seconds(0.3, TimerMode::Repeating),
+    //         });
+    }
+
+    // map_position = target_position; // it is necessary to use the follow path
+}
+
+fn walk_to_tile(
+    mut game_state: ResMut<GameState>,
+    input: Res<ButtonInput<KeyCode>>, 
+    map_position: Res<PlayerMapPosition>,
+    target_position: Position,
+    day_cycle: Res<Day_Cycle>,
+    map_tiles: Res<Map_Tiles>
+) {
+    day_cycle.0 += map_tiles.0[map_position.0 as usize][map_position.1 as usize].time * speed * method;
+    if map_tiles.0[map_position.0 as usize][map_position.1 as usize].event.is_some() {
+        trigger_event(map_tiles.0[map_position.0 as usize][map_position.1 as usize].event.unwrap());
+    }
+}
+
+fn trigger_event(
+    event_id: u32
+) {
+
+}
+
 /* 
 fn draw_distance_system(
     mut param_set: ParamSet<(
         Query<(Entity, &mut Transform, &mut Position), With<Player>>,
     )>,
-    game_state: Res<Game_State>,
+    game_state: Res<GameState>,
     camera_query: Query<(&Camera, &GlobalTransform), With<MainCamera>>,
     cache: Res<CachedColliders>,
     windows: Query<&Window>,
