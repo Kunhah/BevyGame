@@ -1,65 +1,114 @@
-// bevy_egui_dialogue_editor.rs
-// A simple dialogue editor using Bevy + bevy_egui + serde_json
-// Features:
-// - Load / Save dialogues.json from ./dialogues/dialogues.json
-// - List dialogues, add/remove
-// - Edit id, speaker, text
-// - Set `next` via dropdown (auto-populated)
-// - Edit choices: add/remove, edit event/text/next
-// - Basic validation: duplicate IDs, dangling references, orphans
+// ability_editor.rs
+// A standalone Ability Editor as a separate binary
+// Place as: src/bin/ability_editor.rs
 
-// Cargo.toml dependencies (add to your Cargo.toml):
+// Cargo.toml dependencies:
 // [dependencies]
 // bevy = { version = "0.11" }
 // bevy_egui = "0.22"
 // serde = { version = "1.0", features = ["derive"] }
 // serde_json = "1.0"
-// (rfd removed for simplicity; the editor will read/write a fixed path ./dialogues/dialogues.json)
 
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts, EguiPlugin};
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::fs;
 use std::path::PathBuf;
 
-const DEFAULT_DIALOGUE_DIR: &str = "dialogues";
-const DEFAULT_DIALOGUE_FILE: &str = "dialogues.json";
+const DEFAULT_ABILITY_DIR: &str = "abilities";
+const DEFAULT_ABILITY_FILE: &str = "abilities.json";
 
-#[derive(Debug, Serialize, Deserialize, Clone, Default)]
-pub struct Dialogue {
-    pub id: String,
-    pub speaker: String,
-    pub text: String,
-    pub next: Option<String>,
-    pub choices: Option<Vec<DialogueChoice>>,
+// ---------------- Data models ----------------
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum Stat {
+    Mind,
+    Agility,
+    Strength,
+    Morale,
+    Lethality,
+    // add more as needed
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct DialogueChoice {
-    pub event: u32,
-    pub text: String,
-    pub next: String,
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum DamageType {
+    Physical,
+    Fire,
+    Ice,
+    Lightning,
+    // add more as needed
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum AbilityEffect {
+    Heal { floor: u32, ceiling: u32, scaled_with: Stat },
+    Damage { floor: u32, ceiling: u32, damage_type: DamageType, scaled_with: Stat, defended_with: Stat },
+    Buff { stat: Stat, multiplier: f32, effects: Option<Vec<u16>>, scaled_with: Stat },
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum AbilityShape {
+    Radius(f32),
+    Line { length: f32, thickness: f32 },
+    Cone { angle: f32, radius: f32 },
+    Select,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Ability {
+    pub id: u16,
+    pub next_id: Option<u16>,
+    pub name: String,
+    pub health_cost: i32,
+    pub magic_cost: i32,
+    pub stamina_cost: i32,
+    pub cooldown: u8,
+    pub description: String,
+    pub effects: Vec<AbilityEffect>,
+    pub shape: AbilityShape,
+    pub duration: u8,
+    pub targets: u8,
+}
+
+impl Default for Ability {
+    fn default() -> Self {
+        Self {
+            id: 0,
+            next_id: None,
+            name: "New Ability".into(),
+            health_cost: 0,
+            magic_cost: 0,
+            stamina_cost: 0,
+            cooldown: 0,
+            description: String::new(),
+            effects: Vec::new(),
+            shape: AbilityShape::Select,
+            duration: 0,
+            targets: 1,
+        }
+    }
 }
 
 #[derive(Resource)]
-struct DialoguesResource {
-    dialogues: Vec<Dialogue>,
+struct AbilitiesResource {
+    abilities: Vec<Ability>,
     file_path: PathBuf,
     dirty: bool,
     validation_messages: Vec<String>,
+    selected: Option<usize>,
 }
 
-impl Default for DialoguesResource {
+impl Default for AbilitiesResource {
     fn default() -> Self {
         let mut path = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-        path.push(DEFAULT_DIALOGUE_DIR);
-        path.push(DEFAULT_DIALOGUE_FILE);
+        path.push(DEFAULT_ABILITY_DIR);
+        path.push(DEFAULT_ABILITY_FILE);
         Self {
-            dialogues: Vec::new(),
+            abilities: Vec::new(),
             file_path: path,
             dirty: false,
             validation_messages: Vec::new(),
+            selected: None,
         }
     }
 }
@@ -67,489 +116,48 @@ impl Default for DialoguesResource {
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
-        .add_plugins(EguiPlugin)
-        .init_resource::<DialoguesResource>()
-        .add_systems(Startup, setup_system)
-        .add_systems(Update, ui_system)
+        .add_plugin(EguiPlugin)
+        .init_resource::<AbilitiesResource>()
+        .add_startup_system(setup_system)
+        .add_system(ui_system)
         .run();
 }
 
-fn setup_system(mut d: ResMut<DialoguesResource>) {
-    // Start with a minimal example if empty
-    if d.dialogues.is_empty() {
-        d.dialogues = vec![Dialogue {
-            id: "Intro_1".to_string(),
-            speaker: "Narrator".to_string(),
-            text: "Welcome to the demo.".to_string(),
-            next: None,
-            choices: None,
-        }];
-        d.dirty = true;
+fn setup_system(mut r: ResMut<AbilitiesResource>) {
+    if r.abilities.is_empty() {
+        // add an example
+        r.abilities.push(Ability {
+            id: 0,
+            next_id: None,
+            name: "Minor Heal".into(),
+            health_cost: 0,
+            magic_cost: 8,
+            stamina_cost: 0,
+            cooldown: 1,
+            description: "Restore a small amount of HP to a single ally.".into(),
+            effects: vec![AbilityEffect::Heal { floor: 12, ceiling: 18, scaled_with: Stat::Mind }],
+            shape: AbilityShape::Select,
+            duration: 0,
+            targets: 1,
+        });
+        r.dirty = true;
     }
 }
 
-fn ui_system(mut contexts: EguiContexts, mut d: ResMut<DialoguesResource>) {
-    let ctx = contexts.ctx_mut().unwrap();
-
-    // --- COMMAND ACCUMULATORS (to be applied later) ---
-    let mut cmd_new_dialogue = false;
-    let mut cmd_load = false;
-    let mut cmd_save = false;
-    let mut cmd_validate = false;
-
-    let mut cmd_select: Option<usize> = None;
-    let mut cmd_delete: Option<usize> = None;
-
-    // For editing a single dialogue
-    let mut edit_id: Option<String> = None;
-    let mut edit_speaker: Option<String> = None;
-    let mut edit_text: Option<String> = None;
-    let mut edit_next: Option<Option<String>> = None;
-
-    // For modifying choices
-    struct ChoiceCmd {
-        index: usize,
-        new_text: Option<String>,
-        new_event: Option<u32>,
-        new_next: Option<String>,
-        delete: bool,
-    }
-    let mut choice_cmds: Vec<ChoiceCmd> = Vec::new();
-    let mut cmd_add_choice = false;
-
-
-    // ================================================================
-    // TOP PANEL
-    // ================================================================
-    egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
-        ui.horizontal(|ui| {
-            if ui.button("New Dialogue").clicked() {
-                cmd_new_dialogue = true;
-            }
-
-            if ui.button("Load").clicked() {
-                cmd_load = true;
-            }
-
-            if ui.button("Save").clicked() {
-                cmd_save = true;
-            }
-
-            if ui.button("Validate").clicked() {
-                cmd_validate = true;
-            }
-
-            if d.dirty {
-                ui.label("* Unsaved changes");
-            } else {
-                ui.label("Saved");
-            }
-
-            ui.label(format!("Path: {}", d.file_path.display()));
-        });
-    });
-
-
-    // ================================================================
-    // LEFT PANEL (LIST + SELECTION)
-    // ================================================================
-    egui::SidePanel::left("left_panel").resizable(true).min_width(220.0).show(ctx, |ui| {
-        ui.heading("Dialogues");
-        ui.separator();
-
-        let ids: Vec<String> = d.dialogues.iter().map(|dlg| dlg.id.clone()).collect();
-
-        for (i, id) in ids.iter().enumerate() {
-            ui.horizontal(|ui| {
-                if ui.button("Edit").clicked() {
-                    cmd_select = Some(i);
-                }
-                if ui.button("Del").clicked() {
-                    cmd_delete = Some(i);
-                }
-
-                if Some(i) == d.selected {
-                    ui.label(format!("> {}", id));
-                } else {
-                    ui.label(id);
-                }
-            });
-            ui.separator();
-        }
-    });
-
-
-    // ================================================================
-    // CENTRAL PANEL (EDITOR)
-    // ================================================================
-    egui::CentralPanel::default().show(ctx, |ui| {
-        ui.heading("Editor");
-        ui.separator();
-
-        let Some(selected) = d.selected else {
-            if d.dialogues.is_empty() {
-                ui.label("No dialogues. Create one from the top bar.");
-            } else {
-                ui.label("Select a dialogue to edit.");
-            }
-            return;
-        };
-
-        if selected >= d.dialogues.len() {
-            ui.label("Invalid dialogue index.");
-            return;
-        }
-
-        let dlg = &d.dialogues[selected];
-
-        // Snapshot ids
-        let id_list: Vec<String> = d.dialogues.iter().map(|x| x.id.clone()).collect();
-
-        // ---- ID + Duplicate ----
-        let mut temp_id = dlg.id.clone();
-        ui.horizontal(|ui| {
-            ui.label("ID:");
-            if ui.text_edit_singleline(&mut temp_id).changed() {
-                edit_id = Some(temp_id.clone());
-            }
-            if ui.button("Duplicate").clicked() {
-                cmd_new_dialogue = true; // handled below with special logic
-                                         // The actual duplicate will be appended after apply
-            }
-        });
-
-        // ---- Speaker ----
-        let mut temp_speaker = dlg.speaker.clone();
-        ui.horizontal(|ui| {
-            ui.label("Speaker:");
-            if ui.text_edit_singleline(&mut temp_speaker).changed() {
-                edit_speaker = Some(temp_speaker.clone());
-            }
-        });
-
-        // ---- Text ----
-        let mut temp_text = dlg.text.clone();
-        ui.label("Text:");
-        if ui.text_edit_multiline(&mut temp_text).changed() {
-            edit_text = Some(temp_text.clone());
-        }
-
-        // ---- Next ----
-        let mut current_next = dlg.next.clone().unwrap_or_else(|| "<none>".into());
-        ui.horizontal(|ui| {
-            ui.label("Next:");
-            egui::ComboBox::from_id_salt("next_combo")
-                .selected_text(&current_next)
-                .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut current_next, "<none>".into(), "<none>");
-                    for id in id_list.iter() {
-                        ui.selectable_value(&mut current_next, id.clone(), id);
-                    }
-                });
-        });
-
-        let next_to_apply =
-            if current_next == "<none>" { None } else { Some(current_next.clone()) };
-        if next_to_apply != dlg.next {
-            edit_next = Some(next_to_apply.clone());
-        }
-
-        // ---- Choices ----
-        ui.separator();
-        ui.label("Choices:");
-        if ui.button("Add Choice").clicked() {
-            cmd_add_choice = true;
-        }
-
-        if let Some(choices) = &dlg.choices {
-            for (i, choice) in choices.iter().enumerate() {
-                ui.separator();
-                ui.label(format!("Choice {}:", i));
-
-                let mut new_text = choice.text.clone();
-                let mut new_event = choice.event;
-                let mut new_next = choice.next.clone();
-                let mut delete = false;
-
-                ui.horizontal(|ui| {
-                    ui.label("Text:");
-                    if ui.text_edit_singleline(&mut new_text).changed() {
-                        choice_cmds.push(ChoiceCmd {
-                            index: i,
-                            new_text: Some(new_text.clone()),
-                            new_event: None,
-                            new_next: None,
-                            delete: false,
-                        });
-                    }
-                });
-
-                ui.horizontal(|ui| {
-                    ui.label("Event:");
-                    if ui.add(egui::DragValue::new(&mut new_event)).changed() {
-                        choice_cmds.push(ChoiceCmd {
-                            index: i,
-                            new_text: None,
-                            new_event: Some(new_event),
-                            new_next: None,
-                            delete: false,
-                        });
-                    }
-                });
-
-                ui.horizontal(|ui| {
-                    ui.label("Next:");
-                    egui::ComboBox::from_id_salt(format!("choice_next_{}", i))
-                        .selected_text(&new_next)
-                        .show_ui(ui, |ui| {
-                            for id in id_list.iter() {
-                                ui.selectable_value(&mut new_next, id.clone(), id);
-                            }
-                        });
-
-                    if new_next != choice.next {
-                        choice_cmds.push(ChoiceCmd {
-                            index: i,
-                            new_text: None,
-                            new_event: None,
-                            new_next: Some(new_next.clone()),
-                            delete: false,
-                        });
-                    }
-
-                    if ui.button("Del").clicked() {
-                        delete = true;
-                    }
-                });
-
-                if delete {
-                    choice_cmds.push(ChoiceCmd {
-                        index: i,
-                        new_text: None,
-                        new_event: None,
-                        new_next: None,
-                        delete: true,
-                    });
-                }
-            }
-        }
-
-        // --- Validation messages ---
-        if !d.validation_messages.is_empty() {
-            ui.separator();
-            ui.heading("Validation Messages:");
-            for msg in &d.validation_messages {
-                ui.label(msg);
-            }
-        }
-    });
-
-
-    // ================================================================
-    // APPLY COMMANDS (safe — outside closures)
-    // ================================================================
-
-    // New dialogue
-    if cmd_new_dialogue {
-        let new_id = unique_id(&d.dialogues, "Dlg_", "Seq_");
-        d.dialogues.push(Dialogue {
-            id: new_id,
-            speaker: "".into(),
-            text: "".into(),
-            next: None,
-            choices: None,
-        });
-        d.selected = Some(d.dialogues.len() - 1);
-        d.dirty = true;
-    }
-
-    // Load
-    if cmd_load {
-        match fs::read_to_string(&d.file_path) {
-            Ok(content) => match serde_json::from_str::<Vec<Dialogue>>(&content) {
-                Ok(v) => {
-                    d.dialogues = v;
-                    d.validation_messages.clear();
-                    d.selected = None;
-                    d.dirty = false;
-                }
-                Err(e) => {
-                    d.validation_messages = vec![format!("Failed to parse JSON: {}", e)];
-                }
-            },
-            Err(e) => {
-                d.validation_messages =
-                    vec![format!("Failed to read {}: {}", d.file_path.display(), e)];
-            }
-        }
-    }
-
-    // Save
-    if cmd_save {
-        if let Err(e) = save_dialogues_to_path(&d.dialogues, &d.file_path) {
-            d.validation_messages.push(format!("Failed to save: {}", e));
-        } else {
-            d.dirty = false;
-        }
-    }
-
-    // Validate
-    if cmd_validate {
-        d.validation_messages = validate_dialogues(&d.dialogues);
-    }
-
-    // Selection
-    if let Some(i) = cmd_select {
-        if i < d.dialogues.len() {
-            d.selected = Some(i);
-        }
-    }
-
-    // Delete
-    if let Some(i) = cmd_delete {
-        if i < d.dialogues.len() {
-            d.dialogues.remove(i);
-            d.dirty = true;
-
-            if let Some(sel) = d.selected {
-                if sel == i {
-                    d.selected = None;
-                } else if sel > i {
-                    d.selected = Some(sel - 1);
-                }
-            }
-        }
-    }
-
-    // Apply main field changes
-    if let Some(sel) = d.selected {
-        if sel < d.dialogues.len() {
-            let dlg = &mut d.dialogues[sel];
-
-            if let Some(id) = edit_id {
-                dlg.id = id;
-                d.dirty = true;
-            }
-            if let Some(s) = edit_speaker {
-                dlg.speaker = s;
-                d.dirty = true;
-            }
-            if let Some(t) = edit_text {
-                dlg.text = t;
-                d.dirty = true;
-            }
-            if let Some(n) = edit_next {
-                dlg.next = n;
-                d.dirty = true;
-            }
-
-            // Add choice
-            if cmd_add_choice {
-                let new_choice = DialogueChoice {
-                    event: 0,
-                    text: "New choice".into(),
-                    next: unique_id(&d.dialogues, "Dlg_", "Seq_"),
-                };
-                dlg.choices.get_or_insert(Vec::new()).push(new_choice);
-                d.dirty = true;
-            }
-
-            // Apply choice edits
-            if let Some(choices) = &mut dlg.choices {
-                // Process deletions first
-                choice_cmds.sort_by_key(|c| (c.delete, c.index));
-
-                let mut to_delete: Vec<usize> = Vec::new();
-
-                for cmd in &choice_cmds {
-                    if cmd.delete {
-                        to_delete.push(cmd.index);
-                    }
-                }
-
-                // Delete in reverse order
-                for &idx in to_delete.iter().rev() {
-                    if idx < choices.len() {
-                        choices.remove(idx);
-                        d.dirty = true;
-                    }
-                }
-
-                // Now apply edits
-                for cmd in choice_cmds {
-                    if cmd.index < choices.len() {
-                        let c = &mut choices[cmd.index];
-                        if let Some(t) = cmd.new_text {
-                            c.text = t;
-                            d.dirty = true;
-                        }
-                        if let Some(e) = cmd.new_event {
-                            c.event = e;
-                            d.dirty = true;
-                        }
-                        if let Some(n) = cmd.new_next {
-                            c.next = n;
-                            d.dirty = true;
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-fn unique_id(dialogues: &Vec<Dialogue>, prefix: &str, second_prefix: &str) -> String {
-    let mut i = 1;
-    let existing: HashSet<String> = dialogues.iter().map(|d| d.id.clone()).collect();
-    loop {
-        let candidate = format!("{}{}{}", prefix, second_prefix, i);
-        if !existing.contains(&candidate) {
+// ---------------- Helpers ----------------
+fn next_free_id(abilities: &Vec<Ability>) -> u16 { // I COMPLETELY FORGOT THAT FIRST 8 BITS MUST BE THE LEVEL
+    let mut used: HashSet<u8> = abilities.iter().map(|a| a.id >> 8).collect();
+    for i in 0u32..=u8::MAX as u32 {
+        let candidate = i as u16;
+        if !used.contains(&candidate) {
             return candidate;
         }
-        i += 1;
     }
+    0
 }
 
-// fn fix_duplicate_ids(dialogues: &mut Vec<Dialogue>) {
-//     let mut used_ids = HashSet::new();
-    
-//     for dlg in dialogues.iter_mut() {
-//         // Handle empty IDs
-//         if dlg.id.trim().is_empty() {
-//             let mut i = 1;
-//             loop {
-//                 let candidate = format!("Dialogue_{}", i);
-//                 if !used_ids.contains(&candidate) {
-//                     dlg.id = candidate.clone();
-//                     used_ids.insert(candidate);
-//                     break;
-//                 }
-//                 i += 1;
-//             }
-//             continue;
-//         }
-        
-//         // Handle duplicate IDs
-//         if used_ids.contains(&dlg.id) {
-//             let base = dlg.id.clone();
-//             let mut suffix = 1;
-//             loop {
-//                 let candidate = format!("{}_{}", base, suffix);
-//                 if !used_ids.contains(&candidate) {
-//                     dlg.id = candidate.clone();
-//                     used_ids.insert(candidate);
-//                     break;
-//                 }
-//                 suffix += 1;
-//             }
-//         } else {
-//             used_ids.insert(dlg.id.clone());
-//         }
-//     }
-// }
-
-fn save_dialogues_to_path(dialogues: &Vec<Dialogue>, path: &PathBuf) -> Result<(), String> {
-    match serde_json::to_string_pretty(dialogues) {
+fn save_abilities_to_path(abilities: &Vec<Ability>, path: &PathBuf) -> Result<(), String> {
+    match serde_json::to_string_pretty(abilities) {
         Ok(json) => match fs::write(path, json) {
             Ok(_) => Ok(()),
             Err(e) => Err(format!("Failed to write file: {}", e)),
@@ -558,56 +166,271 @@ fn save_dialogues_to_path(dialogues: &Vec<Dialogue>, path: &PathBuf) -> Result<(
     }
 }
 
-fn validate_dialogues(dialogues: &Vec<Dialogue>) -> Vec<String> {
+fn validate_abilities(abilities: &Vec<Ability>) -> Vec<String> {
     let mut msgs = Vec::new();
     let mut id_set = HashSet::new();
-    for d in dialogues.iter() {
-        if d.id.trim().is_empty() {
-            msgs.push("Empty ID found".into());
+    for a in abilities.iter() {
+        if id_set.contains(&a.id) {
+            msgs.push(format!("Duplicate ability id: {}", a.id));
         }
-        if id_set.contains(&d.id) {
-            msgs.push(format!("Duplicate ID: {}", d.id));
-        }
-        id_set.insert(d.id.clone());
+        id_set.insert(a.id);
     }
 
-    // check references
-    for d in dialogues.iter() {
-        if let Some(n) = &d.next {
-            if !id_set.contains(n) {
-                msgs.push(format!("Dangling next reference from '{}' -> '{}'", d.id, n));
+    // check next_id references
+    for a in abilities.iter() {
+        if let Some(n) = a.next_id {
+            if !id_set.contains(&n) {
+                msgs.push(format!("Ability {} has invalid next_id {}", a.id, n));
             }
         }
-        if let Some(choices) = &d.choices {
-            for c in choices.iter() {
-                if !id_set.contains(&c.next) {
-                    msgs.push(format!("Dangling choice reference from '{}' -> '{}'", d.id, c.next));
+        // Buff effects referencing other ability ids in effects.effects
+        for eff in a.effects.iter() {
+            if let AbilityEffect::Buff { effects: Some(list), .. } = eff {
+                for &eid in list.iter() {
+                    if !id_set.contains(&eid) {
+                        msgs.push(format!("Ability {} has Buff effect referencing missing ability id {}", a.id, eid));
+                    }
                 }
             }
         }
     }
 
-    // find orphans (not referenced by anyone and not the first entry)
-    let mut referenced = HashSet::new();
-    if !dialogues.is_empty() {
-        // treat first as reachable entry point
-        referenced.insert(dialogues[0].id.clone());
+    if msgs.is_empty() {
+        msgs.push("No issues detected.".into());
     }
-    for d in dialogues.iter() {
-        if let Some(n) = &d.next {
-            referenced.insert(n.clone());
+    msgs
+}
+
+// ---------------- UI ----------------
+fn ui_system(mut contexts: EguiContexts, mut r: ResMut<AbilitiesResource>) {
+    let ctx = contexts.ctx_mut().unwrap();
+
+    // command accumulators
+    let mut cmd_new = false;
+    let mut cmd_load = false;
+    let mut cmd_save = false;
+    let mut cmd_validate = false;
+    let mut cmd_select: Option<usize> = None;
+    let mut cmd_delete: Option<usize> = None;
+
+    // editing accumulators
+    let mut edit_id: Option<u16> = None;
+    let mut edit_next_id: Option<Option<u16>> = None;
+    let mut edit_name: Option<String> = None;
+    let mut edit_health: Option<i32> = None;
+    let mut edit_magic: Option<i32> = None;
+    let mut edit_stamina: Option<i32> = None;
+    let mut edit_cooldown: Option<u8> = None;
+    let mut edit_description: Option<String> = None;
+    let mut edit_duration: Option<u8> = None;
+    let mut edit_targets: Option<u8> = None;
+
+    // effect commands
+    struct EffCmd { index: usize, replace: Option<AbilityEffect>, delete: bool }
+    let mut eff_cmds: Vec<EffCmd> = Vec::new();
+    let mut cmd_add_effect: Option<AbilityEffect> = None;
+
+    // shape command
+    let mut edit_shape: Option<AbilityShape> = None;
+
+    // Top panel
+    egui::TopBottomPanel::top("top").show(ctx, |ui| {
+        ui.horizontal(|ui| {
+            if ui.button("New Ability").clicked() { cmd_new = true; }
+            if ui.button("Load").clicked() { cmd_load = true; }
+            if ui.button("Save").clicked() { cmd_save = true; }
+            if ui.button("Validate").clicked() { cmd_validate = true; }
+            if r.dirty { ui.label("* Unsaved"); } else { ui.label("Saved"); }
+            ui.label(format!("Path: {}", r.file_path.display()));
+        });
+    });
+
+    // Left panel - list
+    egui::SidePanel::left("left").resizable(true).min_width(220.0).show(ctx, |ui| {
+        ui.heading("Abilities"); ui.separator();
+        let ids: Vec<u16> = r.abilities.iter().map(|a| a.id).collect();
+        for (i, id) in ids.iter().enumerate() {
+            ui.horizontal(|ui| {
+                if ui.button("Edit").clicked() { cmd_select = Some(i); }
+                if ui.button("Del").clicked() { cmd_delete = Some(i); }
+                if Some(i) == r.selected { ui.label(format!("> {}", id)); } else { ui.label(id.to_string()); }
+            }); ui.separator();
         }
-        if let Some(choices) = &d.choices {
-            for c in choices.iter() {
-                referenced.insert(c.next.clone());
+    });
+
+    // Central panel - editor
+    egui::CentralPanel::default().show(ctx, |ui| {
+        ui.heading("Ability Editor"); ui.separator();
+
+        if r.abilities.is_empty() {
+            ui.label("No abilities. Create one above.");
+            return;
+        }
+
+        // show selected
+        let Some(sel) = r.selected else { ui.label("Select an ability"); return; };
+        if sel >= r.abilities.len() { ui.label("Invalid selection"); return; }
+
+        let ability = &r.abilities[sel];
+
+        // snapshot for dropdowns
+        let id_list: Vec<u16> = r.abilities.iter().map(|a| a.id).collect();
+
+        // ID
+        let mut tmp_id = ability.id;
+        ui.horizontal(|ui| {
+            ui.label("ID:");
+            if ui.add(egui::DragValue::new(&mut tmp_id)).changed() { edit_id = Some(tmp_id); }
+            if ui.button("AutoID").clicked() { edit_id = Some(next_free_id(&r.abilities)); }
+        });
+
+        // next_id
+        let mut tmp_next = ability.next_id;
+        ui.horizontal(|ui| {
+            ui.label("Next ID:");
+            // show a combobox with None and available ids
+            let mut sel_string = tmp_next.map(|v| v.to_string()).unwrap_or_else(|| "<none>".into());
+            egui::ComboBox::from_id_source("next_id_combo").selected_text(&sel_string).show_ui(ui, |ui| {
+                ui.selectable_value(&mut sel_string, "<none>".into(), "<none>");
+                for &id in id_list.iter() { ui.selectable_value(&mut sel_string, id.to_string(), id.to_string()); }
+            });
+            let new_next = if sel_string == "<none>" { None } else { sel_string.parse::<u16>().ok() };
+            if new_next != tmp_next { edit_next_id = Some(new_next); }
+        });
+
+        // Name
+        let mut tmp_name = ability.name.clone();
+        ui.horizontal(|ui| { ui.label("Name:"); if ui.text_edit_singleline(&mut tmp_name).changed() { edit_name = Some(tmp_name.clone()); } });
+
+        // costs and cooldown
+        let mut tmp_h = ability.health_cost;
+        let mut tmp_m = ability.magic_cost;
+        let mut tmp_s = ability.stamina_cost;
+        ui.horizontal(|ui| {
+            ui.label("Health:"); if ui.add(egui::DragValue::new(&mut tmp_h)).changed() { edit_health = Some(tmp_h); }
+            ui.label("Magic:"); if ui.add(egui::DragValue::new(&mut tmp_m)).changed() { edit_magic = Some(tmp_m); }
+            ui.label("Stamina:"); if ui.add(egui::DragValue::new(&mut tmp_s)).changed() { edit_stamina = Some(tmp_s); }
+        });
+
+        let mut tmp_cd = ability.cooldown;
+        if ui.add(egui::DragValue::new(&mut tmp_cd)).changed() { edit_cooldown = Some(tmp_cd); }
+
+        // description
+        let mut tmp_desc = ability.description.clone(); ui.label("Description:"); if ui.text_edit_multiline(&mut tmp_desc).changed() { edit_description = Some(tmp_desc.clone()); }
+
+        // duration & targets
+        let mut tmp_dur = ability.duration; let mut tmp_targs = ability.targets;
+        ui.horizontal(|ui| { ui.label("Duration:"); if ui.add(egui::DragValue::new(&mut tmp_dur)).changed() { edit_duration = Some(tmp_dur); } ui.label("Targets:"); if ui.add(egui::DragValue::new(&mut tmp_targs)).changed() { edit_targets = Some(tmp_targs); } });
+
+        // Shape editor
+        ui.separator(); ui.label("Shape:");
+        match &ability.shape {
+            AbilityShape::Radius(v) => { let mut val = *v; if ui.add(egui::DragValue::new(&mut val)).changed() { edit_shape = Some(AbilityShape::Radius(val)); } }
+            AbilityShape::Line { length, thickness } => { let mut l = *length; let mut t = *thickness; ui.horizontal(|ui| { ui.label("Length:"); if ui.add(egui::DragValue::new(&mut l)).changed() { edit_shape = Some(AbilityShape::Line { length: l, thickness: t }); } ui.label("Thickness:"); if ui.add(egui::DragValue::new(&mut t)).changed() { edit_shape = Some(AbilityShape::Line { length: l, thickness: t }); } }); }
+            AbilityShape::Cone { angle, radius } => { let mut a = *angle; let mut rrad = *radius; ui.horizontal(|ui| { ui.label("Angle:"); if ui.add(egui::DragValue::new(&mut a)).changed() { edit_shape = Some(AbilityShape::Cone { angle: a, radius: rrad }); } ui.label("Radius:"); if ui.add(egui::DragValue::new(&mut rrad)).changed() { edit_shape = Some(AbilityShape::Cone { angle: a, radius: rrad }); } }); }
+            AbilityShape::Select => { if ui.button("Set Radius 1.0").clicked() { edit_shape = Some(AbilityShape::Radius(1.0)); } }
+        }
+
+        // Effects
+        ui.separator(); ui.label("Effects:");
+        if ui.button("Add Heal").clicked() { cmd_add_effect = Some(AbilityEffect::Heal { floor: 1, ceiling: 2, scaled_with: Stat::Mind }); }
+        ui.same_line(); if ui.button("Add Damage").clicked() { cmd_add_effect = Some(AbilityEffect::Damage { floor: 1, ceiling: 2, damage_type: DamageType::Physical, scaled_with: Stat::Mind, defended_with: Stat::Mind }); }
+        ui.same_line(); if ui.button("Add Buff").clicked() { cmd_add_effect = Some(AbilityEffect::Buff { stat: Stat::Morale, multiplier: 1.0, effects: None, scaled_with: Stat::Mind }); }
+
+        for (i, eff) in ability.effects.iter().enumerate() {
+            ui.separator(); ui.label(format!("Effect {}:", i));
+            match eff {
+                AbilityEffect::Heal { floor, ceiling, scaled_with } => {
+                    let mut f = *floor; let mut c = *ceiling; ui.horizontal(|ui| { ui.label("Floor:"); if ui.add(egui::DragValue::new(&mut f)).changed() { eff_cmds.push(EffCmd { index: i, replace: Some(AbilityEffect::Heal { floor: f, ceiling: c, scaled_with: scaled_with.clone() }), delete: false }); } ui.label("Ceiling:"); if ui.add(egui::DragValue::new(&mut c)).changed() { eff_cmds.push(EffCmd { index: i, replace: Some(AbilityEffect::Heal { floor: f, ceiling: c, scaled_with: scaled_with.clone() }), delete: false }); } });
+                    // scaled_with
+                    let mut sw = format!("{:?}", scaled_with);
+                    ui.horizontal(|ui| { ui.label("Scaled with:"); if ui.text_edit_singleline(&mut sw).changed() { /* user can type stat name; parse later on apply */ } });
+                }
+                AbilityEffect::Damage { floor, ceiling, damage_type, scaled_with, defended_with } => {
+                    let mut f = *floor; let mut c = *ceiling; ui.horizontal(|ui| { ui.label("Floor:"); if ui.add(egui::DragValue::new(&mut f)).changed() { eff_cmds.push(EffCmd { index: i, replace: Some(AbilityEffect::Damage { floor: f, ceiling: c, damage_type: damage_type.clone(), scaled_with: scaled_with.clone(), defended_with: defended_with.clone() }), delete: false }); } ui.label("Ceiling:"); if ui.add(egui::DragValue::new(&mut c)).changed() { eff_cmds.push(EffCmd { index: i, replace: Some(AbilityEffect::Damage { floor: f, ceiling: c, damage_type: damage_type.clone(), scaled_with: scaled_with.clone(), defended_with: defended_with.clone() }), delete: false }); } });
+                    // damage type selector
+                    // small string representation for now
+                    let mut dt = format!("{:?}", damage_type);
+                    ui.horizontal(|ui| { ui.label("Damage Type:"); if ui.text_edit_singleline(&mut dt).changed() { /* parse later */ } });
+                }
+                AbilityEffect::Buff { stat, multiplier, effects, scaled_with } => {
+                    let mut mul = *multiplier; ui.horizontal(|ui| { ui.label("Multiplier:"); if ui.add(egui::DragValue::new(&mut mul)).changed() { eff_cmds.push(EffCmd { index: i, replace: Some(AbilityEffect::Buff { stat: stat.clone(), multiplier: mul, effects: effects.clone(), scaled_with: scaled_with.clone() }), delete: false }); } });
+                    if let Some(list) = effects {
+                        ui.label(format!("Triggers: {:?}", list));
+                    }
+                }
             }
+            if ui.button("Remove Effect").clicked() { eff_cmds.push(EffCmd { index: i, replace: None, delete: true }); }
         }
+
+        // validation messages
+        if !r.validation_messages.is_empty() {
+            ui.separator(); ui.heading("Validation Messages:"); for msg in &r.validation_messages { ui.label(msg); }
+        }
+    }); // central panel
+
+    // ---------------- Apply commands (outside closures) ----------------
+    if cmd_new {
+        let mut a = Ability::default();
+        a.id = next_free_id(&r.abilities);
+        r.abilities.push(a);
+        r.selected = Some(r.abilities.len() - 1);
+        r.dirty = true;
     }
-    for d in dialogues.iter() {
-        if !referenced.contains(&d.id) {
-            msgs.push(format!("Orphan dialogue (not referenced): {}", d.id));
+
+    if cmd_load {
+        match fs::read_to_string(&r.file_path) {
+            Ok(content) => match serde_json::from_str::<Vec<Ability>>(&content) {
+                Ok(v) => { r.abilities = v; r.validation_messages.clear(); r.selected = None; r.dirty = false; }
+                Err(e) => { r.validation_messages = vec![format!("Failed to parse JSON: {}", e)]; }
+            },
+            Err(e) => { r.validation_messages = vec![format!("Failed to read {}: {}", r.file_path.display(), e)]; }
         }
     }
 
-    msgs
+    if cmd_save {
+        if let Err(e) = save_abilities_to_path(&r.abilities, &r.file_path) {
+            r.validation_messages.push(format!("Failed to save: {}", e));
+        } else { r.dirty = false; }
+    }
+
+    if cmd_validate { r.validation_messages = validate_abilities(&r.abilities); }
+
+    if let Some(i) = cmd_select { if i < r.abilities.len() { r.selected = Some(i); } }
+
+    if let Some(i) = cmd_delete { if i < r.abilities.len() { r.abilities.remove(i); r.dirty = true; if let Some(sel) = r.selected { if sel == i { r.selected = None; } else if sel > i { r.selected = Some(sel - 1); } } } }
+
+    // apply edits to selected ability
+    if let Some(sel) = r.selected {
+        if sel < r.abilities.len() {
+            let a = &mut r.abilities[sel];
+            if let Some(id) = edit_id { a.id = id; r.dirty = true; }
+            if let Some(nid) = edit_next_id { a.next_id = nid; r.dirty = true; }
+            if let Some(name) = edit_name { a.name = name; r.dirty = true; }
+            if let Some(h) = edit_health { a.health_cost = h; r.dirty = true; }
+            if let Some(m) = edit_magic { a.magic_cost = m; r.dirty = true; }
+            if let Some(s) = edit_stamina { a.stamina_cost = s; r.dirty = true; }
+            if let Some(cd) = edit_cooldown { a.cooldown = cd; r.dirty = true; }
+            if let Some(desc) = edit_description { a.description = desc; r.dirty = true; }
+            if let Some(dur) = edit_duration { a.duration = dur; r.dirty = true; }
+            if let Some(t) = edit_targets { a.targets = t; r.dirty = true; }
+            if let Some(shape) = edit_shape { a.shape = shape; r.dirty = true; }
+
+            if let Some(eff) = cmd_add_effect { a.effects.push(eff); r.dirty = true; }
+
+            if !eff_cmds.is_empty() {
+                // process deletions first
+                let mut deletes: Vec<usize> = eff_cmds.iter().filter(|c| c.delete).map(|c| c.index).collect();
+                deletes.sort_unstable(); deletes.dedup();
+                for idx in deletes.into_iter().rev() { if idx < a.effects.len() { a.effects.remove(idx); r.dirty = true; } }
+
+                // then replacements
+                for cmd in eff_cmds.into_iter() {
+                    if !cmd.delete && cmd.index < a.effects.len() {
+                        if let Some(rep) = cmd.replace { a.effects[cmd.index] = rep; r.dirty = true; }
+                    }
+                }
+            }
+        }
+    }
 }

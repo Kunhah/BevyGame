@@ -1,0 +1,45 @@
+{
+  "id": 1,
+  "name": "Toshiko",
+  "class": "Warlock",
+  "health": 120,
+  "max_health": 120,
+  "magic": 80,
+  "max_magic": 80,
+  "stamina": 40,
+  "max_stamina": 40,
+  "movement": 5,
+  "strength": 10,
+  "agility": 12,
+  "mind": 16,
+  "morale": 12,
+  "accumulated_agility": 0.0,
+  "abilities": [
+    {
+      "level": 1,
+      "name": "Shadow Bolt",
+      "magic_cost": 15,
+      "stamina_cost": 0,
+      "power": 40,
+      "cooldown": 2,
+      "description": "Unleash dark energy at the target."
+    },
+    {
+      "level": 1,
+      "name": "Dark Pact",
+      "magic_cost": 0,
+      "stamina_cost": 0,
+      "power": 0,
+      "cooldown": 4,
+      "description": "Sacrifice health to restore mana."
+    }
+  ],
+  "ai_parameters": {
+    "aggressiveness": 0.7,
+    "caution": 0.3,
+    "curiosity": 0.5,
+    "perception": 0.6,
+    "bravery": 0.8,
+    "patience": 0.4
+  }
+}

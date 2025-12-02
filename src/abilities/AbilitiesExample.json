@@ -1,0 +1,108 @@
+{
+  "id": 0,
+  "next_id": null,
+  "name": "Minor Heal",
+  "health_cost": 0,
+  "magic_cost": 8,
+  "stamina_cost": 0,
+  "cooldown": 1,
+  "description": "Restore a small amount of HP to a single ally.",
+  "effects": [
+    {
+      "Heal": {
+        "floor": 12,
+        "ceiling": 18,
+        "scaled_with": "Mind"
+      }
+    }
+  ],
+  "shape": { "Select": [] },
+  "duration": 0,
+  "targets": 1
+}
+
+{
+  "id": 258,
+  "next_id": null,
+  "name": "Fireball",
+  "health_cost": 0,
+  "magic_cost": 20,
+  "stamina_cost": 0,
+  "cooldown": 3,
+  "description": "Hurl a ball of flame that hits in a cone.",
+  "effects": [
+    {
+      "Damage": {
+        "floor": 30,
+        "ceiling": 50,
+        "damage_type": "Fire",
+        "scaled_with": "Mind",
+        "defended_with": "Mind"
+      }
+    }
+  ],
+  "shape": {
+    "Cone": { "angle": 60.0, "radius": 4.5 }
+  },
+  "duration": 0,
+  "targets": 6
+}
+
+{
+  "id": 513,
+  "next_id": null,
+  "name": "Rallying Cry",
+  "health_cost": 0,
+  "magic_cost": 12,
+  "stamina_cost": 0,
+  "cooldown": 5,
+  "description": "Inspire allies, increasing morale for 3 turns.",
+  "effects": [
+    {
+      "Buff": {
+        "stat": "Morale",
+        "multiplier": 1.20,
+        "effects": [258],
+        "scaled_with": "Mind"
+      }
+    }
+  ],
+  "shape": {
+    "Radius": 3.5
+  },
+  "duration": 3,
+  "targets": 8
+}
+
+{
+  "id": 770,
+  "next_id": 771,
+  "name": "Crippling Flame",
+  "health_cost": 0,
+  "magic_cost": 25,
+  "stamina_cost": 0,
+  "cooldown": 4,
+  "description": "Damages and weakens target's lethality for 2 turns.",
+  "effects": [
+    {
+      "Damage": {
+        "floor": 20,
+        "ceiling": 40,
+        "damage_type": "Fire",
+        "scaled_with": "Mind",
+        "defended_with": "Mind"
+      }
+    },
+    {
+      "Buff": {
+        "stat": "Lethality",
+        "multiplier": 0.80,
+        "effects": null,
+        "scaled_with": "Mind"
+      }
+    }
+  ],
+  "shape": { "Select": [] },
+  "duration": 2,
+  "targets": 1
+}

@@ -1,0 +1,30 @@
+{
+  "profiles": {
+    "aggressive": {
+      "logic": [
+        { "IfHPBelow": { "percent": 20, "then": "UsePanicAbility" } },
+        { "IfCanKillTarget": { "then": "UseStrongestDamageAbility" } },
+        { "IfTargetHasLowDefense": { "then": "UseArmorPenAbility" } },
+        { "Always": "UseHighestDPR" }
+      ]
+    },
+
+    "defensive": {
+      "logic": [
+        { "IfHPBelow": { "percent": 40, "then": "HealSelf" } },
+        { "IfAllyHPBelow": { "percent": 50, "then": "HealAlly" } },
+        { "IfThreatHigh": { "then": "RaiseShields" } },
+        { "Always": "UseSafeAttack" }
+      ]
+    },
+
+    "opportunistic": {
+      "logic": [
+        { "IfEnemyStunned": { "then": "UseHeavyAttack" } },
+        { "IfEnemyIsolated": { "then": "FocusFire" } },
+        { "IfCanKillTarget": { "then": "Execute" } },
+        { "Always": "UseRandomAbility" }
+      ]
+    }
+  }
+}

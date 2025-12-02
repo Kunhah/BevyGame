@@ -1,3 +1,4 @@
+use bevy::ecs::event;
 use bevy::prelude::*;
 use rand::Rng;
 use std::collections::VecDeque;
@@ -24,21 +25,6 @@ pub struct Name(pub String);
 
 #[derive(Component, Debug)]
 pub struct Class(pub String);
-
-#[derive(Debug, Clone, Copy)]
-pub enum Stat {
-    Health,
-    HealthRegen,
-    Magic,
-    MagicRegen,
-    Stamina,
-    StaminaRegen,
-    Lethality,
-    Hit,
-    Agility,
-    Mind,
-    Morale,
-}
 
 #[derive(Debug, Clone, Copy)]
 pub enum DamageType {
@@ -82,9 +68,136 @@ pub struct CombatStats {
     pub movement: i32,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum Stat {
+    Health,
+    HealthRegen,
+    Magic,
+    MagicRegen,
+    Stamina,
+    StaminaRegen,
+    Lethality,
+    Hit,
+    Agility,
+    Mind,
+    Morale,
+}
+
+fn get_stat_value(
+    stat: Stat,
+    combat_stats: Option<&CombatStats>,
+    health: Option<&Health>,
+    magic: Option<&Magic>,
+    stamina: Option<&Stamina>,
+) -> i32 {
+    match stat {
+        Stat::Lethality => combat_stats.map(|c| c.base_lethality as i32).unwrap_or(0),
+        Stat::Hit => combat_stats.map(|c| c.base_hit as i32).unwrap_or(0),
+        Stat::Agility => combat_stats.map(|c| c.base_agility as i32).unwrap_or(0),
+        Stat::Mind => combat_stats.map(|c| c.base_mind as i32).unwrap_or(0),
+        Stat::Morale => combat_stats.map(|c| c.base_morale as i32).unwrap_or(0),
+        Stat::Health => health.map(|h| h.current as i32).unwrap_or(0),
+        Stat::Magic => magic.map(|m| m.current as i32).unwrap_or(0),
+        Stat::Stamina => stamina.map(|s| s.current as i32).unwrap_or(0),
+        // Add other mappings if you have regen or other derived stats
+        _ => 0,
+    }
+}
+
+
+// The attributes the player distributes.
+// All small (u8), simple, and easy to balance.
+#[derive(Component, Debug, Default)]
+pub struct GrowthAttributes {
+    pub vitality: u8,   // influences Health curve, little influence on endurance and power
+    pub endurance: u8,  // influences Stamina curve, little influence on vitality and power
+    pub spirit: u8,     // influences Magic curve, little influence on insight
+    pub power: u8,      // influences lethality
+    pub control: u8,    // influences hit, little influence on agility
+    pub agility: u8,    // influences agility, little influence on control
+    pub insight: u8,    // influences mind, little influence on resolve
+    pub resolve: u8,    // influences morale
+}
+
+// A character-specific growth curve.
+// These are multipliers (or offsets) applied on top of the level up formulas.
+#[derive(Component, Debug, Clone)]
+pub struct GrowthCurve {
+    pub hp_curve: f32,
+    pub stamina_curve: f32,
+    pub magic_curve: f32,
+
+    pub lethality_curve: f32,
+    pub hit_curve: f32,
+    pub agility_curve: f32,
+    pub mind_curve: f32,
+    pub morale_curve: f32,
+}
+
+// Example: default balanced curve
+impl Default for GrowthCurve {
+    fn default() -> Self {
+        Self {
+            hp_curve: 1.0,
+            stamina_curve: 1.0,
+            magic_curve: 1.0,
+            lethality_curve: 1.0,
+            hit_curve: 1.0,
+            agility_curve: 1.0,
+            mind_curve: 1.0,
+            morale_curve: 1.0,
+        }
+    }
+}
+
+/// Special negative values:
+/// -1 = MISS
+/// -2 = DODGE
+/// -3 = HIT_KILL (guaranteed kill)
+/// ... (you define what you need)
+#[derive(Debug, Clone)]
+pub enum DamageSignal {
+    Miss = -1,
+    Dodge = -2,
+    HitKill = -3,
+}
+
+#[derive(Debug, Clone)]
+pub struct QueuedDamage {
+    pub attacker: Entity,
+    pub target: Entity,
+    pub amount: i32,                 // Pre-defense damage (>= 0). Negative reserved for signals.
+    pub damage_type: DamageType,
+
+    /// Attacker-side scaling: (stat, multiplier). These should be used when constructing
+    /// the amount (we fill them here but process_attack_intent will apply them immediately).
+    pub scaled_with: Vec<(Stat, f32)>,
+
+    /// Defender-side stats to be used to reduce damage (stat, multiplier).
+    /// e.g. vec![(Stat::Armor, 1.0)] means subtract defender.armor * 1.0 (scaled).
+    pub defended_with: Vec<(Stat, f32)>,
+
+    /// Optional override: force accuracy (0.0..1.0)
+    pub accuracy_override: Option<f32>,
+
+    pub crit_chance: f32,
+
+    /// Optional tags for special behavior (from ability id, critical, reflect etc.)
+    pub tags: Vec<u32>,
+}
+
+#[derive(Resource, Default, Debug)]
+pub struct DamageQueue(pub Vec<QueuedDamage>);
+
 /// Abilities placeholder (extend later)
 #[derive(Component, Debug, Default)]
 pub struct Abilities(pub Vec<u16>);
+
+#[derive(Component, Debug, Default)]
+pub struct AttributePointPool {
+    pub available: u32,
+    pub spent: u32,
+}
 
 /// Equipment slots hold Entities referencing equipment items
 #[derive(Component, Debug, Default)]
@@ -94,12 +207,27 @@ pub struct EquipmentSlots {
     pub accessories: Vec<Entity>,
 }
 
+#[derive(Component, Debug)]
+pub enum PlayerAction {
+    Attack(Entity),                // choose target
+    UseAbility(u32, Entity),       // ability_id + target
+    UseItem(u32, Option<Entity>),  // item_id
+    Defend,
+    Wait,
+}
+
+#[derive(Component, Debug, Default)]
+pub struct PlayerControlled;
+
 /// Tag components for class-specific logic (optional; systems can query these)
 #[derive(Component, Debug)]
-pub struct PaladinBehavior;
+pub struct PaladinBehavior; // Petrus
 
 #[derive(Component, Debug)]
-pub struct RogueBehavior;
+pub struct RogueBehavior; // Niira
+
+#[derive(Component)]
+pub struct SpiritMediumBehavior; // Toshiko
 
 /// Equipment entity
 #[derive(Component, Debug)]
@@ -198,7 +326,17 @@ impl Default for AIParameters {
 pub struct AttackIntentEvent {
     pub attacker: Entity,
     pub target: Entity,
-    pub ability_id: Option<u16>, // optional: which ability triggered the attack
+    //pub ability_id: Option<u16>, // optional: which ability triggered the attack
+}
+
+pub struct AbilityIntentEvent {
+    pub user: Entity,
+    pub ability_id: u16,
+}
+
+#[derive(Debug, Clone, Message)]
+pub struct DefendIntentEvent {
+    pub defender: Entity,
 }
 
 #[derive(Debug, Clone, Message)]
@@ -263,11 +401,12 @@ pub struct AfterAttackEvent {
     pub context: AttackContext,
 }
 
-/// XP / leveling events
 #[derive(Debug, Clone, Message)]
-pub struct XPGainEvent {
-    pub receiver: Entity,
+pub struct IncomingDamageEvent {
+    pub attacker: Entity,
+    pub target: Entity,
     pub amount: u32,
+    pub damage_type: DamageType,
 }
 
 #[derive(Debug, Clone, Message)]
@@ -292,14 +431,30 @@ pub struct TurnEndEvent {
 }
 
 #[derive(Debug, Clone, Message)]
-pub struct RoundStartEvent {
-    pub who: Entity,
-}
+pub struct RoundStartEvent;
 
 #[derive(Debug, Clone, Message)]
-pub struct RoundEndEvent {
+pub struct RoundEndEvent;
+
+#[derive(Debug, Clone, Message)]
+pub struct RespecEvent {
     pub who: Entity,
+    pub full_reset: bool, // if true: clears all, sets to 0
+    pub refund_all_points: bool, // if true: gives player all their spent points back
 }
+
+#[derive(Debug, Clone, Component)]
+pub struct InCombat;
+// q: Query<(Entity, &Agility, &AccumulatedAgility), With<InCombat>>, THIS SHOULD BE THE CORRECT QUERY
+
+#[derive(Debug, Clone, Component)]
+pub struct Dead;
+
+#[derive(Debug, Clone, Component)]
+pub struct PermanentlyDead;
+
+#[derive(Debug, Clone, Component)]
+pub struct AllyDeathBehavior;
 
 
 /// Context shared along the attack pipeline; systems may mutate `meta` or read values.
@@ -322,41 +477,270 @@ impl Default for AttackContext {
     }
 }
 
-/// -----------------------------
-/// Systems
-/// -----------------------------
+#[derive(Debug, Clone, Message)]
+pub struct AwardXpEvent {
+    pub recipient: Entity,
+    pub amount: u32,
+}
 
+#[derive(Debug, Clone, Message)]
+pub struct LootEvent {
+    pub loot: Vec<LootItem>,
+    pub dropped_by: Entity,
+}
 
-/// Process AttackIntentEvent -> send BeforeAttackEvent
-fn process_attack_intent(
-    mut intents: MessageReader<AttackIntentEvent>,
-    mut befores: MessageWriter<BeforeAttackEvent>,
-    stats_q: Query<&CombatStats>,
-) {
-    for intent in intents.iter() {
-        // initialize context from attacker's base stats (if available)
-        if let Ok(stats) = stats_q.get(intent.attacker) {
-            let ctx = AttackContext {
-                base_lethality: stats.base_lethality,
-                base_hit: stats.base_hit,
-                extra_flat_damage: 0,
-                multipliers: Vec::new(),
-            };
-            befores.send(BeforeAttackEvent {
-                attacker: intent.attacker,
-                target: intent.target,
-                context: ctx,
+pub struct LootItem {
+    pub id: u32,
+    pub quantity: u32,
+}
+
+#[derive(Debug, Clone, Resource)]
+pub struct BattleLoot {
+    pub items: Vec<LootItem>,
+}
+
+#[derive(Debug, Clone, Resource)]
+pub struct PendingPlayerAction {
+    pub entity: Option<Entity>,
+}
+
+#[derive(Debug, Clone, Message)]
+pub struct PlayerActionEvent {
+    pub action: PlayerAction,
+}
+
+#[derive(Debug, Clone, Message)]
+pub struct DeathEvent {
+    pub entity: Entity,
+    pub killer: Option<Entity>,
+}
+
+pub trait DeathBehavior: Send + Sync + 'static {
+    fn on_death(
+        &self,
+        entity: Entity,
+        killer: Option<Entity>,
+        commands: &mut Commands,
+        loot_writer: &mut MessageWriter<LootEvent>,
+        xp_writer: &mut MessageWriter<AwardXpEvent>,
+        tm: &mut TurnManager,
+    );
+}
+
+pub struct EnemyDeathBehavior {
+    pub xp_reward: u32,
+    pub loot_table: Vec<LootItem>,
+}
+
+impl DeathBehavior for EnemyDeathBehavior {
+    fn on_death(
+        &self,
+        entity: Entity,
+        killer: Option<Entity>,
+        commands: &mut Commands,
+        loot_writer: &mut MessageWriter<LootEvent>,
+        xp_writer: &mut MessageWriter<AwardXpEvent>,
+        tm: &mut TurnManager,
+    ) {
+        // Remove from combat
+        tm.participants.retain(|e| *e != entity);
+
+        // Drop loot
+        loot_writer.send(LootEvent {
+            loot: self.loot_table.clone(),
+            dropped_by: entity,
+        });
+
+        // Award XP to killer if exists
+        if let Some(killer) = killer {
+            xp_writer.send(AwardXpEvent {
+                recipient: killer,
+                amount: self.xp_reward,
             });
-        } else {
-            // fallback: send default context
-            befores.send(BeforeAttackEvent {
-                attacker: intent.attacker,
-                target: intent.target,
-                context: AttackContext::default(),
+        }
+
+        // Optional: despawn corpse or mark dead
+        commands.entity(entity).insert(Dead);
+    }
+}
+
+impl DeathBehavior for AllyDeathBehavior {
+    fn on_death(
+        &self,
+        entity: Entity,
+        killer: Option<Entity>,
+        commands: &mut Commands,
+        _loot_writer: &mut MessageWriter<LootEvent>,
+        _xp_writer: &mut MessageWriter<AwardXpEvent>,
+        tm: &mut TurnManager,
+    ) {
+        // Remove from turn order
+        tm.participants.retain(|e| *e != entity);
+
+        // Mark dead
+        commands.entity(entity).insert(Dead);
+
+        // Optional: trigger special ally-death effects (morale drop, buffs)
+        info!("An ally has fallen.");
+    }
+}
+
+fn award_xp_system(
+    mut events: MessageReader<AwardXpEvent>,
+    mut events_level: MessageWriter<LevelUpEvent>,
+    mut query: Query<(&mut Experience, &mut Level)>,
+) {
+    for evt in events.read() {
+        if let Ok((mut xp, mut lvl)) = query.get_mut(evt.recipient) {
+            xp.0 += evt.amount;
+            let new_level = (xp.0 >> 16) as u8;
+            events_level.send(LevelUpEvent {
+                who: evt.recipient,
+                old_level: lvl.0,
+                new_level,
             });
         }
     }
 }
+
+fn loot_system(
+    mut events: MessageReader<LootEvent>,
+    mut loot_res: ResMut<BattleLoot>,
+) {
+    for evt in events.read() {
+        loot_res.items.extend(evt.loot.clone());
+    }
+}
+
+
+#[derive(Clone, Debug, Component)]
+pub struct ExtraHp {
+    pub current: u32,
+    pub max: u32,
+}
+
+fn spirit_medium_absorb_system(
+    mut incoming: MessageReader<IncomingDamageEvent>,
+    mut q: Query<(&mut ExtraHp, &mut Health), With<SpiritMediumBehavior>>,
+    mut dmg_queue: ResMut<DamageQueue>,
+) {
+    for ev in incoming.iter() {
+        if let Ok((mut extra, mut hp)) = q.get_mut(ev.target) {
+
+            let mut dmg = ev.amount;
+
+            // absorb from extra hp
+            let absorbed = dmg.min(extra.current);
+            extra.current -= absorbed;
+            dmg -= absorbed;
+
+            if dmg == 0 {
+                dmg_queue.push(DamageEvent {
+                    attacker: ev.attacker,
+                    target: ev.target,
+                    amount: 0,
+                    damage_type: ev.damage_type,
+                });
+                continue;
+            }
+
+            // apply remaining to normal HP
+            let applied = hp.current.min(dmg);
+            hp.current -= applied;
+
+            dmg_queue.push(DamageEvent {
+                attacker: ev.attacker,
+                target: ev.target,
+                amount: applied,
+                damage_type: ev.damage_type,
+            });
+        }
+    }
+}
+
+fn paladin_before_attack_system(
+    mut events: MessageReader<BeforeAttackEvent>,
+    mut paladins: Query<(), With<PaladinBehavior>>,
+) {
+    for ev in events.iter_mut() {
+        if paladins.get(ev.attacker).is_ok() {
+            ev.attack_stats.hit =
+                (ev.attack_stats.hit as f32 * 1.10) as u32;
+        }
+    }
+}
+
+fn paladin_damage_reduction_system(
+    mut incoming: MessageReader<IncomingDamageEvent>,
+    paladins: Query<(), With<PaladinBehavior>>,
+    mut dmg_queue: ResMut<DamageQueue>,
+) {
+    for ev in incoming.iter() {
+        if paladins.get(ev.target).is_ok() {
+            let reduced = ev.amount.saturating_sub(1);
+            dmg_queue.push(DamageEvent {
+                attacker: ev.attacker,
+                target: ev.target,
+                amount: reduced,
+                damage_type: ev.damage_type,
+            });
+        }
+    }
+}
+
+fn rogue_backstab_system(
+    mut events: MessageReader<BeforeAttackEvent>,
+    rogues: Query<&Transform, With<RogueBehavior>>,
+    targets: Query<&Transform>,
+) {
+    for ev in events.iter_mut() {
+        if let Ok(rogue_tf) = rogues.get(ev.attacker) {
+            if let Ok(target_tf) = targets.get(ev.target) {
+                let dir = target_tf.translation - rogue_tf.translation;
+                let back = target_tf.forward();
+
+                if dir.length() < 2.0 && dir.dot(back) > 0.8 {
+                    ev.attack_stats.lethality += 20;
+                }
+            }
+        }
+    }
+}
+
+fn rogue_dodge_system(
+    mut incoming: MessageReader<IncomingDamageEvent>,
+    rogues: Query<&CombatStats, With<RogueBehavior>>,
+    mut dmg_queue: ResMut<DamageQueue>,
+) {
+    for ev in incoming.iter() {
+        if let Ok(stats) = rogues.get(ev.target) {
+            let chance = stats.agility as f32 / 100.0;
+            if rand::random::<f32>() < chance {
+                // Dodged → send 0 damage
+                dmg_queue.push(DamageEvent {
+                    attacker: ev.attacker,
+                    target: ev.target,
+                    amount: 0,
+                    damage_type: ev.damage_type,
+                });
+                continue;
+            }
+        }
+
+        // not dodged → push normal damage
+        dmg_queue.push(DamageEvent {
+            attacker: ev.attacker,
+            target: ev.target,
+            amount: ev.amount,
+            damage_type: ev.damage_type,
+        });
+    }
+}
+
+
+/// -----------------------------
+/// Systems
+/// -----------------------------
 
 /// Generic equipment system: reacts to BeforeAttackEvent and applies stat modifiers when equipment has matching hooks.
 fn equipment_before_attack_listener(
@@ -440,67 +824,267 @@ fn before_hit_listeners(
 }
 
 /// Execute the hit: compute damage using CombatStats + StatModifiers + context
-fn execute_hit_system(
-    mut before_hits: MessageReader<BeforeHitEvent>,
-    mut damage_writer: MessageWriter<DamageEvent>,
+// fn execute_hit_system(
+//     mut before_hits: MessageReader<BeforeHitEvent>,
+//     mut damage_writer: MessageWriter<DamageEvent>,
+//     stats_q: Query<&CombatStats>,
+//     modifiers_q: Query<&StatModifiers>,
+// ) {
+//     for ev in before_hits.iter() {
+//         // base lethality from context (usually came from attacker's stats)
+//         let mut base_leth = ev.context.base_lethality;
+//         let base_hit = ev.context.base_hit;
+//         let mut flat = ev.context.extra_flat_damage;
+
+//         // Apply stat modifiers for attacker, multiplicatively
+//         if let Ok(mods) = modifiers_q.get(ev.attacker) {
+//             for m in &mods.0 {
+//                 if m.stat == Stat::Lethality {
+//                     base_leth = ((base_leth as f32) * m.multiplier).round() as i32;
+//                 }
+//                 if m.stat == Stat::Hit {
+//                     // not used here, but you can transform to hit chance later
+//                 }
+//             }
+//         }
+
+//         // Combine with attacker's combat stats if needed
+//         if let Ok(att_stats) = stats_q.get(ev.attacker) {
+//             base_leth += att_stats.base_lethality - ev.context.base_lethality; // ensure differences considered
+//         }
+
+//         // A very simple damage formula: final = base_leth + flat
+//         let final_damage = (base_leth + flat).max(0);
+
+//         damage_writer.send(DamageEvent {
+//             attacker: ev.attacker,
+//             target: ev.target,
+//             amount: final_damage,
+//             damage_type: DamageType::Physical,
+//         });
+//     }
+// }
+
+/// Process AttackIntentEvent -> send BeforeAttackEvent
+fn process_attack_intent(
+    mut dq: ResMut<DamageQueue>,
+    mut intents: MessageReader<AttackIntentEvent>,
     stats_q: Query<&CombatStats>,
     modifiers_q: Query<&StatModifiers>,
+    targets_stats_q: Query<&CombatStats>,  // to read target agility for hit roll
+    health_q: Query<&Health>,              // for any stat scaling needing HP
+    magic_q: Query<&Magic>,
+    stamina_q: Query<&Stamina>,
 ) {
-    for ev in before_hits.iter() {
-        // base lethality from context (usually came from attacker's stats)
-        let mut base_leth = ev.context.base_lethality;
-        let base_hit = ev.context.base_hit;
-        let mut flat = ev.context.extra_flat_damage;
+    for intent in intents.iter() {
+        let attacker = intent.attacker;
+        let target = intent.target;
 
-        // Apply stat modifiers for attacker, multiplicatively
-        if let Ok(mods) = modifiers_q.get(ev.attacker) {
+        // Build base context from attacker's CombatStats (or ability context if present)
+        let att_stats = stats_q.get(attacker).ok();
+        let mut base_leth = att_stats.map(|s| s.base_lethality as i32).unwrap_or(0);
+        let base_hit = att_stats.map(|s| s.base_hit as i32).unwrap_or(50);
+        let mut flat = intent.context.extra_flat_damage as i32; // keep flat
+
+        // Apply attacker's StatModifiers multiplicatively for attacker-side scaling
+        if let Ok(mods) = modifiers_q.get(attacker) {
             for m in &mods.0 {
-                if m.stat == Stat::Lethality {
-                    base_leth = ((base_leth as f32) * m.multiplier).round() as i32;
-                }
-                if m.stat == Stat::Hit {
-                    // not used here, but you can transform to hit chance later
+                match m.stat {
+                    Stat::Lethality => {
+                        base_leth = ((base_leth as f32) * m.multiplier).round() as i32;
+                    }
+                    Stat::Hit => {
+                        // we don't change base_leth here, but we might store to adjust accuracy
+                    }
+                    Stat::Agility | Stat::Mind | Stat::Morale => {
+                        // If your modifiers can scale other stats used for scaling,
+                        // handle them here (optional).
+                    }
+                    _ => {}
                 }
             }
         }
 
-        // Combine with attacker's combat stats if needed
-        if let Ok(att_stats) = stats_q.get(ev.attacker) {
-            base_leth += att_stats.base_lethality - ev.context.base_lethality; // ensure differences considered
+        // If this intent was produced by an Ability, examine ability.effects
+        // and collect scaled_with / defended_with; otherwise use defaults for a basic attack.
+        let mut scaled_with: Vec<(Stat, f32)> = Vec::new();
+        let mut defended_with: Vec<(Stat, f32)> = Vec::new();
+        if let Some(ability) = intent.ability.as_ref() {
+            // gather scaling/defense info from ability.effects
+            for eff in &ability.effects {
+                match eff {
+                    AbilityEffect::Damage { scaled_with: s, defended_with: d, .. } => {
+                        scaled_with.push((*s, 1.0));   // default multiplier 1.0 unless ability includes one
+                        defended_with.push((*d, 1.0));
+                    }
+                    AbilityEffect::Heal { .. } => { /* skip */ }
+                    AbilityEffect::Buff { .. } => { /* skip */ }
+                }
+            }
         }
 
-        // A very simple damage formula: final = base_leth + flat
-        let final_damage = (base_leth + flat).max(0);
+        // Default for normal attack if none specified
+        if scaled_with.is_empty() {
+            scaled_with.push((Stat::Lethality, 1.0));
+        }
+        if defended_with.is_empty() {
+            // physical attacks are typically defended by armor (or base_armor)
+            defended_with.push((Stat::Armor, 1.0));
+        }
 
-        damage_writer.send(DamageEvent {
-            attacker: ev.attacker,
-            target: ev.target,
-            amount: final_damage,
-            damage_type: DamageType::Physical,
+        // APPLY ATTACKER-SIDE SCALING IMMEDIATELY (so amount is pre-defense):
+        // For each (stat, mult) in scaled_with add attacker_stat * mult to base_leth
+        if let Some(a_stats) = att_stats {
+            for (stat, mult) in &scaled_with {
+                let val = get_stat_value(*stat, Some(a_stats), None, None, None);
+                // apply rounding and scale factor — tweak divisor as needed
+                base_leth += (val as f32 * *mult / 10.0).round() as i32;
+                // NOTE: dividing by 10 here prevents massive values; tune to taste.
+            }
+        }
+
+        // Calculate final pre-defense damage (base lethality + flat)
+        let pre_def_damage = (base_leth + flat).max(0);
+
+        // --- HIT CHANCE (do this now, using target agility) -----------------------
+        // Use attacker hit vs target agility for miss roll
+        let attacker_hit_f = base_hit as f32;
+        let target_agi_f = targets_stats_q.get(target).map(|t| t.base_agility as f32).unwrap_or(0.0);
+
+        // chance formula: hit / (hit + agility)
+        let chance = attacker_hit_f / (attacker_hit_f + target_agi_f + 0.0001);
+
+        if rand::random::<f32>() > chance {
+            // It's a miss — push a MISS special entry or skip pushing damage.
+            dq.0.push(QueuedDamage {
+                attacker,
+                target,
+                amount: DamageSignal::Miss as i32,
+                damage_type: DamageType::Physical,
+                scaled_with: vec![],
+                defended_with: vec![],
+                accuracy_override: None,
+                tags: vec![],
+            });
+            continue;
+        }
+
+        // If hit, push the pre-defense damage into the queue together with the defender-side stats
+        dq.0.push(QueuedDamage {
+            attacker,
+            target,
+            amount: pre_def_damage,
+            damage_type: intent.context.damage_type.unwrap_or(DamageType::Physical),
+            scaled_with,   // we keep this as metadata, though we've already applied them
+            defended_with, // used by the damage processor to subtract defenses
+            accuracy_override: None,
+            tags: vec![ intent.ability.as_ref().map(|a| a.id).unwrap_or(0) ],
         });
     }
 }
 
+
+fn process_damage_queue_system(
+    mut dq: ResMut<DamageQueue>,
+    stats_q: Query<&CombatStats>,
+    hp_q: Query<&Health>,
+    mp_q: Query<&Magic>,
+    mut damage_writer: MessageWriter<DamageEvent>,
+) {
+    for mut entry in dq.0.drain(..) {
+        // SPECIAL NEGATIVE VALUES -------------------------------------------
+        match entry.amount {
+            -1 => continue, // MISS
+            -2 => continue, // DODGE
+            -3 => {         // HITKILL
+                damage_writer.send(DamageEvent {
+                    attacker: entry.attacker,
+                    target: entry.target,
+                    amount: u32::MAX,
+                    damage_type: entry.damage_type,
+                });
+                continue;
+            }
+            // If less than 0 but not one of the above, it's an error
+            _ => {}
+        }
+
+        // FETCH STATS --------------------------------------------------------
+        let atk = stats_q.get(entry.attacker).ok();
+        let tgt = stats_q.get(entry.target).ok();
+        let tgt_hp = hp_q.get(entry.target).ok();
+        let tgt_mp = mp_q.get(entry.target).ok();
+
+        // HIT CHANCE ---------------------------------------------------------
+        let hit = entry.accuracy_override
+            .or_else(|| atk.map(|a| a.base_hit as f32))
+            .unwrap_or(50.0);
+
+        let evade = tgt.map(|t| t.base_agility as f32).unwrap_or(0.0);
+
+        let chance = hit / (hit + evade + 0.01);
+
+        if rand::random::<f32>() > chance {
+            continue; // MISS
+        }
+
+        // SCALING ------------------------------------------------------------
+        if let Some(a) = atk {
+            for (stat, mult) in &entry.scaled_with {
+                entry.amount += (get_stat_value(*stat, a, tgt_hp, tgt_mp) as f32 * mult) as i32;
+            }
+        }
+
+        // DEFENSE -------------------------------------------------------------
+        if let Some(t) = tgt {
+            for (stat, mult) in &entry.defended_with {
+                entry.amount -= (get_stat_value(*stat, t, tgt_hp, tgt_mp) as f32 * mult) as i32;
+            }
+        }
+
+        entry.amount = entry.amount.max(0);
+
+        // FINAL DAMAGE --------------------------------------------------------
+        damage_writer.send(DamageEvent {
+            attacker: entry.attacker,
+            target: entry.target,
+            amount: entry.amount as u32,
+            damage_type: entry.damage_type,
+        });
+    }
+}
+
+
 /// Apply damage to target's Health and emit AfterHitEvent
 fn apply_damage_system(
-    mut damages: MessageReader<DamageEvent>,
-    mut after_hit_writer: MessageWriter<AfterHitEvent>,
+    mut reader: MessageReader<DamageEvent>,
     mut health_q: Query<&mut Health>,
+    mut after_writer: MessageWriter<AfterHitEvent>,
+    mut death_writer: MessageWriter<DeathEvent>,
 ) {
-    for ev in damages.iter() {
-        if let Ok(mut health) = health_q.get_mut(ev.target) {
-            let before = health.current;
-            health.current = (health.current - ev.amount).max(0);
-            let applied = before - health.current;
-            after_hit_writer.send(AfterHitEvent {
+    for ev in reader.iter() {
+        if let Ok(mut hp) = health_q.get_mut(ev.target) {
+            let before = hp.current;
+            hp.current = hp.current.saturating_sub(ev.amount);
+            let applied = before - hp.current;
+
+            after_writer.send(AfterHitEvent {
                 attacker: ev.attacker,
                 target: ev.target,
                 amount: applied,
                 damage_type: ev.damage_type,
             });
+
+            if hp.current == 0 {
+                death_writer.send(DeathEvent {
+                    entity: ev.target,
+                    killer: Some(ev.attacker),
+                });
+            }
         }
     }
 }
+
 
 /// After hit: allow equipment or buffs to react (e.g., lifesteal)
 fn after_hit_listeners(
@@ -710,7 +1294,7 @@ fn calculate_xp_award(receiver_experience: u32, enemy_experience: u32) -> u32 {
     };
 
     // thresholds from original: shift left 14 (= *16384)
-    let multiplier_base = 16384.0_f32;
+    // let multiplier_base = 16384.0_f32;
 
     // clamp ratio to avoid NaNs
     let ratio = ratio.max(0.0);
@@ -718,12 +1302,12 @@ fn calculate_xp_award(receiver_experience: u32, enemy_experience: u32) -> u32 {
     let amount_f: f32 = if ratio > 0.946 {
         // ((ratio - 0.2).ln() / 1.25.ln() + 1.5) << 14  converted to *16384
         let inner = (ratio - 0.2).max(0.0001);
-        let value = ((inner.ln() / 1.25f32.ln()) + 1.5) * multiplier_base;
+        let value = ((inner.ln() / 1.25f32.ln()) + 1.5) << 14;
         // clamp to non-negative
         value.max(0.0)
     } else {
         // ratio.powf(30.2) << 14
-        ratio.powf(30.2) * multiplier_base
+        ratio.powf(30.2) << 14
     };
 
     // avoid huge values; clamp to u32::MAX-1
@@ -736,92 +1320,209 @@ fn calculate_xp_award(receiver_experience: u32, enemy_experience: u32) -> u32 {
     }
 }
 
-/// Handle XPGainEvent: add to Experience component and emit LevelUpEvent if level increases
-fn xp_gain_system(
-    mut xp_events: MessageReader<XPGainEvent>,
-    mut xp_writer: MessageWriter<LevelUpEvent>,
-    mut qxp: Query<(&mut Experience, &mut Level)>,
-) {
-    for ev in xp_events.iter() {
-        if let Ok((mut xp, mut lvl)) = qxp.get_mut(ev.receiver) {
-            let old_level = lvl.0;
-            // add XP
-            xp.0 = xp.0.saturating_add(ev.amount);
-            // recompute level as experience >> 16 (original approach)
-            let new_level = (xp.0 >> 16) as u8;
-            if new_level > old_level {
-                lvl.0 = new_level;
-                xp_writer.send(LevelUpEvent {
-                    who: ev.receiver,
-                    old_level,
-                    new_level,
-                });
-            }
-        }
-    }
-}
-
 /// Level up handler: apply stat increases using functions derived from original file.
 /// The original used strange formulas; here we approximate the same behavior while keeping types safe.
 /// Each function will increase appropriate components.
-fn level_up_system(
-    mut lvl_events: MessageReader<LevelUpEvent>,
+fn curve_growth_u32(attr: u8, base: f32, exponent: f32) -> u32 {
+    // step 1: left shift the attribute by 1 (u8 -> u32 then shift)
+    let shifted_attr = ((attr as u32) << 1) as f32; // matches option B
+
+    // step 2: compute power safely
+    let power = shifted_attr.powf(exponent);
+
+    // step 3: compute inner
+    let inner = base - power;
+
+    // step 4: clamp negative to zero; convert to u64 for safe shifting
+    let truncated: u64 = if inner.is_nan() || inner <= 0.0 {
+        0u64
+    } else {
+        inner as u64
+    };
+
+    // step 5: right shift by 19 (like your original '>> 19')
+    let shifted_right: u32 = (truncated >> 19) as u32;
+
+    // step 6: compute minimum allowed growth (base >> 3)
+    let min_growth: u32 = ((base as u32) >> 3).max(1);
+
+    std::cmp::max(shifted_right, min_growth)
+}
+
+/// Similar helper but returning signed i32 (for stats that are i32)
+fn curve_growth_i32(attr: u8, base: f32, exponent: f32) -> i32 {
+    curve_growth_u32(attr, base, exponent) as i32
+}
+
+/// --------------- Level up system using your confirmed parameters ---------------
+
+/// Event: LevelUpEvent { who: Entity, old_level: u8, new_level: u8 }
+/// (assumes you already defined LevelUpEvent elsewhere and registered it)
+pub fn level_up_system(
+    mut level_up_events: MessageReader<LevelUpEvent>,
     mut q_stats: Query<(
         &mut CombatStats,
         Option<&mut Health>,
         Option<&mut Stamina>,
         Option<&mut Magic>,
+        &GrowthAttributes,
+        // Keep GrowthCurve in the signature if you want to keep per-character curves later.
+        Option<&GrowthCurve>,
     )>,
 ) {
-    for ev in lvl_events.iter() {
-        if let Ok((mut stats, h_opt, s_opt, m_opt)) = q_stats.get_mut(ev.who) {
-            // number of levels gained
+
+    // With base of 500, 4.20927 goes to 50, 3.65860 goes to 100, 3.39852 goes to 150, 3.23534 goes to 200, 3.11917 goes to 250, 3.03027 goes to 300, 2.95896 goes to 350, 2.89986 goes to 400, 2.84964 goes to 450, 2.80618 goes to 500
+    // With base of 375, 4.14680 goes to 50, 3.60423 goes to 100, 3.34808 goes to 150, 3.18732 goes to 200, 3.07288 goes to 250, 2.98530 goes to 300, 2.91505 goes to 350, 2.85682 goes to 400, 2.80736 goes to 450, 2.76453 goes to 500
+    // With base of 250, 4.05875 goes to 50, 3.52777 goes to 100, 3.2699 goes to 150, 3.11965 goes to 200, 3.00763 goes to 250, 2.92191 goes to 300, 2.85316 goes to 350, 2.79616 goes to 400, 2.74775 goes to 450, 2.70584 goes to 500
+    // With base of 175, 3.98130 goes to 50, 3.46045 goes to 100, 3.21446 goes to 150, 3.06012 goes to 200, 2.95024 goes to 250, 2.86616 goes to 300, 2.79871 goes to 350, 2.74280 goes to 400, 2.69531 goes to 450, 2.65420 goes to 500
+    // With base of 100, 3.85978 goes to 50, 3.35483 goes to 100, 3.11635 goes to 150, 2.96671 goes to 200, 2.86019 goes to 250, 2.77867 goes to 300, 2.71329 goes to 350, 2.65909 goes to 400, 2.61305 goes to 450, 2.57319 goes to 500
+    // With base of 50, 5,70205 goes to 10, 4,36649 goes to 25, 3.70927 goes to 50, 3.22401 goes to 100, 2.99482 goes to 150, 2.85103 goes to 200, 2.74866 goes to 250, 2.67032 goes to 300, 2.60748 goes to 350, 2.55539 goes to 400, 2.51115 goes to 450, 2.47285 goes to 500
+    // With base of 25, 5,47067 goes to 10, 4,18931 goes to 25, 3.55875 goes to 50, 3.09318 goes to 100, 2.87330 goes to 150, 2.73534 goes to 200, 2.63712 goes to 250, 2.56196 goes to 300, 2.50167 goes to 350, 2.45170 goes to 400, 2.40925 goes to 450, 2.37250 goes to 500
+    // With base of 10, 5,16481 goes to 10, 3,95508 goes to 25, 3.35978 goes to 50, 2.92024 goes to 100, 2.71265 goes to 150, 2.58240 goes to 200, 2.48968 goes to 250, 2.41872 goes to 300, 2.36181 goes to 350, 2.31463 goes to 400, 2.27455 goes to 450, 2.23986 goes to 500
+    // There is a spreadsheet with all the values for initial value and maximum value
+
+    for ev in level_up_events.iter() {
+        if let Ok((mut stats, h_opt, s_opt, m_opt, growth_attr, _curve_opt)) =
+            q_stats.get_mut(ev.who)
+        {
             let level_gained = (ev.new_level as i32) - (ev.old_level as i32);
             if level_gained <= 0 {
                 continue;
             }
 
-            // For each gained level, apply growth functions.
             for _ in 0..level_gained {
-                // health growth
+                // -----------------------
+                // HEALTH MAX & REGEN
+                // -----------------------
                 if let Some(mut h) = h_opt {
-                    // This mirrors your "level_health" intent: add diminishing returns
-                    // We'll add a value proportional to 50..150 using a soft cap approach:
-                    let add_hp = (500.0 - (h.max as f32).powf(1.955) / 524288.0).max(1.0);
-                    let add_hp_i = add_hp.round() as i32;
-                    h.max = h.max.saturating_add(add_hp_i);
-                    h.current = h.current.saturating_add(add_hp_i);
-                    // increase health regen slightly
-                    h.regen = (h.regen + (50i32 - ((h.regen as f32).powf(2.21) / 524288.0).round() as i32)).max(0);
+                    // Health Max using your provided sample (base=250, exponent=3.007632509)
+                    let base_hp = 250.0_f32;
+                    let add_hp = curve_growth_u32(
+                        growth_attr.vitality,
+                        base_hp,
+                        3.007632509_f32,
+                    );
+                    // apply
+                    h.max = h.max.saturating_add(add_hp as i32);
+                    h.current = h.current.saturating_add(add_hp as i32);
+
+                    // Health regen using base=35, exponent=2.691262945
+                    let base_regen = 35.0_f32;
+                    let add_regen = curve_growth_u32(
+                        growth_attr.vitality,
+                        base_regen,
+                        2.691262945_f32,
+                    );
+                    // regen is an integer; apply
+                    h.regen = h.regen.saturating_add(add_regen as i32);
                 }
 
-                // stamina growth
+                // -----------------------
+                // STAMINA MAX & REGEN
+                // -----------------------
                 if let Some(mut s) = s_opt {
-                    let add_s = (500.0 - (s.max as f32).powf(1.955) / 524288.0).max(1.0);
-                    let add_s_i = add_s.round() as i32;
-                    s.max = s.max.saturating_add(add_s_i);
-                    s.current = s.current.saturating_add(add_s_i);
-                    s.regen = (s.regen + (50i32 - ((s.regen as f32).powf(2.05) / 524288.0).round() as i32)).max(0);
+                    // Use the standardized formula with the chosen base/exponent for stamina
+                    let base_stamina = 200.0_f32; // as you confirmed
+                    let add_stam = curve_growth_u32(growth_attr.endurance, base_stamina, 2.9_f32);
+                    s.max = s.max.saturating_add(add_stam as i32);
+                    s.current = s.current.saturating_add(add_stam as i32);
+
+                    // Stamina regen with base 25 exponent 2.4
+                    let base_stam_reg = 25.0_f32;
+                    let add_stam_reg = curve_growth_u32(growth_attr.endurance, base_stam_reg, 2.4_f32);
+                    s.regen = s.regen.saturating_add(add_stam_reg as i32);
                 }
 
-                // magic growth
+                // -----------------------
+                // MAGIC MAX & REGEN
+                // -----------------------
                 if let Some(mut m) = m_opt {
-                    let add_m = (500.0 - (m.max as f32).powf(1.955) / 524288.0).max(1.0);
-                    let add_m_i = add_m.round() as i32;
-                    m.max = m.max.saturating_add(add_m_i);
-                    m.current = m.current.saturating_add(add_m_i);
-                    m.regen = (m.regen + (50i32 - ((m.regen as f32).powf(2.21) / 524288.0).round() as i32)).max(0);
+                    let base_magic = 225.0_f32;
+                    let add_magic = curve_growth_u32(growth_attr.spirit, base_magic, 3.1_f32);
+                    m.max = m.max.saturating_add(add_magic as i32);
+                    m.current = m.current.saturating_add(add_magic as i32);
+
+                    let base_magic_reg = 30.0_f32;
+                    let add_magic_reg = curve_growth_u32(growth_attr.spirit, base_magic_reg, 2.8_f32);
+                    m.regen = m.regen.saturating_add(add_magic_reg as i32);
                 }
 
-                // stats bump: lethality, hit, agility, mind, morale etc.
-                stats.base_lethality = stats.base_lethality.saturating_add( (500.0 - (stats.base_lethality as f32).powf(1.955) / 524288.0).round() as i32 );
-                stats.base_hit = stats.base_hit.saturating_add( (500.0 - (stats.base_hit as f32).powf(1.955) / 524288.0).round() as i32 );
-                stats.base_agility = stats.base_agility.saturating_add( (500.0 - (stats.base_agility as f32).powf(1.955) / 524288.0).round() as i32 );
-                stats.base_mind = stats.base_mind.saturating_add( (500.0 - (stats.base_mind as f32).powf(1.955) / 524288.0).round() as i32 );
-                stats.base_morale = stats.base_morale.saturating_add( (500.0 - (stats.base_morale as f32).powf(1.955) / 524288.0).round() as i32 );
+                // -----------------------
+                // COMBAT STATS (LETHALITY, HIT, AGILITY, MIND, MORALE)
+                // All follow the same pattern with base=250, exponent=3.0
+                // -----------------------
+
+                // Lethality
+                let add_leth = curve_growth_i32(growth_attr.power, 250.0_f32, 3.0_f32);
+                stats.base_lethality = stats.base_lethality.saturating_add(add_leth);
+
+                // Hit
+                let add_hit = curve_growth_i32(growth_attr.control, 250.0_f32, 3.0_f32);
+                stats.base_hit = stats.base_hit.saturating_add(add_hit);
+
+                // Agility
+                let add_agi = curve_growth_i32(growth_attr.agility, 250.0_f32, 3.0_f32);
+                stats.base_agility = stats.base_agility.saturating_add(add_agi);
+
+                // Mind
+                let add_mind = curve_growth_i32(growth_attr.insight, 250.0_f32, 3.0_f32);
+                stats.base_mind = stats.base_mind.saturating_add(add_mind);
+
+                // Morale
+                let add_morale = curve_growth_i32(growth_attr.resolve, 250.0_f32, 3.0_f32);
+                stats.base_morale = stats.base_morale.saturating_add(add_morale);
             }
 
-            info!("Level up applied to {:?}: {} -> {}", ev.who, ev.old_level, ev.new_level);
+            info!(
+                "Level up applied to {:?}: {} -> {}",
+                ev.who, ev.old_level, ev.new_level
+            );
+        }
+    }
+}
+
+pub fn respec_system(
+    mut ev_respec: MessageReader<RespecEvent>,
+    mut q: Query<(
+        &mut GrowthAttributes,
+        &mut AttributePointPool,
+        Option<&GrowthCurve>,
+    )>,
+) {
+    for ev in ev_respec.read() {
+        if let Ok((mut attributes, mut pool, _curve)) = q.get_mut(ev.who) {
+            
+            // 1. Calculate how many points were allocated
+            let total_spent = attributes.vitality as u32
+                + attributes.endurance as u32
+                + attributes.spirit as u32
+                + attributes.power as u32
+                + attributes.control as u32
+                + attributes.agility as u32
+                + attributes.insight as u32
+                + attributes.resolve as u32;
+
+            // 2. Reset attributes (full reset)
+            if ev.full_reset {
+                *attributes = GrowthAttributes::default();
+            } else {
+                // partial reset? (implement if needed)
+                // For now full reset always.
+                *attributes = GrowthAttributes::default();
+            }
+
+            // 3. Refund points
+            if ev.refund_all_points {
+                pool.available += total_spent;
+                pool.spent = 0;
+            }
+
+            info!(
+                "Character {:?} RESET. Refunded {} points. Now has {} available.",
+                ev.who,
+                total_spent,
+                pool.available
+            );
         }
     }
 }
@@ -848,6 +1549,7 @@ fn compute_turn_order_system(
     stats_q: Query<&CombatStats>,
     levels_q: Query<&Level>,
     mut ev_writer: MessageWriter<TurnOrderCalculatedEvent>,
+    ev_reader: MessageReader<RoundEndEvent>,
 ) {
     // recompute threshold / max jitter based on participants
     tm.recompute_params(&stats_q, &levels_q);
@@ -889,6 +1591,9 @@ fn advance_turn_system(mut turn_order: ResMut<TurnOrder>, mut ev_writer: Message
     if let Some(next) = turn_order.queue.pop_front() {
         ev_writer.send(TurnStartEvent { who: next });
     }
+    else{
+        ev_writer.send(RoundEndEvent);
+    }
 }
 
 /// Example: when a turn starts for an entity, we allow AI or player to emit AttackIntentEvent.
@@ -916,6 +1621,57 @@ fn on_turn_start_system(
         }
     }
 }
+
+fn process_player_action_system(
+    mut ev: MessageReader<PlayerActionEvent>,
+    mut pending: ResMut<PendingPlayerAction>,
+    mut intent_writer: MessageWriter<AttackIntentEvent>,
+    mut defend_writer: MessageWriter<DefendIntentEvent>,
+    mut wait_writer: MessageWriter<WaitIntentEvent>,
+) {
+    if pending.entity.is_none() {
+        return; // no player turn pending
+    }
+
+    let actor = pending.entity.unwrap();
+
+    for e in ev.iter() {
+        match &e.action {
+            PlayerAction::Attack(target) => {
+                intent_writer.send(AttackIntentEvent {
+                    attacker: actor,
+                    target: *target,
+                    ability_id: None,
+                });
+            }
+
+            PlayerAction::UseAbility(ability_id, target) => {
+                intent_writer.send(AttackIntentEvent {
+                    attacker: actor,
+                    target: *target,
+                    ability_id: Some(*ability_id),
+                });
+            }
+
+            PlayerAction::UseItem(item_id, target) => {
+                // TODO: call your item system
+            }
+
+            PlayerAction::Defend => {
+                defend_writer.send(DefendIntentEvent { who: actor });
+            }
+
+            PlayerAction::Wait => {
+                wait_writer.send(WaitIntentEvent { who: actor });
+            }
+        }
+
+        // Player decision consumed → clear pending
+        pending.entity = None;
+        break; // only one action per turn
+    }
+}
+
 
 /// At the end of a turn, we emit TurnEndEvent to allow cleanup and buff ticks if you prefer to tie buff durations to turns.
 fn on_turn_end_system(mut ev_reader: MessageReader<TurnEndEvent>, mut _commands: Commands) {
@@ -1032,11 +1788,9 @@ fn debug_print_system(
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum AbilityEffect {
-    Heal { floor: u32, ceiling: u32 },
-    Damage { floor: u32, ceiling: u32, damage_type: DamageType },
-    Buff { stat: String, multiplier: f32, effects: Option<Vec<u16>> },   // e.g. "agility", 1.2 multiplier
-    //Debuff { stat: String, multiplier: f32 },
-    //Custom(String),      // for scripting later
+    Heal { floor: u32, ceiling: u32, scaled_with: Stat },
+    Damage { floor: u32, ceiling: u32, damage_type: DamageType, scaled_with: Stat, defended_with: Stat },
+    Buff { stat: Stat, multiplier: f32, effects: Option<Vec<u16>>, scaled_with: Stat },   // e.g. "agility", 1.2 multiplier, optional effects (ability ids), doesn't have duration because the ability struct already haves it
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -1059,7 +1813,7 @@ pub struct Ability {
     pub description: String,
     pub effects: Vec<AbilityEffect>,
     pub shape: AbilityShape,
-    pub duration: u8, // 0 for single turn instantenous
+    pub duration: u8, // 0 for single turn instantenous, 
     pub targets: u8,
 }
 
@@ -1208,31 +1962,55 @@ impl AbilityTree {
 pub fn handle_ability(
     caster: Entity,
     ability: &Ability,
-    affected_entities: &Vec<Entity>,
+    affected: &[Entity],
     now: u32,
+    mut dq: ResMut<DamageQueue>,
+    mut attack_intent_events: MessageWriter<AttackIntentEvent>,
     mut heal_events: MessageWriter<HealEvent>,
-    mut damage_events: MessageWriter<DamageEvent>,
     mut buff_events: MessageWriter<ApplyBuffEvent>,
 ) {
-    for target in affected_entities.iter().copied() {
+    for &target in affected {
         for effect in &ability.effects {
             match effect {
-                AbilityEffect::Heal { floor, ceiling } => {
+                AbilityEffect::Heal { floor, ceiling, .. } => {
                     let amount = rand::rng().gen_range(*floor..*ceiling);
-                    heal_events.send(HealEvent { healer: caster, target, amount });
-                }
-
-                AbilityEffect::Damage { floor, ceiling, damage_type } => {
-                    let amount = rand::rng().gen_range(*floor..*ceiling);
-                    damage_events.send(DamageEvent {
-                        attacker: caster,
+                    heal_events.send(HealEvent {
+                        healer: caster,
                         target,
                         amount,
-                        damage_type: *damage_type,
                     });
                 }
 
-                AbilityEffect::Buff { stat, multiplier, effects } => {
+                AbilityEffect::Damage {
+                    floor,
+                    ceiling,
+                    damage_type,
+                    scaled_with,
+                    defended_with
+                } => {
+                    let base = rand::rng().gen_range(*floor..*ceiling) as i32;
+
+                    dq.0.push(QueuedDamage {
+                        attacker: caster,
+                        target,
+                        amount: base,
+                        damage_type: *damage_type,
+
+                        scaled_with: vec![(*scaled_with, 1.0)],
+                        defended_with: vec![(*defended_with, 1.0)],
+
+                        accuracy_override: None,
+                        crit_chance: None,
+                        tags: vec![DamageTag::FromAbility(ability.id)],
+                    });
+
+                    attack_intent_events.send(AttackIntentEvent {
+                        attacker: caster,
+                        target,
+                    });
+                }
+
+                AbilityEffect::Buff { stat, multiplier, effects, .. } => {
                     buff_events.send(ApplyBuffEvent {
                         applier: caster,
                         target,
@@ -1246,7 +2024,6 @@ pub fn handle_ability(
             }
         }
     }
-
 
     // TODO: FIND A WAY TO TARGET IN THE NEXT ABILITY, I THINK THAT THE BEST OPTION IS TO CALL THIS MULTIPLE TIMES INSTEAD OF CALLING THIS FUNCTION RECURSIVELY
 
@@ -1395,7 +2172,9 @@ fn spawn_examples(mut commands: Commands, mut tm: ResMut<TurnManager>) {
         ))
         .id();
 
-    // Petrus
+    // --------------------------------------
+    // Petrus – Paladin
+    // --------------------------------------
     let petrus = commands
         .spawn((
             Name("Petrus".to_string()),
@@ -1425,6 +2204,17 @@ fn spawn_examples(mut commands: Commands, mut tm: ResMut<TurnManager>) {
                 base_morale: 95,
                 movement: 5,
             },
+            GrowthAttributes {
+                vitality: 20,
+                endurance: 14,
+                spirit: 10,
+                power: 12,
+                control: 10,
+                agility: 8,
+                insight: 8,
+                resolve: 18,
+            },
+            GrowthCurve::paladin_curve(),
             EquipmentSlots {
                 weapon: Some(sword),
                 ..Default::default()
@@ -1438,7 +2228,9 @@ fn spawn_examples(mut commands: Commands, mut tm: ResMut<TurnManager>) {
         ))
         .id();
 
-    // Rina
+    // --------------------------------------
+    // Rina – Rogue
+    // --------------------------------------
     let rina = commands
         .spawn((
             Name("Rina".to_string()),
@@ -1468,6 +2260,17 @@ fn spawn_examples(mut commands: Commands, mut tm: ResMut<TurnManager>) {
                 base_morale: 85,
                 movement: 7,
             },
+            GrowthAttributes {
+                vitality: 10,
+                endurance: 11,
+                spirit: 8,
+                power: 12,
+                control: 20,
+                agility: 22, // main stat
+                insight: 12,
+                resolve: 11,
+            },
+            GrowthCurve::rogue_curve(),
             EquipmentSlots::default(),
             Abilities(vec![]),
             Experience(0),
@@ -1478,6 +2281,63 @@ fn spawn_examples(mut commands: Commands, mut tm: ResMut<TurnManager>) {
         ))
         .id();
 
+    // --------------------------------------
+    // Toshiko – Spirit Medium (SPECIAL EXTRA HP MECHANIC)
+    // --------------------------------------
+    let toshiko = commands
+        .spawn((
+            Name("Toshiko".to_string()),
+            CharacterId(3),
+            Class("Spirit Medium".to_string()),
+            Health {
+                current: 70,
+                max: 70,
+                regen: 1,
+            },
+            Magic {
+                current: 120,
+                max: 120,
+                regen: 4,
+            },
+            Stamina {
+                current: 60,
+                max: 60,
+                regen: 1,
+            },
+            CombatStats {
+                base_lethality: 8,
+                base_hit: 75,
+                base_armor: 6,
+                base_agility: 10,
+                base_mind: 20,
+                base_morale: 90,
+                movement: 5,
+            },
+            GrowthAttributes {
+                vitality: 12,
+                endurance: 10,
+                spirit: 25, // core stat
+                power: 6,
+                control: 9,
+                agility: 10,
+                insight: 20,
+                resolve: 16,
+            },
+            GrowthCurve::spirit_mage_curve(),
+            ExtraHp {
+                current: 40,
+                max: 40,
+            },
+            EquipmentSlots::default(),
+            Abilities(vec![]),
+            Experience(0),
+            Level(1),
+            AccumulatedAgility(0),
+            SpiritMediumBehavior,
+            StatModifiers(Vec::new()),
+        ))
+        .id();
+    
     // register participants in turn manager
     tm.participants.push(petrus);
     tm.participants.push(rina);
@@ -1513,6 +2373,7 @@ pub struct CombatPlugin;
 
 impl Plugin for CombatPlugin {
     fn build(&self, app: &mut App) {
+        // TO DO: insert all systems correctly
         app.insert_resource(TurnOrder::default())
             .insert_resource(TurnManager::default())
             // events
@@ -1523,7 +2384,6 @@ impl Plugin for CombatPlugin {
             .add_event::<DamageEvent>()
             .add_event::<AfterHitEvent>()
             .add_event::<AfterAttackEvent>()
-            .add_event::<XPGainEvent>()
             .add_event::<LevelUpEvent>()
             .add_event::<TurnOrderCalculatedEvent>()
             .add_event::<TurnStartEvent>()
@@ -1531,8 +2391,8 @@ impl Plugin for CombatPlugin {
             // startup
             .add_startup_system(spawn_examples)
             // xp / leveling systems
-            .add_system(xp_gain_system)
-            .add_system(level_up_system.after(xp_gain_system))
+            .add_system(award_xp_system)
+            .add_system(level_up_system.after(award_xp_system))
             // turn systems
             .add_system(register_participants_system)
             .add_system(compute_turn_order_system.after(register_participants_system))
@@ -1544,8 +2404,8 @@ impl Plugin for CombatPlugin {
             .add_system(process_attack_intent)
             .add_system(before_to_execute.after(process_attack_intent))
             .add_system(before_hit_listeners.after(before_to_execute))
-            .add_system(execute_hit_system.after(before_hit_listeners))
-            .add_system(apply_damage_system.after(execute_hit_system))
+            .add_system(process_attack_intent.after(before_hit_listeners))
+            .add_system(apply_damage_system.after(process_attack_intent))
             .add_system(after_hit_listeners.after(apply_damage_system))
             .add_system(after_attack_finalizers.after(after_hit_listeners))
             // supporting
