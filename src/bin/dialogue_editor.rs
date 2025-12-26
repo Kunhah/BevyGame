@@ -23,9 +23,9 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::PathBuf;
 
-use petgraph::graphmap::DiGraphMap;
 use petgraph::algo::{is_cyclic_directed, kosaraju_scc};
-use petgraph::dot::{Dot, Config};
+use petgraph::dot::{Config, Dot};
+use petgraph::graph::{DiGraph, NodeIndex};
 
 const DEFAULT_DIALOGUE_DIR: &str = "dialogues";
 const DEFAULT_DIALOGUE_FILE: &str = "dialogues.json";
@@ -76,7 +76,7 @@ impl Default for DialoguesResource {
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
-        .add_plugins(EguiPlugin)
+        .add_plugins(EguiPlugin::default())
         .init_resource::<DialoguesResource>()
         .add_systems(Startup, setup_system)
         .add_systems(Update, ui_system)
@@ -99,35 +99,46 @@ fn setup_system(mut d: ResMut<DialoguesResource>) {
 
 // ---------------- Graph utilities ----------------
 
-fn build_dialogue_graph(dialogues: &[Dialogue]) -> DiGraphMap<String, ()> {
-    let mut graph = DiGraphMap::<String, ()>::new();
+type DialogueGraph = DiGraph<String, ()>;
+
+fn build_dialogue_graph(dialogues: &[Dialogue]) -> (DialogueGraph, HashMap<String, NodeIndex>) {
+    let mut graph = DialogueGraph::new();
+    let mut indices = HashMap::new();
+
     for dlg in dialogues {
-        graph.add_node(dlg.id.clone());
+        let idx = graph.add_node(dlg.id.clone());
+        indices.insert(dlg.id.clone(), idx);
     }
 
     for dlg in dialogues {
-        if let Some(next) = &dlg.next {
-            graph.add_edge(dlg.id.clone(), next.clone(), ());
-        }
-        if let Some(choices) = &dlg.choices {
-            for c in choices {
-                graph.add_edge(dlg.id.clone(), c.next.clone(), ());
+        if let Some(&from_idx) = indices.get(&dlg.id) {
+            if let Some(next) = &dlg.next {
+                if let Some(&to_idx) = indices.get(next) {
+                    graph.add_edge(from_idx, to_idx, ());
+                }
+            }
+            if let Some(choices) = &dlg.choices {
+                for c in choices {
+                    if let Some(&to_idx) = indices.get(&c.next) {
+                        graph.add_edge(from_idx, to_idx, ());
+                    }
+                }
             }
         }
     }
 
-    graph
+    (graph, indices)
 }
 
 fn detect_cycles(dialogues: &[Dialogue]) -> Vec<Vec<String>> {
-    let graph = build_dialogue_graph(dialogues);
+    let (graph, _) = build_dialogue_graph(dialogues);
     if !is_cyclic_directed(&graph) {
         return vec![];
     }
     let scc = kosaraju_scc(&graph);
     scc.into_iter()
         .filter(|comp| comp.len() > 1)
-        .map(|comp| comp.into_iter().collect())
+        .map(|comp| comp.into_iter().map(|idx| graph[idx].clone()).collect())
         .collect()
 }
 
@@ -157,13 +168,32 @@ fn detect_unreachable(dialogues: &[Dialogue]) -> Vec<String> {
     if dialogues.is_empty() {
         return vec![];
     }
-    let graph = build_dialogue_graph(dialogues);
-    let root = dialogues[0].id.clone();
+    let (graph, indices) = build_dialogue_graph(dialogues);
+    let Some(&start) = indices.get(&dialogues[0].id) else {
+        return vec![];
+    };
+
+    let mut visited: HashSet<NodeIndex> = HashSet::new();
+    let mut stack = vec![start];
+
+    while let Some(idx) = stack.pop() {
+        if visited.insert(idx) {
+            for neighbor in graph.neighbors(idx) {
+                stack.push(neighbor);
+            }
+        }
+    }
+
+    graph
+        .node_indices()
+        .filter(|idx| !visited.contains(idx))
+        .map(|idx| graph[idx].clone())
+        .collect()
 }
 
 fn export_graphviz(dialogues: &[Dialogue]) -> String {
-    let graph = build_dialogue_graph(dialogues);
-    format!("{}", Dot::with_config(&graph, &[Config::EdgeNoLabel]))
+    let (graph, _) = build_dialogue_graph(dialogues);
+    format!("{:?}", Dot::with_config(&graph, &[Config::EdgeNoLabel]))
 }
 
 fn validate_dialogues(dialogues: &[Dialogue]) -> Vec<String> {
@@ -207,7 +237,13 @@ fn layout_graph_circular(dialogues: &[Dialogue], rect: egui::Rect) -> HashMap<St
 
 // ---------------- UI system (rewritten safe) ----------------
 fn ui_system(mut contexts: EguiContexts, mut d: ResMut<DialoguesResource>) {
-    let ctx = contexts.ctx_mut().unwrap();
+    let ctx = match contexts.ctx_mut() {
+        Ok(ctx) => ctx,
+        Err(err) => {
+            warn!("ui_system: no primary egui context yet ({:?}); skipping frame", err);
+            return;
+        }
+    };
 
     // --- COMMAND ACCUMULATORS (to be applied later) ---
     let mut cmd_new_dialogue = false;
@@ -542,75 +578,88 @@ fn ui_system(mut contexts: EguiContexts, mut d: ResMut<DialoguesResource>) {
     // Apply main field changes
     if let Some(sel) = d.selected {
         if sel < d.dialogues.len() {
-            let dlg = &mut d.dialogues[sel];
+            let new_choice_next = if cmd_add_choice {
+                Some(unique_id(&d.dialogues, "Dlg_", "Seq_"))
+            } else {
+                None
+            };
 
-            if let Some(id) = edit_id {
-                dlg.id = id;
-                d.dirty = true;
-            }
-            if let Some(s) = edit_speaker {
-                dlg.speaker = s;
-                d.dirty = true;
-            }
-            if let Some(t) = edit_text {
-                dlg.text = t;
-                d.dirty = true;
-            }
-            if let Some(n) = edit_next {
-                dlg.next = n;
-                d.dirty = true;
-            }
+            let mut dirty = false;
+            {
+                let dlg = &mut d.dialogues[sel];
 
-            // Add choice
-            if cmd_add_choice {
-                let new_choice = DialogueChoice {
-                    event: 0,
-                    text: "New choice".into(),
-                    next: unique_id(&d.dialogues, "Dlg_", "Seq_"),
-                };
-                dlg.choices.get_or_insert(Vec::new()).push(new_choice);
-                d.dirty = true;
-            }
-
-            // Apply choice edits
-            if let Some(choices) = &mut dlg.choices {
-                // Process deletions first
-                choice_cmds.sort_by_key(|c| (c.delete, c.index));
-
-                let mut to_delete: Vec<usize> = Vec::new();
-
-                for cmd in &choice_cmds {
-                    if cmd.delete {
-                        to_delete.push(cmd.index);
-                    }
+                if let Some(id) = edit_id {
+                    dlg.id = id;
+                    dirty = true;
+                }
+                if let Some(s) = edit_speaker {
+                    dlg.speaker = s;
+                    dirty = true;
+                }
+                if let Some(t) = edit_text {
+                    dlg.text = t;
+                    dirty = true;
+                }
+                if let Some(n) = edit_next {
+                    dlg.next = n;
+                    dirty = true;
                 }
 
-                // Delete in reverse order
-                for &idx in to_delete.iter().rev() {
-                    if idx < choices.len() {
-                        choices.remove(idx);
-                        d.dirty = true;
-                    }
+                // Add choice
+                if let Some(next_val) = new_choice_next {
+                    let new_choice = DialogueChoice {
+                        event: 0,
+                        text: "New choice".into(),
+                        next: next_val,
+                    };
+                    dlg.choices.get_or_insert(Vec::new()).push(new_choice);
+                    dirty = true;
                 }
 
-                // Now apply edits
-                for cmd in choice_cmds {
-                    if cmd.index < choices.len() {
-                        let c = &mut choices[cmd.index];
-                        if let Some(t) = cmd.new_text {
-                            c.text = t;
-                            d.dirty = true;
+                // Apply choice edits
+                if let Some(choices) = &mut dlg.choices {
+                    // Process deletions first
+                    choice_cmds.sort_by_key(|c| (c.delete, c.index));
+
+                    let mut to_delete: Vec<usize> = Vec::new();
+
+                    for cmd in &choice_cmds {
+                        if cmd.delete {
+                            to_delete.push(cmd.index);
                         }
-                        if let Some(e) = cmd.new_event {
-                            c.event = e;
-                            d.dirty = true;
+                    }
+
+                    // Delete in reverse order
+                    for &idx in to_delete.iter().rev() {
+                        if idx < choices.len() {
+                            choices.remove(idx);
+                            dirty = true;
                         }
-                        if let Some(n) = cmd.new_next {
-                            c.next = n;
-                            d.dirty = true;
+                    }
+
+                    // Now apply edits
+                    for cmd in choice_cmds {
+                        if cmd.index < choices.len() {
+                            let c = &mut choices[cmd.index];
+                            if let Some(t) = cmd.new_text {
+                                c.text = t;
+                                dirty = true;
+                            }
+                            if let Some(e) = cmd.new_event {
+                                c.event = e;
+                                dirty = true;
+                            }
+                            if let Some(n) = cmd.new_next {
+                                c.next = n;
+                                dirty = true;
+                            }
                         }
                     }
                 }
+            }
+
+            if dirty {
+                d.dirty = true;
             }
         }
     }

@@ -116,10 +116,10 @@ impl Default for AbilitiesResource {
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
-        .add_plugin(EguiPlugin)
+        .add_plugins(EguiPlugin::default())
         .init_resource::<AbilitiesResource>()
-        .add_startup_system(setup_system)
-        .add_system(ui_system)
+        .add_systems(Startup, setup_system)
+        .add_systems(Update, ui_system)
         .run();
 }
 
@@ -145,12 +145,16 @@ fn setup_system(mut r: ResMut<AbilitiesResource>) {
 }
 
 // ---------------- Helpers ----------------
-fn next_free_id(abilities: &Vec<Ability>) -> u16 { // I COMPLETELY FORGOT THAT FIRST 8 BITS MUST BE THE LEVEL
-    let mut used: HashSet<u8> = abilities.iter().map(|a| a.id >> 8).collect();
-    for i in 0u32..=u8::MAX as u32 {
-        let candidate = i as u16;
+fn next_free_id(abilities: &Vec<Ability>, level: u8) -> u16 { // I COMPLETELY FORGOT THAT FIRST 8 BITS MUST BE THE LEVEL
+    let used: HashSet<u8> = abilities
+        .iter()
+        .filter(|a| (a.id >> 8) as u8 == level)
+        .map(|a| (a.id >> 8) as u8)  // This will always equal `level`
+        .collect();
+    for i in 0u8..=u8::MAX {
+        let candidate = i;
         if !used.contains(&candidate) {
-            return candidate;
+            return ((level as u16) << 8) | (candidate as u16);
         }
     }
     0
@@ -281,7 +285,7 @@ fn ui_system(mut contexts: EguiContexts, mut r: ResMut<AbilitiesResource>) {
         ui.horizontal(|ui| {
             ui.label("ID:");
             if ui.add(egui::DragValue::new(&mut tmp_id)).changed() { edit_id = Some(tmp_id); }
-            if ui.button("AutoID").clicked() { edit_id = Some(next_free_id(&r.abilities)); }
+            if ui.button("AutoID").clicked() { edit_id = Some(next_free_id(&r.abilities, 0)); }
         });
 
         // next_id
@@ -333,9 +337,11 @@ fn ui_system(mut contexts: EguiContexts, mut r: ResMut<AbilitiesResource>) {
 
         // Effects
         ui.separator(); ui.label("Effects:");
-        if ui.button("Add Heal").clicked() { cmd_add_effect = Some(AbilityEffect::Heal { floor: 1, ceiling: 2, scaled_with: Stat::Mind }); }
-        ui.same_line(); if ui.button("Add Damage").clicked() { cmd_add_effect = Some(AbilityEffect::Damage { floor: 1, ceiling: 2, damage_type: DamageType::Physical, scaled_with: Stat::Mind, defended_with: Stat::Mind }); }
-        ui.same_line(); if ui.button("Add Buff").clicked() { cmd_add_effect = Some(AbilityEffect::Buff { stat: Stat::Morale, multiplier: 1.0, effects: None, scaled_with: Stat::Mind }); }
+        ui.horizontal(|ui| {
+            if ui.button("Add Heal").clicked() { cmd_add_effect = Some(AbilityEffect::Heal { floor: 1, ceiling: 2, scaled_with: Stat::Mind }); }
+            if ui.button("Add Damage").clicked() { cmd_add_effect = Some(AbilityEffect::Damage { floor: 1, ceiling: 2, damage_type: DamageType::Physical, scaled_with: Stat::Mind, defended_with: Stat::Mind }); }
+            if ui.button("Add Buff").clicked() { cmd_add_effect = Some(AbilityEffect::Buff { stat: Stat::Morale, multiplier: 1.0, effects: None, scaled_with: Stat::Mind }); }
+        });
 
         for (i, eff) in ability.effects.iter().enumerate() {
             ui.separator(); ui.label(format!("Effect {}:", i));
@@ -372,7 +378,7 @@ fn ui_system(mut contexts: EguiContexts, mut r: ResMut<AbilitiesResource>) {
     // ---------------- Apply commands (outside closures) ----------------
     if cmd_new {
         let mut a = Ability::default();
-        a.id = next_free_id(&r.abilities);
+        a.id = next_free_id(&r.abilities, 0);
         r.abilities.push(a);
         r.selected = Some(r.abilities.len() - 1);
         r.dirty = true;
@@ -403,34 +409,38 @@ fn ui_system(mut contexts: EguiContexts, mut r: ResMut<AbilitiesResource>) {
     // apply edits to selected ability
     if let Some(sel) = r.selected {
         if sel < r.abilities.len() {
-            let a = &mut r.abilities[sel];
-            if let Some(id) = edit_id { a.id = id; r.dirty = true; }
-            if let Some(nid) = edit_next_id { a.next_id = nid; r.dirty = true; }
-            if let Some(name) = edit_name { a.name = name; r.dirty = true; }
-            if let Some(h) = edit_health { a.health_cost = h; r.dirty = true; }
-            if let Some(m) = edit_magic { a.magic_cost = m; r.dirty = true; }
-            if let Some(s) = edit_stamina { a.stamina_cost = s; r.dirty = true; }
-            if let Some(cd) = edit_cooldown { a.cooldown = cd; r.dirty = true; }
-            if let Some(desc) = edit_description { a.description = desc; r.dirty = true; }
-            if let Some(dur) = edit_duration { a.duration = dur; r.dirty = true; }
-            if let Some(t) = edit_targets { a.targets = t; r.dirty = true; }
-            if let Some(shape) = edit_shape { a.shape = shape; r.dirty = true; }
+            let mut dirty = false;
+            {
+                let a = &mut r.abilities[sel];
+                if let Some(id) = edit_id { a.id = id; dirty = true; }
+                if let Some(nid) = edit_next_id { a.next_id = nid; dirty = true; }
+                if let Some(name) = edit_name { a.name = name; dirty = true; }
+                if let Some(h) = edit_health { a.health_cost = h; dirty = true; }
+                if let Some(m) = edit_magic { a.magic_cost = m; dirty = true; }
+                if let Some(s) = edit_stamina { a.stamina_cost = s; dirty = true; }
+                if let Some(cd) = edit_cooldown { a.cooldown = cd; dirty = true; }
+                if let Some(desc) = edit_description { a.description = desc; dirty = true; }
+                if let Some(dur) = edit_duration { a.duration = dur; dirty = true; }
+                if let Some(t) = edit_targets { a.targets = t; dirty = true; }
+                if let Some(shape) = edit_shape { a.shape = shape; dirty = true; }
 
-            if let Some(eff) = cmd_add_effect { a.effects.push(eff); r.dirty = true; }
+                if let Some(eff) = cmd_add_effect { a.effects.push(eff); dirty = true; }
 
-            if !eff_cmds.is_empty() {
-                // process deletions first
-                let mut deletes: Vec<usize> = eff_cmds.iter().filter(|c| c.delete).map(|c| c.index).collect();
-                deletes.sort_unstable(); deletes.dedup();
-                for idx in deletes.into_iter().rev() { if idx < a.effects.len() { a.effects.remove(idx); r.dirty = true; } }
+                if !eff_cmds.is_empty() {
+                    // process deletions first
+                    let mut deletes: Vec<usize> = eff_cmds.iter().filter(|c| c.delete).map(|c| c.index).collect();
+                    deletes.sort_unstable(); deletes.dedup();
+                    for idx in deletes.into_iter().rev() { if idx < a.effects.len() { a.effects.remove(idx); dirty = true; } }
 
-                // then replacements
-                for cmd in eff_cmds.into_iter() {
-                    if !cmd.delete && cmd.index < a.effects.len() {
-                        if let Some(rep) = cmd.replace { a.effects[cmd.index] = rep; r.dirty = true; }
+                    // then replacements
+                    for cmd in eff_cmds.into_iter() {
+                        if !cmd.delete && cmd.index < a.effects.len() {
+                            if let Some(rep) = cmd.replace { a.effects[cmd.index] = rep; dirty = true; }
+                        }
                     }
                 }
             }
+            if dirty { r.dirty = true; }
         }
     }
 }

@@ -26,7 +26,7 @@ struct FsIn {
 @fragment
 fn fragment(in: FsIn) -> @location(0) vec4<f32> {
     // Debug toggle: set to true to verify the quad renders as a solid overlay.
-    const DEBUG_SOLID: bool = false;
+    const DEBUG_SOLID: bool = true;
     if (DEBUG_SOLID) {
         // Solid 50% black overlay to confirm the quad is visible.
         return vec4(vec3(0.5), 0.5);
@@ -68,5 +68,5 @@ fn fragment(in: FsIn) -> @location(0) vec4<f32> {
 
     // Use alpha to darken the scene outside the radius; leave color black so only darkness is applied.
     let darkness = clamp(1.0 - light_factor, 0.0, 1.0);
-    return vec4(vec3(darkness), darkness);
+    return vec4<f32>(vec3<f32>(0.0), darkness);
 }

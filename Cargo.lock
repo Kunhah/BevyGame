@@ -8,7 +8,9 @@ version = "0.1.0"
 dependencies = [
  "approx",
  "bevy",
+ "bevy_camera",
  "bevy_egui",
+ "bevy_sprite_render",
  "bitflags 2.10.0",
  "bytemuck",
  "noise",

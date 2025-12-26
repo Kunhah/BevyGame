@@ -1,0 +1,9 @@
+# rust-toolchain.toml
+[toolchain]
+channel = "nightly"  # Or "stable", but pinned for consistency
+components = ["rustc", "cargo", "rustfmt", "clippy", "rust-analyzer", "llvm-tools-preview"]
+profile = "default"
+targets = ["x86_64-unknown-linux-gnu"]  # Adjust for your platform
+
+# Optional: Platform-specific targets (uncomment as needed)
+# targets = ["x86_64-unknown-linux-gnu", "x86_64-apple-darwin", "x86_64-pc-windows-msvc"]
