@@ -1,7 +1,7 @@
 use bevy::input::keyboard::KeyCode;
 use bevy::prelude::*;
 
-use crate::core::{MainCamera, Player, Position};
+use crate::core::{MainCamera, Player};
 use crate::dialogue::{
     load_dialogue, CachedInteractables, Dialogue_Data, Dialogue_State, Interactable,
 };
@@ -35,7 +35,6 @@ pub fn setup(
             RenderLayers::layer(0), // explicitly see layer 0 (light quad and world)
             MainCamera,
             Transform::from_xyz(0.0, 0.0, 0.0),
-            Position { x: 0, y: 0 },
         ));
 
     commands.spawn((
@@ -45,7 +44,6 @@ pub fn setup(
             ..default()
         },
         Transform::from_xyz(0.0, 0.0, 0.0),
-        Position { x: 0, y: 0 },
         Player,
     ));
 
@@ -58,10 +56,6 @@ pub fn setup(
                 ..default()
             },
             Transform::from_xyz(x as f32 * 32.0, 5.0 * 32.0, 0.0),
-            Position {
-                x: x * 32,
-                y: 5 * 32,
-            },
             Collider {
                 bounds: Rect::from_center_size(
                     Vec2::new(x as f32 * 32.0, 5.0 * 32.0),
@@ -86,7 +80,6 @@ pub fn setup(
                 ..default()
             },
             Transform::from_xyz(x as f32 * 32.0, 5.0 * 32.0, 0.0),
-            Position { x: x * 32, y: 5 * 32 },
             Interactable {
                 name: "Test interactable".to_string(),
                 dialogue_id: "The last goodbye 1".to_string(),

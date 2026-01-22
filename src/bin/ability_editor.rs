@@ -10,14 +10,14 @@
 // serde_json = "1.0"
 
 use bevy::prelude::*;
+use bevy::window::{Window, WindowPlugin};
 use bevy_egui::{egui, EguiContexts, EguiPlugin};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::fs;
 use std::path::PathBuf;
 
-const DEFAULT_ABILITY_DIR: &str = "abilities";
-const DEFAULT_ABILITY_FILE: &str = "abilities.json";
+const DEFAULT_ABILITY_PATH: &str = "src/abilities/AbilitiesExample.json";
 
 // ---------------- Data models ----------------
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -101,8 +101,7 @@ struct AbilitiesResource {
 impl Default for AbilitiesResource {
     fn default() -> Self {
         let mut path = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-        path.push(DEFAULT_ABILITY_DIR);
-        path.push(DEFAULT_ABILITY_FILE);
+        path.push(DEFAULT_ABILITY_PATH);
         Self {
             abilities: Vec::new(),
             file_path: path,
@@ -115,7 +114,17 @@ impl Default for AbilitiesResource {
 
 fn main() {
     App::new()
-        .add_plugins(DefaultPlugins)
+        .add_plugins(
+            DefaultPlugins
+                .set(WindowPlugin {
+                    primary_window: Some(Window {
+                        title: "Ability Editor".into(),
+                        resolution: (1100, 720).into(),
+                        ..default()
+                    }),
+                    ..default()
+                }),
+        )
         .add_plugins(EguiPlugin::default())
         .init_resource::<AbilitiesResource>()
         .add_systems(Startup, setup_system)
@@ -125,7 +134,15 @@ fn main() {
 
 fn setup_system(mut r: ResMut<AbilitiesResource>) {
     if r.abilities.is_empty() {
-        // add an example
+        if let Ok(content) = fs::read_to_string(&r.file_path) {
+            if let Ok(v) = serde_json::from_str::<Vec<Ability>>(&content) {
+                r.abilities = v;
+                r.dirty = false;
+                return;
+            }
+        }
+
+        // add an example if nothing could be loaded
         r.abilities.push(Ability {
             id: 0,
             next_id: None,
@@ -207,7 +224,9 @@ fn validate_abilities(abilities: &Vec<Ability>) -> Vec<String> {
 
 // ---------------- UI ----------------
 fn ui_system(mut contexts: EguiContexts, mut r: ResMut<AbilitiesResource>) {
-    let ctx = contexts.ctx_mut().unwrap();
+    let Ok(ctx) = contexts.ctx_mut() else {
+        return;
+    };
 
     // command accumulators
     let mut cmd_new = false;
@@ -245,7 +264,11 @@ fn ui_system(mut contexts: EguiContexts, mut r: ResMut<AbilitiesResource>) {
             if ui.button("Save").clicked() { cmd_save = true; }
             if ui.button("Validate").clicked() { cmd_validate = true; }
             if r.dirty { ui.label("* Unsaved"); } else { ui.label("Saved"); }
-            ui.label(format!("Path: {}", r.file_path.display()));
+            ui.label("Path:");
+            let mut path_str = r.file_path.display().to_string();
+            if ui.text_edit_singleline(&mut path_str).changed() {
+                r.file_path = PathBuf::from(path_str);
+            }
         });
     });
 

@@ -1,10 +1,10 @@
-use std::collections::HashSet;
+use std::cmp::Reverse;
+use std::collections::{BinaryHeap, HashMap, HashSet};
 
-use bevy::input::keyboard::KeyCode;
+use bevy::input::{keyboard::KeyCode, mouse::MouseButton};
 use bevy::prelude::*;
 
-use crate::constants::{GRID_HEIGHT, GRID_WIDTH};
-use crate::core::{GameState, Game_State, MainCamera, Player, PlayerMapPosition, Position};
+use crate::core::{GameState, Game_State, MainCamera, Player, PlayerMapPosition, Position, Timestamp};
 use crate::light_plugin::Occluder;
 use crate::quadtree::Collider;
 use bevy_camera::visibility::RenderLayers;
@@ -54,7 +54,7 @@ pub struct MapTile {
     pub type_id: u8,
     pub event_id: Option<u32>,
     pub items_id: Option<Vec<u32>>,
-    pub image_path: String,
+    pub image_path: String, // The path will be named with the coordinates of each tile, e.g., "map_tiles/tile_0_0.png". This way I can make a script to auto-generate the map tiles later.
 }
 
 impl Default for MapTile {
@@ -67,6 +67,18 @@ impl Default for MapTile {
             items_id: None,
             image_path: "character.png".to_string(), // placeholder; replace with real tile art
         }
+    }
+}
+
+/// Returns the time cost to enter/traverse a tile based on its type.
+/// Type mapping is provisional; adjust when you formalize terrain IDs:
+/// 0 = road/plain (cheap), 1 = forest, 2 = mountain, fallback = road.
+pub fn time_cost_for_tile(tile: &MapTile) -> u32 {
+    match tile.type_id {
+        0 => 1,
+        1 => 3,
+        2 => 5,
+        _ => 1,
     }
 }
 
@@ -116,8 +128,16 @@ pub fn toggle_map_mode(
 /// Move the map selection tile-by-tile with WASD/arrow keys when in travel mode.
 pub fn navigate_map_selection(
     input: Res<ButtonInput<KeyCode>>,
+    mouse_input: Res<ButtonInput<MouseButton>>,
+    windows: Query<&Window>,
+    camera_q: Query<(&Camera, &GlobalTransform), With<MainCamera>>,
     mut selection: ResMut<MapSelection>,
-    game_state: Res<GameState>,
+    mut map_position: ResMut<PlayerMapPosition>,
+    mut current_area: ResMut<CurrentArea>,
+    mut timestamp: ResMut<Timestamp>,
+    mut player_q: Query<&mut Transform, With<Player>>,
+    mut camera_tf_q: Query<&mut Transform, (With<MainCamera>, Without<Player>)>,
+    mut game_state: ResMut<GameState>,
     map: Res<MapTiles>,
 ) {
     if game_state.0 != Game_State::Traveling {
@@ -149,6 +169,48 @@ pub fn navigate_map_selection(
     let new_y = (selection.0.y + delta.y).clamp(0, height.saturating_sub(1));
     selection.0.x = new_x;
     selection.0.y = new_y;
+
+    // If no directional input, allow clicking a tile to travel using the lowest-time path.
+    if delta != IVec2::ZERO {
+        return;
+    }
+
+    if !mouse_input.just_pressed(MouseButton::Left) {
+        return;
+    }
+
+    let Some(window) = windows.iter().next() else {
+        warn!("navigate_map_selection: could not get primary window for click");
+        return;
+    };
+    let Some(cursor_pos) = window.cursor_position() else {
+        return;
+    };
+    let Some((camera, cam_tf)) = camera_q.iter().next() else {
+        warn!("navigate_map_selection: missing main camera for click handling");
+        return;
+    };
+    let Ok(world_pos) = camera.viewport_to_world_2d(cam_tf, cursor_pos) else {
+        return;
+    };
+
+    let target_tile = Position {
+        x: (world_pos.x / TILE_WORLD_SIZE).floor() as i32,
+        y: (world_pos.y / TILE_WORLD_SIZE).floor() as i32,
+    };
+
+    if travel_to_destination(
+        target_tile,
+        &mut selection,
+        &mut map_position,
+        &mut current_area,
+        &map,
+        &mut timestamp,
+        &mut player_q,
+        &mut camera_tf_q,
+    ) {
+        game_state.0 = Game_State::Exploring;
+    }
 }
 
 /// Confirm travel to the selected tile with Enter/Space.
@@ -156,12 +218,13 @@ pub fn navigate_map_selection(
 pub fn confirm_travel(
     input: Res<ButtonInput<KeyCode>>,
     mut game_state: ResMut<GameState>,
-    selection: Res<MapSelection>,
+    mut selection: ResMut<MapSelection>,
     mut map_position: ResMut<PlayerMapPosition>,
     mut player_q: Query<&mut Transform, With<Player>>,
     mut camera_q: Query<&mut Transform, (With<MainCamera>, Without<Player>)>,
     map: Res<MapTiles>,
     mut current_area: ResMut<CurrentArea>,
+    mut timestamp: ResMut<Timestamp>,
 ) {
     if game_state.0 != Game_State::Traveling {
         return;
@@ -171,41 +234,160 @@ pub fn confirm_travel(
         return;
     }
 
-    // Update logical map position.
-    map_position.0 = selection.0;
-    // Update current area based on the selected tile.
-    let width = map.tiles.get(0).map(|r| r.len()).unwrap_or(0) as i32;
+    if travel_to_destination(
+        selection.0,
+        &mut selection,
+        &mut map_position,
+        &mut current_area,
+        &map,
+        &mut timestamp,
+        &mut player_q,
+        &mut camera_q,
+    ) {
+        game_state.0 = Game_State::Exploring;
+    }
+}
+
+/// Find the lowest-time path (Dijkstra) between tiles, returning the path and cost.
+fn shortest_time_path_and_cost(
+    start: Position,
+    dest: Position,
+    map: &MapTiles,
+) -> Option<(Vec<Position>, u32)> {
     let height = map.tiles.len() as i32;
-    let x = selection.0.x.clamp(0, width.saturating_sub(1)) as usize;
-    let y = selection.0.y.clamp(0, height.saturating_sub(1)) as usize;
-    if let Some(row) = map.tiles.get(y) {
-        if let Some(tile) = row.get(x) {
-            current_area.0 = tile.location_id;
-            info!(
-                "Travel confirmed. Moving to map position ({}, {}), area {}",
-                selection.0.x, selection.0.y, current_area.0
-            );
+    let width = map.tiles.get(0).map(|r| r.len()).unwrap_or(0) as i32;
+    if width == 0 || height == 0 {
+        return None;
+    }
+
+    let start = Position {
+        x: start.x.clamp(0, width.saturating_sub(1)),
+        y: start.y.clamp(0, height.saturating_sub(1)),
+    };
+    let dest = Position {
+        x: dest.x.clamp(0, width.saturating_sub(1)),
+        y: dest.y.clamp(0, height.saturating_sub(1)),
+    };
+
+    if start == dest {
+        return Some((vec![start], 0));
+    }
+
+    let mut dist: HashMap<Position, u32> = HashMap::new();
+    let mut prev: HashMap<Position, Position> = HashMap::new();
+    let mut heap: BinaryHeap<(Reverse<u32>, i32, i32)> = BinaryHeap::new();
+
+    dist.insert(start, 0);
+    heap.push((Reverse(0), start.x, start.y));
+
+    while let Some((Reverse(cost), x, y)) = heap.pop() {
+        let pos = Position { x, y };
+        if pos == dest {
+            break;
+        }
+        if cost > *dist.get(&pos).unwrap_or(&u32::MAX) {
+            continue;
+        }
+
+        for (dx, dy) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
+            let nx = pos.x + dx;
+            let ny = pos.y + dy;
+            if nx < 0 || ny < 0 || nx >= width || ny >= height {
+                continue;
+            }
+
+            let Some(tile) = map
+                .tiles
+                .get(ny as usize)
+                .and_then(|row| row.get(nx as usize))
+            else {
+                continue;
+            };
+
+            let step_cost = time_cost_for_tile(tile);
+            let next_cost = cost.saturating_add(step_cost);
+            let next_pos = Position { x: nx, y: ny };
+
+            if next_cost < *dist.get(&next_pos).unwrap_or(&u32::MAX) {
+                dist.insert(next_pos, next_cost);
+                prev.insert(next_pos, pos);
+                heap.push((Reverse(next_cost), nx, ny));
+            }
         }
     }
-    info!(
-        "Travel confirmed. Moving to map position ({}, {})",
-        selection.0.x, selection.0.y
-    );
 
-    // Teleport player/camera to corresponding world coords (using same grid scale as Position).
-    let world_x = selection.0.x as f32;
-    let world_y = selection.0.y as f32;
+    let total_cost = *dist.get(&dest)?;
+    let mut path = vec![dest];
+    let mut current = dest;
+    while current != start {
+        let Some(&parent) = prev.get(&current) else {
+            break;
+        };
+        current = parent;
+        path.push(current);
+    }
+    path.reverse();
 
-    if let Ok(mut tf) = player_q.single_mut() {
+    Some((path, total_cost))
+}
+
+/// Apply travel to a destination, updating selection, time, area, and transforms.
+fn travel_to_destination(
+    dest: Position,
+    selection: &mut MapSelection,
+    map_position: &mut PlayerMapPosition,
+    current_area: &mut CurrentArea,
+    map: &MapTiles,
+    timestamp: &mut Timestamp,
+    player_q: &mut Query<&mut Transform, With<Player>>,
+    camera_q: &mut Query<&mut Transform, (With<MainCamera>, Without<Player>)>,
+) -> bool {
+    let start = map_position.0;
+    let Some((path, travel_time)) = shortest_time_path_and_cost(start, dest, map) else {
+        warn!(
+            "travel_to_destination: could not compute path from ({}, {}) to ({}, {})",
+            start.x, start.y, dest.x, dest.y
+        );
+        return false;
+    };
+
+    let final_dest = path.last().copied().unwrap_or(start);
+    selection.0 = final_dest;
+    map_position.0 = final_dest;
+
+    let width = map.tiles.get(0).map(|r| r.len()).unwrap_or(0) as i32;
+    let height = map.tiles.len() as i32;
+    let x = final_dest.x.clamp(0, width.saturating_sub(1)) as usize;
+    let y = final_dest.y.clamp(0, height.saturating_sub(1)) as usize;
+    if let Some(tile) = map.tiles.get(y).and_then(|row| row.get(x)) {
+        current_area.0 = tile.location_id;
+    }
+
+    timestamp.0 = timestamp.0.saturating_add(travel_time.max(1));
+
+    let world_x = final_dest.x as f32;
+    let world_y = final_dest.y as f32;
+
+    if let Some(mut tf) = player_q.iter_mut().next() {
         tf.translation.x = world_x;
         tf.translation.y = world_y;
-    }
-    if let Ok(mut cam_tf) = camera_q.single_mut() {
-        cam_tf.translation.x = world_x;
-        cam_tf.translation.y = world_y;
+    } else {
+        warn!("travel_to_destination: player transform not found");
     }
 
-    game_state.0 = Game_State::Exploring;
+    if let Some(mut cam_tf) = camera_q.iter_mut().next() {
+        cam_tf.translation.x = world_x;
+        cam_tf.translation.y = world_y;
+    } else {
+        warn!("travel_to_destination: camera transform not found");
+    }
+
+    info!(
+        "Traveling from ({}, {}) to ({}, {}) with cost {}",
+        start.x, start.y, final_dest.x, final_dest.y, travel_time
+    );
+
+    true
 }
 
 /// In exploring mode, keep the background synced to the nearest map tile and load its image.

@@ -1,5 +1,5 @@
 use std::cmp::Ordering;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use bevy::prelude::*;
 use rand::Rng;
@@ -54,10 +54,12 @@ pub struct Ability {
 
 impl Ability {
     pub fn get_level(&self) -> u8 {
-        (self.id << 8).try_into().unwrap()
+        // high byte of the packed id
+        ((self.id & 0xFF00) >> 8) as u8
     }
     pub fn get_sub_id(&self) -> u8 {
-        (self.id >> 8).try_into().unwrap()
+        // low byte of the packed id
+        (self.id & 0x00FF) as u8
     }
 }
 
@@ -101,26 +103,39 @@ impl AbilityTree {
     }
 
     fn insert_node(current: Arc<RwLock<AbilityNode>>, new_node: Arc<RwLock<AbilityNode>>) {
-        let new_id = new_node.read().unwrap().ability.id;
-        let current_id = current.read().unwrap().ability.id;
+        let Some(new_id) = read_guard(&new_node).map(|n| n.ability.id) else {
+            return;
+        };
+        let Some(current_id) = read_guard(&current).map(|n| n.ability.id) else {
+            return;
+        };
 
         match new_id.cmp(&current_id) {
             Ordering::Less => {
-                if let Some(left) = &current.read().unwrap().left {
+                if let Some(left) = &read_guard(&current).and_then(|n| n.left.clone()) {
                     Self::insert_node(left.clone(), new_node);
                 } else {
-                    current.write().unwrap().left = Some(new_node);
+                    if let Some(mut w) = write_guard(&current) {
+                        w.left = Some(new_node);
+                    }
                 }
             }
             Ordering::Greater => {
-                if let Some(right) = &current.read().unwrap().right {
+                if let Some(right) = &read_guard(&current).and_then(|n| n.right.clone()) {
                     Self::insert_node(right.clone(), new_node);
                 } else {
-                    current.write().unwrap().right = Some(new_node);
+                    if let Some(mut w) = write_guard(&current) {
+                        w.right = Some(new_node);
+                    }
                 }
             }
             Ordering::Equal => {
-                current.write().unwrap().ability = new_node.read().unwrap().ability.clone();
+                let Some(new_ability) = read_guard(&new_node).map(|n| n.ability.clone()) else {
+                    return;
+                };
+                if let Some(mut w) = write_guard(&current) {
+                    w.ability = new_ability;
+                }
             }
         }
     }
@@ -131,14 +146,14 @@ impl AbilityTree {
 
     fn find_node(node: Option<Arc<RwLock<AbilityNode>>>, id: u16) -> Option<Ability> {
         if let Some(n) = node {
-            let n_borrow = n.read().unwrap();
-            if id == n_borrow.ability.id {
-                return Some(n_borrow.ability.clone());
+            let n_borrow = read_guard(&n)?;
+            return if id == n_borrow.ability.id {
+                Some(n_borrow.ability.clone())
             } else if id < n_borrow.ability.id {
-                return Self::find_node(n_borrow.left.clone(), id);
+                Self::find_node(n_borrow.left.clone(), id)
             } else {
-                return Self::find_node(n_borrow.right.clone(), id);
-            }
+                Self::find_node(n_borrow.right.clone(), id)
+            };
         }
         None
     }
@@ -147,7 +162,7 @@ impl AbilityTree {
         let mut current_node = self.root.clone();
 
         while let Some(n) = current_node {
-            let n_borrow = n.read().unwrap();
+            let n_borrow = read_guard(&n)?;
             if n_borrow.ability.get_level() == level {
                 let mut results = Vec::new();
                 Self::collect_level_abilities(self.root.clone(), level, &mut results);
@@ -165,7 +180,10 @@ impl AbilityTree {
         results: &mut Vec<Ability>,
     ) {
         if let Some(n) = node {
-            let n_borrow = n.read().unwrap();
+            let n_borrow = match read_guard(&n) {
+                Some(guard) => guard,
+                None => return,
+            };
             results.push(n_borrow.ability.clone());
 
             Self::collect_level_abilities(n_borrow.left.clone(), level, results);
@@ -181,10 +199,31 @@ impl AbilityTree {
 
     fn collect_all(node: Option<Arc<RwLock<AbilityNode>>>, all: &mut Vec<Ability>) {
         if let Some(n) = node {
-            let n_borrow = n.read().unwrap();
-            all.push(n_borrow.ability.clone());
-            Self::collect_all(n_borrow.left.clone(), all);
-            Self::collect_all(n_borrow.right.clone(), all);
+            if let Some(n_borrow) = read_guard(&n) {
+                all.push(n_borrow.ability.clone());
+                Self::collect_all(n_borrow.left.clone(), all);
+                Self::collect_all(n_borrow.right.clone(), all);
+            }
+        }
+    }
+}
+
+fn read_guard(node: &Arc<RwLock<AbilityNode>>) -> Option<RwLockReadGuard<'_, AbilityNode>> {
+    match node.read() {
+        Ok(guard) => Some(guard),
+        Err(err) => {
+            warn!("Ability tree read lock poisoned: {err}");
+            None
+        }
+    }
+}
+
+fn write_guard(node: &Arc<RwLock<AbilityNode>>) -> Option<RwLockWriteGuard<'_, AbilityNode>> {
+    match node.write() {
+        Ok(guard) => Some(guard),
+        Err(err) => {
+            warn!("Ability tree write lock poisoned: {err}");
+            None
         }
     }
 }

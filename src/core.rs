@@ -27,7 +27,7 @@ pub struct Global_Variables(pub GlobalVariables);
 pub struct PlayerMapPosition(pub Position);
 
 #[derive(Resource)]
-pub struct DayCycle(pub u32);
+pub struct Timestamp(pub u32);
 
 pub struct GlobalVariables {
     pub moving: bool,

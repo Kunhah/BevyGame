@@ -17,6 +17,7 @@
 // petgraph = "0.6"
 
 use bevy::prelude::*;
+use bevy::window::{Window, WindowPlugin};
 use bevy_egui::{egui, EguiContexts, EguiPlugin};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -75,7 +76,17 @@ impl Default for DialoguesResource {
 
 fn main() {
     App::new()
-        .add_plugins(DefaultPlugins)
+        .add_plugins(
+            DefaultPlugins
+                .set(WindowPlugin {
+                    primary_window: Some(Window {
+                        title: "Dialogue Editor".into(),
+                        resolution: (1100, 720).into(),
+                        ..default()
+                    }),
+                    ..default()
+                }),
+        )
         .add_plugins(EguiPlugin::default())
         .init_resource::<DialoguesResource>()
         .add_systems(Startup, setup_system)
@@ -84,8 +95,16 @@ fn main() {
 }
 
 fn setup_system(mut d: ResMut<DialoguesResource>) {
-    // Start with a minimal example if empty
     if d.dialogues.is_empty() {
+        if let Ok(content) = fs::read_to_string(&d.file_path) {
+            if let Ok(v) = serde_json::from_str::<Vec<Dialogue>>(&content) {
+                d.dialogues = v;
+                d.dirty = false;
+                return;
+            }
+        }
+
+        // Start with a minimal example if nothing could be loaded
         d.dialogues = vec![Dialogue {
             id: "Intro_1".to_string(),
             speaker: "Narrator".to_string(),
@@ -299,7 +318,11 @@ fn ui_system(mut contexts: EguiContexts, mut d: ResMut<DialoguesResource>) {
                 ui.label("Saved");
             }
 
-            ui.label(format!("Path: {}", d.file_path.display()));
+            ui.label("Path:");
+            let mut path_str = d.file_path.display().to_string();
+            if ui.text_edit_singleline(&mut path_str).changed() {
+                d.file_path = PathBuf::from(path_str);
+            }
         });
     });
 

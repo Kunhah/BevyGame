@@ -10,7 +10,7 @@ use serde::Deserialize;
 use serde_json::*;
 
 use crate::constants::Flags;
-use crate::core::{GameState, Game_State, Position};
+use crate::core::{GameState, Game_State};
 use crate::quadtree::aabb_collision;
 
 #[derive(SystemSet, Debug, Hash, PartialEq, Eq, Clone)]
@@ -70,7 +70,7 @@ pub struct Dialogue_Data(pub HashMap<String, DialogueLine>);
 pub struct Selected_Choice(pub Choice);
 
 #[derive(Resource, Default)]
-pub struct Selected_Choice_Index(pub u8);
+pub struct Selected_Choice_Index(pub Option<usize>);
 
 #[derive(Resource, Default)]
 pub struct Next_Id(pub HashMap<String, String>);
@@ -185,6 +185,8 @@ pub fn create_first_dialogue(
 ) {
     for _event in events_dialogue.drain() {
         state.0.just_spawned = true;
+        index.0 = None;
+        selected.0 = Choice::default();
     }
 
     if state.0.just_spawned {
@@ -217,39 +219,73 @@ pub fn gui_selection(
     button_query: Query<Entity, With<ChoiceButton>>,
     mut selected: ResMut<Selected_Choice>,
 ) {
-    if input.just_pressed(KeyCode::KeyW)
+    let moved = input.just_pressed(KeyCode::KeyW)
         || input.just_pressed(KeyCode::KeyS)
         || input.just_pressed(KeyCode::KeyA)
         || input.just_pressed(KeyCode::KeyD)
-    {
-        let vertical = input.just_pressed(KeyCode::KeyS) as i8
-            - input.just_pressed(KeyCode::KeyW) as i8;
-        match game_state.0 {
-            Game_State::Exploring => {}
-            Game_State::Battle => {}
-            Game_State::Interacting => {
-                index.0 = index.0.wrapping_add(vertical as u8);
-                display_dialogue(
-                    &mut commands,
-                    &mut state,
-                    &data,
-                    box_query,
-                    text_query,
-                    button_query,
-                    &mut index,
-                    &mut selected,
-                );
+        || input.just_pressed(KeyCode::ArrowUp)
+        || input.just_pressed(KeyCode::ArrowDown)
+        || input.just_pressed(KeyCode::ArrowLeft)
+        || input.just_pressed(KeyCode::ArrowRight);
+
+    if !moved {
+        return;
+    }
+
+    let vertical = (input.just_pressed(KeyCode::KeyS) || input.just_pressed(KeyCode::ArrowDown))
+        as i32
+        - (input.just_pressed(KeyCode::KeyW) || input.just_pressed(KeyCode::ArrowUp)) as i32;
+
+    if vertical == 0 {
+        return;
+    }
+
+    match game_state.0 {
+        Game_State::Exploring => {}
+        Game_State::Battle => {}
+        Game_State::Interacting => {
+            if let Some(current_id) = &state.0.current_id {
+                if let Some(line) = data.0.get(current_id) {
+                    if let Some(choices) = &line.choices {
+                        if !choices.is_empty() {
+                            let len = choices.len() as isize;
+                            let next_index = match index.0 {
+                                Some(i) => ((i as isize + vertical.signum() as isize)
+                                    .rem_euclid(len)) as usize,
+                                None => {
+                                    if vertical > 0 {
+                                        0
+                                    } else {
+                                        len.saturating_sub(1) as usize
+                                    }
+                                }
+                            };
+                            index.0 = Some(next_index);
+                        }
+                    }
+                }
             }
-            _ => {}
+            display_dialogue(
+                &mut commands,
+                &mut state,
+                &data,
+                box_query,
+                text_query,
+                button_query,
+                &mut index,
+                &mut selected,
+            );
         }
+        _ => {}
     }
 }
 
 pub fn interact(
     mut param_set: ParamSet<(
-        Query<(&Transform, &Position), With<crate::core::Player>>,
+        Query<&Transform, With<crate::core::Player>>,
         Res<ButtonInput<KeyCode>>,
     )>,
+    input: Res<ButtonInput<MouseButton>>,
     mut game_state: ResMut<GameState>,
     cache: Res<CachedInteractables>,
     mut dialogue_state: ResMut<Dialogue_State>,
@@ -269,7 +305,7 @@ pub fn interact(
             Game_State::Exploring => {
                 let p0 = param_set.p0();
 
-                for (transform, position) in p0.iter() {
+                for transform in p0.iter() {
                     let player_rect = Rect::from_center_size(
                         Vec2::new(transform.translation.x, transform.translation.y),
                         Vec2::new(32.0, 32.0),
@@ -290,6 +326,8 @@ pub fn interact(
                     if let Some((interactable_transform, interactable)) = interactable {
                         game_state.0 = Game_State::Interacting;
                         dialogue_state.0.active = true;
+                        index.0 = None;
+                        selected_choice.0 = Choice::default();
                         interactable.interact(
                             interactable_transform,
                             game_state.0,
@@ -301,11 +339,45 @@ pub fn interact(
                 }
             }
             Game_State::Battle => {}
-            Game_State::Interacting => {}
+            Game_State::Interacting => {
+                if let Some(current_id) = &dialogue_state.0.current_id {
+                    if let Some(line) = dialogue_data.0.get(current_id) {
+                        let current_choices = &line.choices;
+                        if current_choices.is_some() {
+                            if selected_choice.0.next.is_none() {
+                                return;
+                            }
+                            dialogue_state.0.current_id =
+                                handle_next_id(selected_choice.0.next.clone(), &next_id_map);
+                            handle_choice_event(selected_choice.0.event, next_id_map, conditionals);
+                        } else {
+                            dialogue_state.0.current_id =
+                                handle_next_id(line.next.clone(), &next_id_map);
+                            if dialogue_state.0.current_id.is_none() {
+                                dialogue_state.0.active = false;
+                                game_state.0 = Game_State::Exploring;
+                            }
+                        }
+                        index.0 = None;
+                        selected_choice.0 = Choice::default();
+                        display_dialogue(
+                            &mut commands,
+                            &mut dialogue_state,
+                            &dialogue_data,
+                            box_query,
+                            text_query,
+                            button_query,
+                            &mut index,
+                            &mut selected_choice,
+                        );
+                    }
+                }
+            }
             _ => {}
         }
     } else if param_set.p1().just_pressed(KeyCode::Space)
         || param_set.p1().just_pressed(KeyCode::Enter)
+        || input.just_pressed(MouseButton::Left)
     {
         match game_state.0 {
             Game_State::Exploring => {}
@@ -348,13 +420,25 @@ pub fn interact(
 }
 
 pub fn load_dialogue() -> HashMap<String, DialogueLine> {
-    let file = File::open("dialogues/example.json").unwrap();
-    let reader = BufReader::new(file);
-    let dialogue_lines: Vec<DialogueLine> = serde_json::from_reader(reader).unwrap();
-    dialogue_lines
-        .into_iter()
-        .map(|line| (line.id.clone(), line))
-        .collect()
+    match File::open("dialogues/example.json") {
+        Ok(file) => {
+            let reader = BufReader::new(file);
+            match serde_json::from_reader::<_, Vec<DialogueLine>>(reader) {
+                Ok(dialogue_lines) => dialogue_lines
+                    .into_iter()
+                    .map(|line| (line.id.clone(), line))
+                    .collect(),
+                Err(err) => {
+                    warn!("Failed to parse dialogues/example.json: {err}");
+                    HashMap::new()
+                }
+            }
+        }
+        Err(err) => {
+            warn!("Failed to open dialogues/example.json: {err}");
+            HashMap::new()
+        }
+    }
 }
 
 pub fn display_dialogue(
@@ -395,49 +479,65 @@ pub fn display_dialogue(
 
                 match choices {
                     Some(choices_v) => {
-                        index.0 %= choices_v.len() as u8;
+                        if let Some(current) = index.0 {
+                            if current >= choices_v.len() {
+                                index.0 = None;
+                            }
+                        }
+
+                        if index.0.is_none() {
+                            selected.0 = Choice::default();
+                        }
+
                         for (i, choice) in choices_v.iter().enumerate() {
-                            let is_selected = index.0 == i as u8;
+                            let is_selected = index.0 == Some(i);
                             if is_selected {
                                 selected.0 = choice.clone();
                             }
                             commands.entity(box_entity).with_children(|parent| {
-                                parent
-                                    .spawn((
-                                        Button { ..default() },
-                                        Node {
-                                            width: Val::Px(240.0),
-                                            height: Val::Px(45.0),
-                                            margin: UiRect::vertical(Val::Px(4.0)),
-                                            justify_content: JustifyContent::Center,
-                                            align_items: AlignItems::Center,
-                                            ..default()
-                                        },
-                                        BackgroundColor(if is_selected {
-                                            Color::srgb(0.25, 0.45, 0.25)
-                                        } else {
-                                            Color::srgb(0.15, 0.25, 0.15)
-                                        }),
-                                        ChoiceButton {
-                                            next_id: choice.next.as_ref().unwrap().clone(),
-                                        },
-                                    ))
-                                    .with_children(|btn| {
-                                        btn.spawn((
-                                            Text::new(&choice.text),
-                                            TextFont {
-                                                font_size: 17.0,
-                                                ..Default::default()
+                                if let Some(next_id) = choice.next.as_ref() {
+                                    parent
+                                        .spawn((
+                                            Button { ..default() },
+                                            Node {
+                                                width: Val::Px(240.0),
+                                                height: Val::Px(45.0),
+                                                margin: UiRect::vertical(Val::Px(4.0)),
+                                                justify_content: JustifyContent::Center,
+                                                align_items: AlignItems::Center,
+                                                ..default()
                                             },
-                                            TextColor(if is_selected {
-                                                Color::WHITE
+                                            BackgroundColor(if is_selected {
+                                                Color::srgb(0.25, 0.45, 0.25)
                                             } else {
-                                                Color::srgb(0.7, 0.7, 0.7)
+                                                Color::srgb(0.15, 0.25, 0.15)
                                             }),
-                                            Transform::from_translation(Vec3::new(0.0, 0.0, 0.0)),
-                                            GlobalTransform::default(),
-                                        ));
-                                    });
+                                            ChoiceButton {
+                                                next_id: next_id.clone(),
+                                            },
+                                        ))
+                                        .with_children(|btn| {
+                                            btn.spawn((
+                                                Text::new(&choice.text),
+                                                TextFont {
+                                                    font_size: 17.0,
+                                                    ..Default::default()
+                                                },
+                                                TextColor(if is_selected {
+                                                    Color::WHITE
+                                                } else {
+                                                    Color::srgb(0.7, 0.7, 0.7)
+                                                }),
+                                                Transform::from_translation(Vec3::new(0.0, 0.0, 0.0)),
+                                                GlobalTransform::default(),
+                                            ));
+                                        });
+                                } else {
+                                    warn!(
+                                        "Choice '{}' missing next id; skipping button spawn",
+                                        choice.text
+                                    );
+                                }
                             });
                         }
                     }

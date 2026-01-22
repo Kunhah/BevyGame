@@ -5,7 +5,8 @@ use bevy::prelude::*;
 use crate::constants::{
     GRID_HEIGHT, GRID_WIDTH, PATH_DRAW_MARGIN, PATH_MOVEMENT_SPEED, PLAYER_SPEED, WALKING_LIMIT,
 };
-use crate::core::{GameState, Game_State, Global_Variables, MainCamera, Player, Position};
+use crate::core::{GameState, Game_State, Global_Variables, MainCamera, Player, Position, Timestamp};
+use crate::map::{time_cost_for_tile, MapTiles, TILE_WORLD_SIZE};
 use crate::pathfinding::{is_walkable_move, pathfinding};
 use crate::quadtree::QuadTree;
 
@@ -26,6 +27,11 @@ pub struct MoveAlongPath {
     pub path: Vec<IVec2>,
     pub current_index: usize,
     pub timer: Timer,
+}
+
+#[derive(Resource, Default)]
+pub struct TravelTimeAccumulator {
+    pub last_tile: Option<IVec2>,
 }
 
 pub fn fade_out_system(mut commands: Commands, time: Res<Time>, mut query: Query<(Entity, &mut FadeOutTimer, &mut Sprite)>) {
@@ -65,8 +71,8 @@ pub fn animate_sprite(
 
 pub fn player_movement(
     mut param_set: ParamSet<(
-        Query<(&mut Transform, &mut Position), With<Player>>,
-        Query<(&mut Transform, &mut Position), With<MainCamera>>,
+        Query<&mut Transform, With<Player>>,
+        Query<&mut Transform, With<MainCamera>>,
         ResMut<Global_Variables>,
     )>,
     game_state: Res<GameState>,
@@ -76,7 +82,6 @@ pub fn player_movement(
 ) {
     // Ensure we only move while actually exploring (ignore other game modes).
     if game_state.0 != Game_State::Exploring {
-        info!("player_movement skipped; current state {:?}", game_state.0);
         return;
     }
 
@@ -112,7 +117,7 @@ pub fn player_movement(
 
             let mut p0 = param_set.p0();
 
-            for (mut transform, mut position) in p0.iter_mut() {
+            for mut transform in p0.iter_mut() {
                 let new_x = transform.translation.x + direction.x * diagonal_speed;
                 let new_y = transform.translation.y + direction.y * diagonal_speed;
 
@@ -137,13 +142,11 @@ pub fn player_movement(
                     if is_walkable_move(new_pos, &quad_tree) {
                         transform.translation.x = new_x;
                         transform.translation.y = new_y;
-                        position.x = new_x as i32;
-                        position.y = new_y as i32;
                     }
                 }
             }
         } else {
-            for (mut transform, mut position) in param_set.p0().iter_mut() {
+            for mut transform in param_set.p0().iter_mut() {
                 let new_x = transform.translation.x + direction.x * movement_speed;
                 let new_y = transform.translation.y + direction.y * movement_speed;
 
@@ -168,20 +171,18 @@ pub fn player_movement(
                     if is_walkable_move(new_pos, &quad_tree) {
                         transform.translation.x = new_x;
                         transform.translation.y = new_y;
-                        position.x = new_x as i32;
-                        position.y = new_y as i32;
                     }
                 }
             }
         }
-        if camera_locked && (new_x_out.is_some() || new_y_out.is_some()) {
-            let new_x = new_x_out.unwrap();
-            let new_y = new_y_out.unwrap();
-            for (mut transform_c, mut position_c) in param_set.p1().iter_mut() {
-                transform_c.translation.x = new_x;
-                transform_c.translation.y = new_y;
-                position_c.x = new_x as i32;
-                position_c.y = new_y as i32;
+        if camera_locked {
+            if let (Some(new_x), Some(new_y)) = (new_x_out, new_y_out) {
+                for mut transform_c in param_set.p1().iter_mut() {
+                    transform_c.translation.x = new_x;
+                    transform_c.translation.y = new_y;
+                }
+            } else {
+                warn!("Camera lock update skipped due to missing coordinates");
             }
         }
     }
@@ -189,12 +190,17 @@ pub fn player_movement(
 
 pub fn follow_path_system(
     mut commands: Commands,
-    mut query: Query<(&mut Transform, &mut Position, &mut MoveAlongPath, Entity), Without<MainCamera>>,
+    mut query: Query<(&mut Transform, &mut MoveAlongPath, Entity), Without<MainCamera>>,
     time: Res<Time>,
     mut global_variables: ResMut<Global_Variables>,
+    game_state: Res<GameState>,
 ) {
+    if !(matches!(game_state.0, Game_State::Exploring)) {
+        return;
+    }
+
     global_variables.0.moving = true;
-    for (mut transform, mut position, mut movement, entity) in query.iter_mut() {
+    for (mut transform, mut movement, entity) in query.iter_mut() {
         if movement
             .timer
             .tick(time.delta() * PATH_MOVEMENT_SPEED)
@@ -213,8 +219,6 @@ pub fn follow_path_system(
                 ));
                 transform.translation.x = target_x;
                 transform.translation.y = target_y;
-                position.x = next_tile.x;
-                position.y = next_tile.y;
 
                 movement.current_index += 1;
             } else {
@@ -225,10 +229,62 @@ pub fn follow_path_system(
     global_variables.0.moving = false;
 }
 
+/// Advance in-world time when the player manually walks (not along an auto path).
+pub fn accumulate_manual_travel_time(
+    mut tracker: ResMut<TravelTimeAccumulator>,
+    mut timestamp: ResMut<Timestamp>,
+    game_state: Res<GameState>,
+    map: Res<MapTiles>,
+    player_q: Query<(&Transform, Option<&MoveAlongPath>), With<Player>>,
+) {
+    if game_state.0 != Game_State::Exploring {
+        tracker.last_tile = None;
+        return;
+    }
+
+    let Ok((transform, move_path)) = player_q.single() else {
+        return;
+    };
+    let current = transform.translation.truncate();
+
+    // Do not accrue time while on an auto path.
+    if move_path.is_some() {
+        tracker.last_tile = Some(IVec2::new(
+            (current.x / TILE_WORLD_SIZE).floor() as i32,
+            (current.y / TILE_WORLD_SIZE).floor() as i32,
+        ));
+        return;
+    }
+
+    let tile_coords = IVec2::new(
+        (current.x / TILE_WORLD_SIZE).floor() as i32,
+        (current.y / TILE_WORLD_SIZE).floor() as i32,
+    );
+
+    // Only increment time when entering a new tile.
+    if tracker.last_tile.map_or(true, |prev| prev != tile_coords) {
+        let height = map.tiles.len() as i32;
+        let width = map.tiles.get(0).map(|r| r.len()).unwrap_or(0) as i32;
+        if tile_coords.x >= 0
+            && tile_coords.y >= 0
+            && tile_coords.x < width
+            && tile_coords.y < height
+        {
+                if let Some(row) = map.tiles.get(tile_coords.y as usize) {
+                if let Some(tile) = row.get(tile_coords.x as usize) {
+                    timestamp.0 = timestamp.0.saturating_add(time_cost_for_tile(tile));
+                }
+            }
+        }
+    }
+
+    tracker.last_tile = Some(tile_coords);
+}
+
 pub fn toggle_camera_lock(
     mut param_set: ParamSet<(
-        Query<(&mut Transform, &mut Position), With<Player>>,
-        Query<(&mut Transform, &mut Position), With<MainCamera>>,
+        Query<&mut Transform, With<Player>>,
+        Query<&mut Transform, With<MainCamera>>,
         ResMut<Global_Variables>,
     )>,
     input: Res<ButtonInput<KeyCode>>,
@@ -237,21 +293,15 @@ pub fn toggle_camera_lock(
         if !param_set.p2().0.camera_locked {
             param_set.p2().0.camera_locked = true;
 
-            let mut position_x: i32 = 0;
-            let mut position_y: i32 = 0;
             let mut transform_x: f32 = 0.0;
             let mut transform_y: f32 = 0.0;
 
-            for (player_transform, player_position) in param_set.p0().iter_mut() {
-                position_x = player_position.x;
-                position_y = player_position.y;
+            for player_transform in param_set.p0().iter_mut() {
                 transform_x = player_transform.translation.x;
                 transform_y = player_transform.translation.y;
             }
 
-            for (mut camera_transform, mut camera_position) in param_set.p1().iter_mut() {
-                camera_position.x = position_x;
-                camera_position.y = position_y;
+            for mut camera_transform in param_set.p1().iter_mut() {
                 camera_transform.translation.x = transform_x;
                 camera_transform.translation.y = transform_y;
             }
@@ -262,7 +312,7 @@ pub fn toggle_camera_lock(
 }
 
 pub fn mouse_click(
-    mut param_set: ParamSet<(Query<(Entity, &mut Transform, &mut Position), With<Player>>, )>,
+    mut param_set: ParamSet<(Query<(Entity, &Transform), With<Player>>, )>,
     game_state: Res<GameState>,
     camera_query: Query<(&Camera, &GlobalTransform), With<MainCamera>>,
     quad_tree: Res<QuadTree>,
@@ -272,17 +322,26 @@ pub fn mouse_click(
     asset_server: Res<AssetServer>,
     time: Res<Time>,
 ) {
+
+    if !(matches!(game_state.0, Game_State::Exploring)) {
+        return;
+    }
+    
     if input.just_pressed(MouseButton::Left) {
         let mut p0 = param_set.p0();
-        let Some((entity, mut _transform, mut position)) = p0.iter_mut().next() else {
+        let Some((entity, transform)) = p0.iter_mut().next() else {
             warn!("mouse_click: left click but no player entity found");
             return;
         };
 
         let player_entity = entity;
+        let current_position = Position {
+            x: transform.translation.x as i32,
+            y: transform.translation.y as i32,
+        };
 
         let path_ops = find_path(
-            *position,
+            current_position,
             game_state.0,
             quad_tree,
             camera_query,
@@ -293,7 +352,13 @@ pub fn mouse_click(
             info!("mouse_click: left click produced no path");
             return;
         }
-        let path = path_ops.unwrap();
+        let path = match path_ops {
+            Some(p) => p,
+            None => {
+                warn!("mouse_click: path calculation unexpectedly missing after Some check");
+                return;
+            }
+        };
         if path.is_empty() {
             info!("mouse_click: left click produced empty path");
             return;
@@ -318,13 +383,17 @@ pub fn mouse_click(
         }
     } else if input.just_pressed(MouseButton::Right) {
         let mut p0 = param_set.p0();
-        let Some((_entity, _transform, position)) = p0.iter_mut().next() else {
+        let Some((_entity, transform)) = p0.iter_mut().next() else {
             warn!("mouse_click: right click but no player entity found");
             return;
         };
+        let current_position = Position {
+            x: transform.translation.x as i32,
+            y: transform.translation.y as i32,
+        };
 
         let path_ops = find_path(
-            *position,
+            current_position,
             game_state.0,
             quad_tree,
             camera_query,
@@ -335,7 +404,13 @@ pub fn mouse_click(
             info!("mouse_click: right click produced no path");
             return;
         }
-        let path = path_ops.unwrap();
+        let path = match path_ops {
+            Some(p) => p,
+            None => {
+                warn!("mouse_click: path calculation unexpectedly missing after Some check");
+                return;
+            }
+        };
         if path.is_empty() {
             info!("mouse_click: right click produced empty path");
             return;

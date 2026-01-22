@@ -2,7 +2,7 @@ use bevy::input::keyboard::KeyCode;
 use bevy::prelude::*;
 
 use crate::combat_plugin::TurnManager;
-use crate::core::{DayCycle, GameState, Game_State, Position};
+use crate::core::{GameState, Game_State, Position, Timestamp};
 
 pub fn enter_battle(
     mut game_state: ResMut<GameState>,
@@ -16,7 +16,7 @@ pub fn pass_turn(
     _game_state: ResMut<GameState>,
     _input: Res<ButtonInput<KeyCode>>,
     _turn_manager: Res<TurnManager>,
-    _day_cycle: Res<DayCycle>,
+    _timestamp: Res<Timestamp>,
 ) {
 }
 
@@ -37,7 +37,7 @@ pub fn confirm_travel(
     _input: Res<ButtonInput<KeyCode>>,
     _map_position: Res<crate::core::PlayerMapPosition>,
     _target_position: Position,
-    _day_cycle: Res<DayCycle>,
+    _timestamp: Res<Timestamp>,
 ) {
 }
 
@@ -46,7 +46,7 @@ pub fn walk_to_tile(
     _input: Res<ButtonInput<KeyCode>>,
     _map_position: Res<crate::core::PlayerMapPosition>,
     _target_position: Position,
-    _day_cycle: Res<DayCycle>,
+    _timestamp: Res<Timestamp>,
 ) {
 }
 

@@ -7,7 +7,7 @@ use std::f32::consts::PI;
 use serde::{Deserialize, Serialize};
 
 use crate::combat_ability::*;
-use crate::core::Position;
+use crate::core::Timestamp;
 
 // Compatibility helpers for Bevy Messages (0.17) to keep older `send/iter` style calls compiling.
 trait MessageWriterSendExt<E: Message> {
@@ -343,7 +343,7 @@ pub struct EquipmentHooks(pub Vec<EquipHook>);
 pub struct Buff {
     pub stat: Stat,
     pub multiplier: f32,
-    pub remaining_turns: u32,
+    pub ends_at_timestamp: u32,
     pub source: Option<Entity>, // which equipment/ability created it (optional)
 }
 
@@ -355,7 +355,7 @@ pub struct StatModifiers(pub Vec<StatModifier>);
 pub struct StatModifier {
     pub stat: Stat,
     pub multiplier: f32, // multiplicative (e.g., 1.2 => +20%)
-    pub expires_in_turns: Option<u32>, // None => permanent until explicitly removed
+    pub expires_at_timestamp: Option<u32>, // None => permanent until explicitly removed
     pub source: Option<Entity>,
 }
 
@@ -863,6 +863,7 @@ fn equipment_before_attack_listener(
     equipment_q: Query<(Entity, &Equipment, &EquipmentHooks)>,
     slots_q: Query<&EquipmentSlots>,
     mut commands: Commands,
+    timestamp: Res<Timestamp>,
 ) {
     for ev in befores.iter() {
         // find equipment in attacker's slots
@@ -880,7 +881,9 @@ fn equipment_before_attack_listener(
                                 commands.entity(ev.attacker).insert(StatModifiers(vec![StatModifier {
                                     stat: *stat,
                                     multiplier: *multiplier,
-                                    expires_in_turns: Some(*duration_turns),
+                                    expires_at_timestamp: Some(
+                                        timestamp.0.saturating_add(*duration_turns),
+                                    ),
                                     source: Some(equip_entity),
                                 }]));
                             }
@@ -1219,41 +1222,29 @@ fn after_attack_finalizers(mut after_attacks: MessageReader<AfterAttackEvent>) {
 fn buff_tick_system(
     mut commands: Commands,
     mut query_mods: Query<(Entity, &mut StatModifiers)>,
-    mut query_buffs: Query<(Entity, &mut Buff)>,
+    mut query_buffs: Query<(Entity, &Buff)>,
+    timestamp: Res<Timestamp>,
 ) {
-    // Decrease stat modifiers' expires_in_turns, remove those with 0
+    if !timestamp.is_changed() {
+        return;
+    }
+
+    // Remove expired stat modifiers based on timestamp
     for (entity, mut mods) in query_mods.iter_mut() {
         let mut keep = Vec::new();
-        for mut m in mods.0.drain(..) {
-            if let Some(mut turns) = m.expires_in_turns {
-                if turns > 0 {
-                    turns -= 1;
-                    if turns > 0 {
-                        m.expires_in_turns = Some(turns);
-                        keep.push(m);
-                    } else {
-                        // expired: drop it
-                    }
-                } else {
-                    // already expired
-                }
-            } else {
-                // permanent: keep
-                keep.push(m);
+        for m in mods.0.drain(..) {
+            match m.expires_at_timestamp {
+                Some(ends_at) if timestamp.0 >= ends_at => {}
+                _ => keep.push(m),
             }
         }
-        // reinsert kept modifiers
         commands.entity(entity).insert(StatModifiers(keep));
     }
 
-    // Decrease buffs
-    for (entity, mut buff) in query_buffs.iter_mut() {
-        if buff.remaining_turns > 0 {
-            buff.remaining_turns -= 1;
-            if buff.remaining_turns == 0 {
-                // remove the buff entity
-                commands.entity(entity).despawn();
-            }
+    // Remove expired buffs
+    for (entity, buff) in query_buffs.iter_mut() {
+        if timestamp.0 >= buff.ends_at_timestamp {
+            commands.entity(entity).despawn();
         }
     }
 }
@@ -1752,8 +1743,10 @@ fn advance_turn_system(
     mut turn_order: ResMut<TurnOrder>,
     mut turn_start_writer: MessageWriter<TurnStartEvent>,
     mut round_end_writer: MessageWriter<RoundEndEvent>,
+    mut timestamp: ResMut<Timestamp>,
 ) {
     if let Some(next) = turn_order.queue.pop_front() {
+        timestamp.0 = timestamp.0.saturating_add(1);
         turn_start_writer.send(TurnStartEvent { who: next });
     } else {
         round_end_writer.send(RoundEndEvent);
@@ -1798,7 +1791,10 @@ fn process_player_action_system(
         return; // no player turn pending
     }
 
-    let actor = pending.entity.unwrap();
+    let Some(actor) = pending.entity else {
+        warn!("Pending player action has no associated entity");
+        return;
+    };
 
     for e in ev.iter() {
         match &e.action {
@@ -1865,20 +1861,18 @@ fn auto_advance_after_order(
 /// Buff tick per turn: when a TurnStartEvent occurs for a character, decrement their buff durations (so durations map to turns).
 fn buff_tick_on_turn_start_system(
     mut ev_reader: MessageReader<TurnStartEvent>,
-    mut query_buffs: Query<(Entity, &mut Buff)>,
+    mut query_buffs: Query<(Entity, &Buff)>,
     mut commands: Commands,
     mut modifiers_q: Query<(Entity, &mut StatModifiers)>,
+    timestamp: Res<Timestamp>,
 ) {
     for ev in ev_reader.iter() {
         // Decrement global Buff entities that have source == ev.who (optional design)
-        for (entity, mut buff) in query_buffs.iter_mut() {
+        for (entity, buff) in query_buffs.iter_mut() {
             if let Some(src) = buff.source {
                 if src == ev.who {
-                    if buff.remaining_turns > 0 {
-                        buff.remaining_turns -= 1;
-                        if buff.remaining_turns == 0 {
-                            commands.entity(entity).despawn();
-                        }
+                    if timestamp.0 >= buff.ends_at_timestamp {
+                        commands.entity(entity).despawn();
                     }
                 }
             }
@@ -1887,17 +1881,10 @@ fn buff_tick_on_turn_start_system(
         // Also decrement StatModifiers on the actor
         if let Ok((entity, mut mods)) = modifiers_q.get_mut(ev.who) {
             let mut keep: Vec<StatModifier> = Vec::new();
-            for mut m in mods.0.drain(..) {
-                if let Some(turns) = m.expires_in_turns {
-                    if turns > 1 {
-                        m.expires_in_turns = Some(turns - 1);
-                        keep.push(m);
-                    } else {
-                        // expires now -> drop
-                    }
-                } else {
-                    // permanent -> keep
-                    keep.push(m);
+            for m in mods.0.drain(..) {
+                match m.expires_at_timestamp {
+                    Some(ends_at) if timestamp.0 >= ends_at => {}
+                    _ => keep.push(m),
                 }
             }
             // reinsert updated modifiers
@@ -1957,16 +1944,19 @@ pub fn get_affected_characters(
     ability: &Ability,
     player_entity: Entity,
     cursor_position: (f32, f32),
-    query: &Query<(Entity, &Position)>,
-    player_position_query: &Query<&Position>,
+    query: &Query<(Entity, &Transform)>,
+    player_position_query: &Query<&Transform>,
 ) -> Vec<Entity> {
     let mut affected = Vec::new();
 
-    let player_pos = player_position_query.get(player_entity).unwrap();
-    let player_position = (player_pos.x as f32, player_pos.y as f32);
+    let Ok(player_pos) = player_position_query.get(player_entity) else {
+        warn!("Could not fetch player position for targeting");
+        return affected;
+    };
+    let player_position = (player_pos.translation.x, player_pos.translation.y);
 
-    for (entity, pos) in query.iter() {
-        let target_position = (pos.x as f32, pos.y as f32);
+    for (entity, transform) in query.iter() {
+        let target_position = (transform.translation.x, transform.translation.y);
 
         let is_affected = match &ability.shape {
             AbilityShape::Radius(radius) => {
@@ -2068,7 +2058,7 @@ fn dot(a: (f32, f32), b: (f32, f32)) -> f32 {
 /// -----------------------------
 /// Startup spawn examples (with XP, Level, AccumulatedAgility)
 /// -----------------------------
-fn spawn_examples(mut commands: Commands, mut tm: ResMut<TurnManager>) {
+fn spawn_examples(mut commands: Commands, mut tm: ResMut<TurnManager>, timestamp: Res<Timestamp>) {
     // spawn sword
     let sword = commands
         .spawn_empty()
@@ -2260,7 +2250,7 @@ fn spawn_examples(mut commands: Commands, mut tm: ResMut<TurnManager>) {
             Buff {
                 stat: Stat::Hit,
                 multiplier: 1.10, // +10% hit
-                remaining_turns: 3,
+                ends_at_timestamp: timestamp.0.saturating_add(3),
                 source: None,
             },
             // link it to Petrus by adding a marker component or by storing ApplyTo resource. Simpler approach:
@@ -2271,7 +2261,7 @@ fn spawn_examples(mut commands: Commands, mut tm: ResMut<TurnManager>) {
     commands.entity(petrus).insert(StatModifiers(vec![StatModifier {
         stat: Stat::Hit,
         multiplier: 1.10,
-        expires_in_turns: Some(3),
+        expires_at_timestamp: Some(timestamp.0.saturating_add(3)),
         source: Some(blessing),
     }]));
 
@@ -2323,6 +2313,7 @@ impl Plugin for CombatPlugin {
             .add_systems(Update, on_turn_start_system.after(auto_advance_after_order))
             .add_systems(Update, buff_tick_on_turn_start_system.after(on_turn_start_system))
             .add_systems(Update, advance_turn_system.after(compute_turn_order_system))
+            .add_systems(Update, buff_tick_system)
             // combat pipeline (core)
             .add_systems(Update, process_attack_intent)
             .add_systems(Update, before_to_execute.after(process_attack_intent))

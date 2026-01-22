@@ -103,16 +103,20 @@ pub fn pathfinding(quad_tree: &QuadTree, start: Position, goal: Position, margin
         && (next_Node_P.position.y - goal.y).abs() < margin)
     {
         if visited.contains(&next_Node_P.position) {
-            next_Node_P = open_set.pop().unwrap();
-            continue;
+            if let Some(next) = open_set.pop() {
+                next_Node_P = next;
+                continue;
+            } else {
+                break;
+            }
         }
         if visited.len() > 1000 {
             let mut previou_Node_P_position = next_Node_P.position;
             while previou_Node_P_position != start {
-                previou_Node_P_position = came_from
-                    .get(&previou_Node_P_position)
-                    .unwrap()
-                    .clone();
+                previou_Node_P_position = match came_from.get(&previou_Node_P_position) {
+                    Some(prev) => *prev,
+                    None => break,
+                };
             }
             break;
         }
@@ -183,7 +187,11 @@ pub fn pathfinding(quad_tree: &QuadTree, start: Position, goal: Position, margin
         }
         let old_Node_P = next_Node_P;
 
-        next_Node_P = open_set.pop().unwrap();
+        if let Some(next) = open_set.pop() {
+            next_Node_P = next;
+        } else {
+            break;
+        }
 
         if next_Node_P == old_Node_P {
             break;
