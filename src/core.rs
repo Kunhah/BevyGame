@@ -1,4 +1,5 @@
 use bevy::prelude::*;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Game_State {
@@ -7,6 +8,7 @@ pub enum Game_State {
     Interacting,
     Shopping,
     Battle,
+    MapOpen,
     Traveling,
     Paused,
 }
@@ -49,7 +51,7 @@ pub struct Player;
 #[derive(Component)]
 pub struct MainCamera;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Component)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Component, Serialize, Deserialize)]
 pub struct Position {
     pub x: i32,
     pub y: i32,

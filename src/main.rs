@@ -18,6 +18,7 @@ mod movement;
 mod pathfinding;
 mod quadtree;
 mod quests;
+mod save;
 mod world;
 
 use battle::enter_battle;
@@ -34,10 +35,15 @@ use light_plugin::LightPlugin;
 use menu::MenuPlugin;
 use movement::{follow_path_system, mouse_click, player_movement, toggle_camera_lock};
 use map::{
-    confirm_travel, generate_map_tiles, navigate_map_selection, toggle_map_mode,
-    update_active_tile_background, ActiveMapBackground, CurrentArea, MapSelection, MapTiles,
+    clear_completed_tile_events, confirm_travel, generate_map_tiles, handle_tile_entry,
+    navigate_map_selection_keyboard, navigate_map_selection_mouse, toggle_map_mode,
+    update_active_tile_background, update_path_preview, demo_tile_event_handler,
+    ActiveMapBackgrounds, ActiveTileEvent, AreaChanged, AreaTransitionLog, CurrentArea,
+    LastEnteredTile, MapOverlay, MapPathPreview, MapSelection, MapTiles, MapTravelUi,
+    TileContentCache, TileEventCompleted, TileEventTriggered, handle_area_changed, update_travel_ui,
 };
 use quests::QuestPlugin;
+use save::{load_game, save_game};
 use quadtree::CachedColliders;
 use world::{setup, update_cache};
 
@@ -90,7 +96,17 @@ fn main() {
         .insert_resource(generate_map_tiles())
         .insert_resource(MapSelection(Position::default()))
         .insert_resource(CurrentArea::default())
-        .insert_resource(ActiveMapBackground::default())
+        .insert_resource(ActiveMapBackgrounds::default())
+        .insert_resource(TileContentCache::default())
+        .insert_resource(MapOverlay::default())
+        .insert_resource(MapTravelUi::default())
+        .insert_resource(LastEnteredTile::default())
+        .insert_resource(AreaTransitionLog::default())
+        .insert_resource(ActiveTileEvent::default())
+        .insert_resource(MapPathPreview::default())
+        .insert_resource(Messages::<TileEventTriggered>::default())
+        .insert_resource(Messages::<TileEventCompleted>::default())
+        .insert_resource(Messages::<AreaChanged>::default())
         .add_systems(Startup, setup)
         .add_systems(Update, player_movement)
         .add_systems(Update, toggle_camera_lock)
@@ -99,9 +115,18 @@ fn main() {
         .add_systems(Update, follow_path_system)
         // map travel mode
         .add_systems(Update, toggle_map_mode)
-        .add_systems(Update, navigate_map_selection)
+        .add_systems(Update, navigate_map_selection_keyboard)
+        .add_systems(Update, navigate_map_selection_mouse)
         .add_systems(Update, confirm_travel)
         .add_systems(Update, update_active_tile_background)
+        .add_systems(Update, handle_tile_entry)
+        .add_systems(Update, demo_tile_event_handler)
+        .add_systems(Update, clear_completed_tile_events)
+        .add_systems(Update, update_path_preview)
+        .add_systems(Update, update_travel_ui)
+        .add_systems(Update, handle_area_changed)
+        .add_systems(Update, save_game)
+        .add_systems(Update, load_game)
         .add_systems(
             Update,
             movement::accumulate_manual_travel_time.after(player_movement),
