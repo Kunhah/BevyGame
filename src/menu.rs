@@ -4,6 +4,7 @@ use bevy::input::mouse::MouseButton;
 use bevy::prelude::*;
 
 use crate::core::{GameState, Game_State};
+use crate::save::{AutoSaveSettings, SaveAction, SaveRequest, SaveSlot};
 
 pub struct MenuPlugin;
 
@@ -14,7 +15,8 @@ impl Plugin for MenuPlugin {
             .add_systems(Update, spawn_pause_menu_ui)
             .add_systems(Update, toggle_pause_state)
             .add_systems(Update, update_button_interaction_visuals)
-            .add_systems(Update, handle_menu_actions);
+            .add_systems(Update, handle_menu_actions)
+            .add_systems(Update, update_autosave_status_text);
     }
 }
 
@@ -39,7 +41,17 @@ enum MenuButtonAction {
     QuitGame,
     ResumeGame,
     ReturnToTitle,
+    SaveSlot1,
+    SaveSlot2,
+    SaveSlot3,
+    LoadSlot1,
+    LoadSlot2,
+    LoadSlot3,
+    ToggleAutosave,
 }
+
+#[derive(Component)]
+struct AutosaveStatusText;
 
 fn spawn_main_menu_ui(
     mut commands: Commands,
@@ -130,6 +142,120 @@ fn spawn_main_menu_ui(
                             TextColor(Color::srgb(0.9, 0.92, 0.96)),
                         ));
                     });
+
+                col.spawn((
+                    Text::new("Save / Load"),
+                    TextFont {
+                        font_size: 18.0,
+                        ..default()
+                    },
+                    TextColor(Color::srgb(0.75, 0.8, 0.88)),
+                ));
+
+                let save_actions = [
+                    ("Save Slot 1", MenuButtonAction::SaveSlot1),
+                    ("Save Slot 2", MenuButtonAction::SaveSlot2),
+                    ("Save Slot 3", MenuButtonAction::SaveSlot3),
+                ];
+                for (label, action) in save_actions {
+                    col.spawn((
+                        Button::default(),
+                        Node {
+                            height: Val::Px(44.0),
+                            display: Display::Flex,
+                            justify_content: JustifyContent::Center,
+                            align_items: AlignItems::Center,
+                            padding: UiRect::all(Val::Px(6.0)),
+                            border: UiRect::all(Val::Px(1.5)),
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgba(0.12, 0.17, 0.25, 0.95)),
+                        BorderRadius::all(Val::Px(10.0)),
+                        BorderColor::all(Color::srgba(0.24, 0.32, 0.46, 1.0)),
+                        action,
+                    ))
+                    .with_children(|btn| {
+                        btn.spawn((
+                            Text::new(label),
+                            TextFont {
+                                font_size: 18.0,
+                                ..default()
+                            },
+                            TextColor(Color::srgb(0.88, 0.9, 0.95)),
+                        ));
+                    });
+                }
+
+                let load_actions = [
+                    ("Load Slot 1", MenuButtonAction::LoadSlot1),
+                    ("Load Slot 2", MenuButtonAction::LoadSlot2),
+                    ("Load Slot 3", MenuButtonAction::LoadSlot3),
+                ];
+                for (label, action) in load_actions {
+                    col.spawn((
+                        Button::default(),
+                        Node {
+                            height: Val::Px(44.0),
+                            display: Display::Flex,
+                            justify_content: JustifyContent::Center,
+                            align_items: AlignItems::Center,
+                            padding: UiRect::all(Val::Px(6.0)),
+                            border: UiRect::all(Val::Px(1.5)),
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgba(0.11, 0.15, 0.22, 0.95)),
+                        BorderRadius::all(Val::Px(10.0)),
+                        BorderColor::all(Color::srgba(0.24, 0.32, 0.46, 1.0)),
+                        action,
+                    ))
+                    .with_children(|btn| {
+                        btn.spawn((
+                            Text::new(label),
+                            TextFont {
+                                font_size: 18.0,
+                                ..default()
+                            },
+                            TextColor(Color::srgb(0.88, 0.9, 0.95)),
+                        ));
+                    });
+                }
+
+                col.spawn((
+                    Text::new("Autosave"),
+                    TextFont {
+                        font_size: 18.0,
+                        ..default()
+                    },
+                    TextColor(Color::srgb(0.75, 0.8, 0.88)),
+                ));
+
+                col.spawn((
+                    Button::default(),
+                    Node {
+                        height: Val::Px(44.0),
+                        display: Display::Flex,
+                        justify_content: JustifyContent::Center,
+                        align_items: AlignItems::Center,
+                        padding: UiRect::all(Val::Px(6.0)),
+                        border: UiRect::all(Val::Px(1.5)),
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgba(0.12, 0.17, 0.25, 0.95)),
+                    BorderRadius::all(Val::Px(10.0)),
+                    BorderColor::all(Color::srgba(0.24, 0.32, 0.46, 1.0)),
+                    MenuButtonAction::ToggleAutosave,
+                ))
+                .with_children(|btn| {
+                    btn.spawn((
+                        Text::new("Autosave: ..."),
+                        TextFont {
+                            font_size: 18.0,
+                            ..default()
+                        },
+                        TextColor(Color::srgb(0.88, 0.9, 0.95)),
+                        AutosaveStatusText,
+                    ));
+                });
 
                 col
                     .spawn((
@@ -363,6 +489,8 @@ fn handle_menu_actions(
     mut exit: MessageWriter<AppExit>,
     mut game_state: ResMut<GameState>,
     mut resume_state: ResMut<ResumeState>,
+    mut autosave: ResMut<AutoSaveSettings>,
+    mut save_requests: ResMut<Messages<SaveRequest>>,
     main_menu: Query<Entity, With<MainMenuRoot>>,
     pause_menu: Query<Entity, With<PauseMenuRoot>>,
     children: Query<&Children>,
@@ -398,7 +526,57 @@ fn handle_menu_actions(
                 mouse_input.reset_all();
                 key_input.clear();
             }
+            MenuButtonAction::SaveSlot1 => {
+                save_requests.write(SaveRequest {
+                    action: SaveAction::Save,
+                    slot: SaveSlot::Slot1,
+                });
+            }
+            MenuButtonAction::SaveSlot2 => {
+                save_requests.write(SaveRequest {
+                    action: SaveAction::Save,
+                    slot: SaveSlot::Slot2,
+                });
+            }
+            MenuButtonAction::SaveSlot3 => {
+                save_requests.write(SaveRequest {
+                    action: SaveAction::Save,
+                    slot: SaveSlot::Slot3,
+                });
+            }
+            MenuButtonAction::LoadSlot1 => {
+                save_requests.write(SaveRequest {
+                    action: SaveAction::Load,
+                    slot: SaveSlot::Slot1,
+                });
+            }
+            MenuButtonAction::LoadSlot2 => {
+                save_requests.write(SaveRequest {
+                    action: SaveAction::Load,
+                    slot: SaveSlot::Slot2,
+                });
+            }
+            MenuButtonAction::LoadSlot3 => {
+                save_requests.write(SaveRequest {
+                    action: SaveAction::Load,
+                    slot: SaveSlot::Slot3,
+                });
+            }
+            MenuButtonAction::ToggleAutosave => {
+                autosave.enabled = !autosave.enabled;
+                autosave.timer.reset();
+            }
         }
+    }
+}
+
+fn update_autosave_status_text(
+    autosave: Res<AutoSaveSettings>,
+    mut labels: Query<&mut Text, With<AutosaveStatusText>>,
+) {
+    let label = if autosave.enabled { "Autosave: On" } else { "Autosave: Off" };
+    for mut text in &mut labels {
+        text.0 = label.to_string();
     }
 }
 

@@ -5,6 +5,7 @@ use bevy::prelude::*;
 use crate::constants::{
     GRID_HEIGHT, GRID_WIDTH, PATH_DRAW_MARGIN, PATH_MOVEMENT_SPEED, PLAYER_SPEED, WALKING_LIMIT,
 };
+use crate::battle::{CombatMovePoints, CombatMoveTarget};
 use crate::core::{GameState, Game_State, Global_Variables, MainCamera, Player, Position, Timestamp};
 use crate::map::{time_cost_for_tile, MapTiles, TILE_WORLD_SIZE};
 use crate::pathfinding::{is_walkable_move, pathfinding};
@@ -71,7 +72,15 @@ pub fn animate_sprite(
 
 pub fn player_movement(
     mut param_set: ParamSet<(
-        Query<&mut Transform, With<Player>>,
+        Query<
+            (
+                Entity,
+                &mut Transform,
+                Option<&mut CombatMovePoints>,
+                Option<&CombatMoveTarget>,
+            ),
+            With<Player>,
+        >,
         Query<&mut Transform, With<MainCamera>>,
         ResMut<Global_Variables>,
     )>,
@@ -79,9 +88,11 @@ pub fn player_movement(
     quad_tree: Res<QuadTree>,
     input: Res<ButtonInput<KeyCode>>,
     time: Res<Time>,
+    map_tiles: Option<Res<MapTiles>>,
+    mut commands: Commands,
 ) {
-    // Ensure we only move while actually exploring (ignore other game modes).
-    if game_state.0 != Game_State::Exploring {
+    // Allow exploration and battle movement; other modes are blocked.
+    if game_state.0 != Game_State::Exploring && game_state.0 != Game_State::Battle {
         return;
     }
 
@@ -104,11 +115,50 @@ pub fn player_movement(
 
     let camera_locked = param_set.p2().0.camera_locked;
 
+    let battle_move = game_state.0 == Game_State::Battle;
+
+    if direction.length() == 0.0 && battle_move {
+        let mut p0 = param_set.p0();
+        if let Some((entity, transform, _mp_opt, target_opt)) = p0.iter_mut().next() {
+            if let Some(target) = target_opt {
+                let to_target = target.target - transform.translation.truncate();
+                if to_target.length_squared() <= 0.25 {
+                    commands.entity(entity).remove::<CombatMoveTarget>();
+                } else {
+                    direction = to_target.normalize_or_zero();
+                }
+            }
+        }
+    }
+
+    let bounds = map_tiles.as_ref().and_then(|map| {
+        let height = map.tiles.len() as f32;
+        let width = map.tiles.get(0).map(|r| r.len()).unwrap_or(0) as f32;
+        if width == 0.0 || height == 0.0 {
+            None
+        } else {
+            let half = TILE_WORLD_SIZE * 0.5;
+            Some((
+                -half,
+                -half,
+                (width - 1.0) * TILE_WORLD_SIZE + half,
+                (height - 1.0) * TILE_WORLD_SIZE + half,
+            ))
+        }
+    });
+    let within_bounds = |x: f32, y: f32| {
+        if let Some((min_x, min_y, max_x, max_y)) = bounds {
+            x >= min_x && x <= max_x && y >= min_y && y <= max_y
+        } else {
+            (x.abs() as u32) < GRID_WIDTH && (y.abs() as u32) < GRID_HEIGHT
+        }
+    };
+
     if direction.length() > 0.0 {
-        info!(
-            "player_movement direction {:?}, speed {} (camera_locked={})",
-            direction, movement_speed, camera_locked
-        );
+        // info!(
+        //     "player_movement direction {:?}, speed {} (camera_locked={})",
+        //     direction, movement_speed, camera_locked
+        // );
         let mut new_x_out: Option<f32> = None;
         let mut new_y_out: Option<f32> = None;
 
@@ -117,13 +167,21 @@ pub fn player_movement(
 
             let mut p0 = param_set.p0();
 
-            for mut transform in p0.iter_mut() {
+            for (entity, mut transform, mut mp_opt, target_opt) in p0.iter_mut() {
+                let mut remaining = mp_opt.as_ref().map(|mp| mp.remaining).unwrap_or(0.0);
+                if game_state.0 == Game_State::Battle {
+                    if mp_opt.is_none() || remaining <= 0.0 {
+                        info!(
+                            "Battle move blocked (diagonal): has_points={}, remaining={:.2}",
+                            mp_opt.is_some(),
+                            remaining
+                        );
+                        continue;
+                    }
+                }
                 let new_x = transform.translation.x + direction.x * diagonal_speed;
                 let new_y = transform.translation.y + direction.y * diagonal_speed;
 
-                new_x_out = Some(new_x);
-                new_y_out = Some(new_y);
-
                 transform.rotation = Quat::from_rotation_z(rotate_to_direction(
                     transform.translation.x,
                     transform.translation.y,
@@ -131,27 +189,63 @@ pub fn player_movement(
                     new_y,
                 ));
 
-                if ((new_x.abs() as u32) < GRID_WIDTH)
-                    && ((new_y.abs() as u32) < GRID_HEIGHT)
-                {
+                if within_bounds(new_x, new_y) {
                     let new_pos = Position {
                         x: new_x as i32,
                         y: new_y as i32,
                     };
 
                     if is_walkable_move(new_pos, &quad_tree) {
-                        transform.translation.x = new_x;
-                        transform.translation.y = new_y;
+                        let mut step = diagonal_speed;
+                        if battle_move {
+                            if step > remaining {
+                                step = remaining;
+                            }
+                            remaining -= step;
+                        }
+                        transform.translation.x = transform.translation.x + direction.x * step;
+                        transform.translation.y = transform.translation.y + direction.y * step;
+                        new_x_out = Some(transform.translation.x);
+                        new_y_out = Some(transform.translation.y);
+                        if battle_move {
+                            if let Some(ref mut mp) = mp_opt {
+                                mp.remaining = remaining;
+                                info!(
+                                    "Battle move (diagonal) ok: remaining={:.2}",
+                                    mp.remaining
+                                );
+                            }
+                            if let Some(target) = target_opt {
+                                if transform.translation.truncate().distance(target.target) <= 0.5 {
+                                    commands.entity(entity).remove::<CombatMoveTarget>();
+                                }
+                            }
+                        }
+                    } else if battle_move {
+                        info!("Battle move blocked (diagonal): not walkable");
                     }
+                } else if battle_move {
+                    info!(
+                        "Battle move blocked (diagonal): out of bounds new=({:.2},{:.2})",
+                        new_x, new_y
+                    );
                 }
             }
         } else {
-            for mut transform in param_set.p0().iter_mut() {
+            for (entity, mut transform, mut mp_opt, target_opt) in param_set.p0().iter_mut() {
+                let mut remaining = mp_opt.as_ref().map(|mp| mp.remaining).unwrap_or(0.0);
+                if game_state.0 == Game_State::Battle {
+                    if mp_opt.is_none() || remaining <= 0.0 {
+                        info!(
+                            "Battle move blocked: has_points={}, remaining={:.2}",
+                            mp_opt.is_some(),
+                            remaining
+                        );
+                        continue;
+                    }
+                }
                 let new_x = transform.translation.x + direction.x * movement_speed;
                 let new_y = transform.translation.y + direction.y * movement_speed;
-
-                new_x_out = Some(new_x);
-                new_y_out = Some(new_y);
 
                 transform.rotation = Quat::from_rotation_z(rotate_to_direction(
                     transform.translation.x,
@@ -160,18 +254,43 @@ pub fn player_movement(
                     new_y,
                 ));
 
-                if ((new_x.abs() as u32) < GRID_WIDTH)
-                    && ((new_y.abs() as u32) < GRID_HEIGHT)
-                {
+                if within_bounds(new_x, new_y) {
                     let new_pos = Position {
                         x: new_x as i32,
                         y: new_y as i32,
                     };
 
                     if is_walkable_move(new_pos, &quad_tree) {
-                        transform.translation.x = new_x;
-                        transform.translation.y = new_y;
+                        let mut step = movement_speed;
+                        if battle_move {
+                            if step > remaining {
+                                step = remaining;
+                            }
+                            remaining -= step;
+                        }
+                        transform.translation.x = transform.translation.x + direction.x * step;
+                        transform.translation.y = transform.translation.y + direction.y * step;
+                        new_x_out = Some(transform.translation.x);
+                        new_y_out = Some(transform.translation.y);
+                        if battle_move {
+                            if let Some(ref mut mp) = mp_opt {
+                                mp.remaining = remaining;
+                                info!("Battle move ok: remaining={:.2}", mp.remaining);
+                            }
+                            if let Some(target) = target_opt {
+                                if transform.translation.truncate().distance(target.target) <= 0.5 {
+                                    commands.entity(entity).remove::<CombatMoveTarget>();
+                                }
+                            }
+                        }
+                    } else if battle_move {
+                        info!("Battle move blocked: not walkable");
                     }
+                } else if battle_move {
+                    info!(
+                        "Battle move blocked: out of bounds new=({:.2},{:.2})",
+                        new_x, new_y
+                    );
                 }
             }
         }
@@ -312,7 +431,7 @@ pub fn toggle_camera_lock(
 }
 
 pub fn mouse_click(
-    mut param_set: ParamSet<(Query<(Entity, &Transform), With<Player>>, )>,
+    mut param_set: ParamSet<(Query<(Entity, &Transform, Option<&CombatMovePoints>), With<Player>>, )>,
     game_state: Res<GameState>,
     camera_query: Query<(&Camera, &GlobalTransform), With<MainCamera>>,
     quad_tree: Res<QuadTree>,
@@ -323,16 +442,52 @@ pub fn mouse_click(
     time: Res<Time>,
 ) {
 
-    if !(matches!(game_state.0, Game_State::Exploring)) {
+    if !(matches!(game_state.0, Game_State::Exploring | Game_State::Battle)) {
         return;
     }
     
     if input.just_pressed(MouseButton::Left) {
         let mut p0 = param_set.p0();
-        let Some((entity, transform)) = p0.iter_mut().next() else {
+        let Some((entity, transform, mp_opt)) = p0.iter_mut().next() else {
             warn!("mouse_click: left click but no player entity found");
             return;
         };
+
+        if game_state.0 == Game_State::Battle {
+            let Some((camera, camera_transform)) = camera_query.iter().next() else {
+                return;
+            };
+            let Some(window) = windows.iter().next() else {
+                return;
+            };
+            let Some(screen_pos) = window.cursor_position() else {
+                return;
+            };
+            let Ok(target_world) = camera.viewport_to_world_2d(camera_transform, screen_pos) else {
+                return;
+            };
+            let remaining = mp_opt.as_ref().map(|mp| mp.remaining).unwrap_or(0.0);
+            if mp_opt.is_none() {
+                info!("mouse_click (battle): no move points on player");
+                return;
+            }
+            let cost = transform.translation.truncate().distance(target_world);
+            if cost > remaining {
+                info!(
+                    "mouse_click (battle): denied cost {:.2} > remaining {:.2}",
+                    cost, remaining
+                );
+                return;
+            }
+            commands
+                .entity(entity)
+                .insert(CombatMoveTarget { target: target_world });
+            info!(
+                "mouse_click (battle): target set at ({:.2}, {:.2}) cost {:.2} remaining {:.2}",
+                target_world.x, target_world.y, cost, remaining
+            );
+            return;
+        }
 
         let player_entity = entity;
         let current_position = Position {
@@ -383,7 +538,7 @@ pub fn mouse_click(
         }
     } else if input.just_pressed(MouseButton::Right) {
         let mut p0 = param_set.p0();
-        let Some((_entity, transform)) = p0.iter_mut().next() else {
+        let Some((_entity, transform, _mp_opt)) = p0.iter_mut().next() else {
             warn!("mouse_click: right click but no player entity found");
             return;
         };

@@ -1,6 +1,7 @@
 use bevy::input::keyboard::KeyCode;
 use bevy::prelude::*;
 
+use crate::battle::{CombatMovePoints, EnemyEncounter, WorldAlly, WorldNpc};
 use crate::core::{MainCamera, Player};
 use crate::dialogue::{
     load_dialogue, CachedInteractables, Dialogue_Data, Dialogue_State, Interactable,
@@ -45,6 +46,54 @@ pub fn setup(
         },
         Transform::from_xyz(0.0, 0.0, 0.0),
         Player,
+        CombatMovePoints::default(),
+    ));
+
+    commands.spawn((
+        Sprite {
+            image: asset_server.load("character.png"),
+            color: Color::srgb(0.3, 0.9, 0.3),
+            custom_size: Some(Vec2::new(32.0, 32.0)),
+            ..default()
+        },
+        Transform::from_xyz(4.0 * 32.0, 0.0, 0.0),
+        EnemyEncounter { id: 1 },
+    ));
+
+    commands.spawn((
+        Sprite {
+            image: asset_server.load("character.png"),
+            color: Color::srgb(0.2, 0.6, 0.9),
+            custom_size: Some(Vec2::new(32.0, 32.0)),
+            ..default()
+        },
+        Transform::from_xyz(2.0 * 32.0, 1.0 * 32.0, 0.0),
+        WorldNpc { id: 2 },
+        Name::new("TestNPC"),
+    ));
+
+    commands.spawn((
+        Sprite {
+            image: asset_server.load("character.png"),
+            color: Color::srgb(0.9, 0.8, 0.2),
+            custom_size: Some(Vec2::new(32.0, 32.0)),
+            ..default()
+        },
+        Transform::from_xyz(-2.0 * 32.0, 0.0, 0.0),
+        WorldAlly,
+        Name::new("AllyA"),
+    ));
+
+    commands.spawn((
+        Sprite {
+            image: asset_server.load("character.png"),
+            color: Color::srgb(0.9, 0.6, 0.2),
+            custom_size: Some(Vec2::new(32.0, 32.0)),
+            ..default()
+        },
+        Transform::from_xyz(-3.0 * 32.0, -1.0 * 32.0, 0.0),
+        WorldAlly,
+        Name::new("AllyB"),
     ));
 
     for x in 5..7 {

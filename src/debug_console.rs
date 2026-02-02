@@ -1,7 +1,6 @@
 use std::collections::VecDeque;
 
-use bevy::input::keyboard::{KeyCode, KeyboardInput};
-use bevy::input::ButtonState;
+use bevy::input::keyboard::KeyCode;
 use bevy::prelude::*;
 
 use crate::combat_plugin::{
@@ -115,7 +114,6 @@ fn toggle_console(
 fn handle_console_input(
     mut commands: Commands,
     mut state: ResMut<DebugConsoleState>,
-    mut keyboard_events: MessageReader<KeyboardInput>,
     key_input: Res<ButtonInput<KeyCode>>,
     asset_server: Res<AssetServer>,
     mut counter: ResMut<DebugEntityCounter>,
@@ -140,18 +138,9 @@ fn handle_console_input(
         return;
     }
 
-    for event in keyboard_events.read() {
-        if event.state != ButtonState::Pressed {
-            continue;
-        }
-
-        if let Some(text) = &event.text {
-            if event.key_code == KeyCode::Backquote {
-                continue;
-            }
-            for ch in text.chars().filter(|c| !c.is_control()) {
-                state.input.push(ch);
-            }
+    for key in key_input.get_just_pressed() {
+        if let Some(ch) = keycode_to_char(*key) {
+            state.input.push(ch);
         }
     }
 
@@ -196,14 +185,17 @@ fn handle_console_input(
 fn update_console_ui(
     state: Res<DebugConsoleState>,
     mut root: Query<&mut Visibility, With<DebugConsoleRoot>>,
-    mut output_q: Query<&mut Text, With<DebugConsoleOutput>>,
-    mut input_q: Query<&mut Text, With<DebugConsoleInput>>,
+    mut text_q: Query<(
+        &mut Text,
+        Option<&DebugConsoleOutput>,
+        Option<&DebugConsoleInput>,
+    )>,
 ) {
     if !state.is_changed() {
         return;
     }
 
-    if let Ok(mut vis) = root.get_single_mut() {
+    if let Ok(mut vis) = root.single_mut() {
         *vis = if state.open {
             Visibility::Visible
         } else {
@@ -211,12 +203,60 @@ fn update_console_ui(
         };
     }
 
-    if let Ok(mut text) = output_q.get_single_mut() {
-        text.0 = state.history.iter().cloned().collect::<Vec<_>>().join("\n");
+    for (mut text, is_output, is_input) in &mut text_q {
+        if is_output.is_some() {
+            text.0 = state.history.iter().cloned().collect::<Vec<_>>().join("\n");
+        } else if is_input.is_some() {
+            text.0 = format!("> {}", state.input);
+        }
     }
+}
 
-    if let Ok(mut text) = input_q.get_single_mut() {
-        text.0 = format!("> {}", state.input);
+fn keycode_to_char(key: KeyCode) -> Option<char> {
+    match key {
+        KeyCode::KeyA => Some('a'),
+        KeyCode::KeyB => Some('b'),
+        KeyCode::KeyC => Some('c'),
+        KeyCode::KeyD => Some('d'),
+        KeyCode::KeyE => Some('e'),
+        KeyCode::KeyF => Some('f'),
+        KeyCode::KeyG => Some('g'),
+        KeyCode::KeyH => Some('h'),
+        KeyCode::KeyI => Some('i'),
+        KeyCode::KeyJ => Some('j'),
+        KeyCode::KeyK => Some('k'),
+        KeyCode::KeyL => Some('l'),
+        KeyCode::KeyM => Some('m'),
+        KeyCode::KeyN => Some('n'),
+        KeyCode::KeyO => Some('o'),
+        KeyCode::KeyP => Some('p'),
+        KeyCode::KeyQ => Some('q'),
+        KeyCode::KeyR => Some('r'),
+        KeyCode::KeyS => Some('s'),
+        KeyCode::KeyT => Some('t'),
+        KeyCode::KeyU => Some('u'),
+        KeyCode::KeyV => Some('v'),
+        KeyCode::KeyW => Some('w'),
+        KeyCode::KeyX => Some('x'),
+        KeyCode::KeyY => Some('y'),
+        KeyCode::KeyZ => Some('z'),
+        KeyCode::Digit0 => Some('0'),
+        KeyCode::Digit1 => Some('1'),
+        KeyCode::Digit2 => Some('2'),
+        KeyCode::Digit3 => Some('3'),
+        KeyCode::Digit4 => Some('4'),
+        KeyCode::Digit5 => Some('5'),
+        KeyCode::Digit6 => Some('6'),
+        KeyCode::Digit7 => Some('7'),
+        KeyCode::Digit8 => Some('8'),
+        KeyCode::Digit9 => Some('9'),
+        KeyCode::Space => Some(' '),
+        KeyCode::Comma => Some(','),
+        KeyCode::Period => Some('.'),
+        KeyCode::Slash => Some('/'),
+        KeyCode::Minus => Some('-'),
+        KeyCode::Equal => Some('='),
+        _ => None,
     }
 }
 

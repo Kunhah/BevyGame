@@ -589,7 +589,7 @@ pub struct BattleLoot {
     pub items: Vec<LootItem>,
 }
 
-#[derive(Debug, Clone, Resource)]
+#[derive(Debug, Clone, Default, Resource)]
 pub struct PendingPlayerAction {
     pub entity: Option<Entity>,
 }
@@ -1344,6 +1344,8 @@ pub struct TurnOrder {
     pub queue: VecDeque<Entity>,
 }
 
+#[derive(Resource, Default)]
+pub struct TurnInProgress(pub bool);
 /// Resource that knows which entities should participate in turn calc.
 /// For simplicity we store a Vec<Entity> that is maintained at spawn time.
 #[derive(Resource, Default)]
@@ -1697,12 +1699,16 @@ fn register_participants_system(
 fn compute_turn_order_system(
     mut tm: ResMut<TurnManager>,
     mut turn_order: ResMut<TurnOrder>,
+    turn_in_progress: Res<TurnInProgress>,
     mut acc_q: Query<&mut AccumulatedAgility>,
     stats_q: Query<&CombatStats>,
     levels_q: Query<&Level>,
     mut ev_writer: MessageWriter<TurnOrderCalculatedEvent>,
     _ev_reader: MessageReader<RoundEndEvent>,
 ) {
+    if turn_in_progress.0 {
+        return;
+    }
     // recompute threshold / max jitter based on participants
     tm.recompute_params(&stats_q, &levels_q);
 
@@ -1758,9 +1764,15 @@ fn advance_turn_system(
 fn on_turn_start_system(
     mut ev_reader: MessageReader<TurnStartEvent>,
     q_participants: Query<Entity, With<CombatStats>>,
+    player_controlled: Query<(), With<PlayerControlled>>,
     mut intent_writer: MessageWriter<AttackIntentEvent>,
+    mut turn_end_writer: MessageWriter<TurnEndEvent>,
+    mut turn_in_progress: ResMut<TurnInProgress>,
 ) {
     for ev in ev_reader.iter() {
+        if player_controlled.get(ev.who).is_ok() {
+            continue;
+        }
         // simple demo: find first entity different from ev.who and issue attack
         let mut target_opt: Option<Entity> = None;
         for e in q_participants.iter() {
@@ -1776,6 +1788,8 @@ fn on_turn_start_system(
                 ability: None,
                 context: AttackContext::default(),
             });
+            turn_end_writer.send(TurnEndEvent { who: ev.who });
+            turn_in_progress.0 = false;
         }
     }
 }
@@ -1786,6 +1800,8 @@ fn process_player_action_system(
     mut intent_writer: MessageWriter<AttackIntentEvent>,
     mut defend_writer: MessageWriter<DefendIntentEvent>,
     mut wait_writer: MessageWriter<WaitIntentEvent>,
+    mut turn_end_writer: MessageWriter<TurnEndEvent>,
+    mut turn_in_progress: ResMut<TurnInProgress>,
 ) {
     if pending.entity.is_none() {
         return; // no player turn pending
@@ -1831,6 +1847,8 @@ fn process_player_action_system(
 
         // Player decision consumed → clear pending
         pending.entity = None;
+        turn_end_writer.send(TurnEndEvent { who: actor });
+        turn_in_progress.0 = false;
         break; // only one action per turn
     }
 }
@@ -1850,10 +1868,12 @@ fn auto_advance_after_order(
     mut ev_reader: MessageReader<TurnOrderCalculatedEvent>,
     mut turn_order: ResMut<TurnOrder>,
     mut ev_writer: MessageWriter<TurnStartEvent>,
+    mut turn_in_progress: ResMut<TurnInProgress>,
 ) {
     for _ in ev_reader.iter() {
         if let Some(next) = turn_order.queue.pop_front() {
             ev_writer.send(TurnStartEvent { who: next });
+            turn_in_progress.0 = true;
         }
     }
 }
@@ -2282,12 +2302,17 @@ impl Plugin for CombatPlugin {
         // TO DO: insert all systems correctly
         app.insert_resource(TurnOrder::default())
             .insert_resource(TurnManager::default())
+            .insert_resource(TurnInProgress::default())
+            .insert_resource(PendingPlayerAction::default())
             // events
             .add_message::<HealthRegenEvent>()
             .add_message::<MagicRegenEvent>()
             .add_message::<StaminaRegenEvent>()
             .add_message::<AwardXpEvent>()
             .add_message::<AttackIntentEvent>()
+            .add_message::<DefendIntentEvent>()
+            .add_message::<WaitIntentEvent>()
+            .add_message::<PlayerActionEvent>()
             .add_message::<BeforeAttackEvent>()
             .add_message::<AttackExecuteEvent>()
             .add_message::<BeforeHitEvent>()
@@ -2314,6 +2339,7 @@ impl Plugin for CombatPlugin {
             .add_systems(Update, buff_tick_on_turn_start_system.after(on_turn_start_system))
             .add_systems(Update, advance_turn_system.after(compute_turn_order_system))
             .add_systems(Update, buff_tick_system)
+            .add_systems(Update, process_player_action_system)
             // combat pipeline (core)
             .add_systems(Update, process_attack_intent)
             .add_systems(Update, before_to_execute.after(process_attack_intent))

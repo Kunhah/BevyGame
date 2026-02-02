@@ -160,21 +160,21 @@ pub fn spawn_light_quad(
     let mut params = LightUniform::default();
     params.occlusion_size = Vec2::new(occ.size.x as f32, occ.size.y as f32);
 
-    info!("light params radius={} intensity={} uv={:?}", params.radius, params.intensity, params.light_uv);
+    // info!("light params radius={} intensity={} uv={:?}", params.radius, params.intensity, params.light_uv);
 
     let material = mats.add(LightMaterial {
         occlusion_tex: occ.image.clone(),
         params,
     });
 
-    info!(
-        "spawn_light_quad: spawned light mesh {:?}, material {:?} (radius={}, intensity={}, uv={:?})",
-        mesh_handle,
-        material,
-        params.radius,
-        params.intensity,
-        params.light_uv
-    );
+    // info!(
+    //     "spawn_light_quad: spawned light mesh {:?}, material {:?} (radius={}, intensity={}, uv={:?})",
+    //     mesh_handle,
+    //     material,
+    //     params.radius,
+    //     params.intensity,
+    //     params.light_uv
+    // );
 
     commands.spawn((
         Mesh2d(mesh_handle),
@@ -246,10 +246,10 @@ pub fn update_light_params(
         params.visibility = if blocked { 0.0 } else { 1.0 };
         mat.params = params;
 
-        info!(
-            "update_light_params: light_uv={:?} radius={} intensity={} blocked={} visibility={}",
-            params.light_uv, params.radius, params.intensity, blocked, params.visibility
-        );
+        // info!(
+        //     "update_light_params: light_uv={:?} radius={} intensity={} blocked={} visibility={}",
+        //     params.light_uv, params.radius, params.intensity, blocked, params.visibility
+        // );
     }
 }
 

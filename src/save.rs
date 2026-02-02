@@ -1,6 +1,4 @@
 use std::fs;
-use std::path::Path;
-
 use bevy::input::keyboard::KeyCode;
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -8,7 +6,60 @@ use serde::{Deserialize, Serialize};
 use crate::core::{GameState, Game_State, Player, PlayerMapPosition, Position, Timestamp};
 use crate::map::{CurrentArea, MapSelection, MapTiles};
 
-const SAVE_PATH: &str = "saves/savegame.json";
+const SAVE_DIR: &str = "saves";
+
+#[derive(Clone, Copy, Debug)]
+pub enum SaveSlot {
+    Auto,
+    Slot1,
+    Slot2,
+    Slot3,
+}
+
+impl SaveSlot {
+    fn file_name(self) -> &'static str {
+        match self {
+            SaveSlot::Auto => "auto.json",
+            SaveSlot::Slot1 => "slot_1.json",
+            SaveSlot::Slot2 => "slot_2.json",
+            SaveSlot::Slot3 => "slot_3.json",
+        }
+    }
+
+    fn path(self) -> String {
+        format!("{}/{}", SAVE_DIR, self.file_name())
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum SaveAction {
+    Save,
+    Load,
+}
+
+#[derive(Clone, Copy, Debug, Message)]
+pub struct SaveRequest {
+    pub action: SaveAction,
+    pub slot: SaveSlot,
+}
+
+#[derive(Resource)]
+pub struct AutoSaveSettings {
+    pub enabled: bool,
+    pub interval_seconds: f32,
+    pub timer: Timer,
+}
+
+impl Default for AutoSaveSettings {
+    fn default() -> Self {
+        let interval_seconds = 180.0;
+        Self {
+            enabled: true,
+            interval_seconds,
+            timer: Timer::from_seconds(interval_seconds, TimerMode::Repeating),
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct SaveVec3 {
@@ -44,59 +95,26 @@ pub struct SaveData {
     // TODO(save): include inventory, quests, flags, skills, stats, active events, party, and anything else that must persist.
 }
 
-pub fn save_game(
+pub fn save_game_hotkeys(
     input: Res<ButtonInput<KeyCode>>,
-    game_state: Res<GameState>,
-    map: Res<MapTiles>,
-    selection: Res<MapSelection>,
-    map_position: Res<PlayerMapPosition>,
-    current_area: Res<CurrentArea>,
-    timestamp: Res<Timestamp>,
-    player_q: Query<&Transform, With<Player>>,
+    mut requests: ResMut<Messages<SaveRequest>>,
 ) {
-    if !input.just_pressed(KeyCode::F5) {
-        return;
+    if input.just_pressed(KeyCode::F5) {
+        requests.write(SaveRequest {
+            action: SaveAction::Save,
+            slot: SaveSlot::Slot1,
+        });
     }
-
-    if game_state.0 != Game_State::Exploring && game_state.0 != Game_State::MapOpen {
-        return;
-    }
-
-    let Ok(player_tf) = player_q.get_single() else {
-        warn!("save_game: player transform not found");
-        return;
-    };
-
-    let data = SaveData {
-        player_world: SaveVec3::from(player_tf.translation),
-        player_tile: map_position.0,
-        map_selection: selection.0,
-        current_area: current_area.0,
-        timestamp: timestamp.0,
-        map_tiles: map.clone(),
-    };
-
-    if let Some(parent) = Path::new(SAVE_PATH).parent() {
-        if let Err(e) = fs::create_dir_all(parent) {
-            warn!("save_game: failed to create save directory: {}", e);
-            return;
-        }
-    }
-
-    match serde_json::to_string_pretty(&data) {
-        Ok(json) => {
-            if let Err(e) = fs::write(SAVE_PATH, json) {
-                warn!("save_game: failed to write save file: {}", e);
-            } else {
-                info!("Saved game to {}", SAVE_PATH);
-            }
-        }
-        Err(e) => warn!("save_game: failed to serialize save data: {}", e),
+    if input.just_pressed(KeyCode::F9) {
+        requests.write(SaveRequest {
+            action: SaveAction::Load,
+            slot: SaveSlot::Slot1,
+        });
     }
 }
 
-pub fn load_game(
-    input: Res<ButtonInput<KeyCode>>,
+pub fn handle_save_requests(
+    mut requests: ResMut<Messages<SaveRequest>>,
     mut game_state: ResMut<GameState>,
     mut map: ResMut<MapTiles>,
     mut selection: ResMut<MapSelection>,
@@ -106,33 +124,89 @@ pub fn load_game(
     mut player_q: Query<&mut Transform, With<Player>>,
     mut camera_q: Query<&mut Transform, (With<crate::core::MainCamera>, Without<Player>)>,
 ) {
-    if !input.just_pressed(KeyCode::F9) {
+    for req in requests.drain() {
+        match req.action {
+            SaveAction::Save => {
+                if game_state.0 != Game_State::Exploring && game_state.0 != Game_State::MapOpen {
+                    continue;
+                }
+                let Ok(player_tf) = player_q.single_mut() else {
+                    warn!("save_game: player transform not found");
+                    continue;
+                };
+                let data = SaveData {
+                    player_world: SaveVec3::from(player_tf.translation),
+                    player_tile: map_position.0,
+                    map_selection: selection.0,
+                    current_area: current_area.0,
+                    timestamp: timestamp.0,
+                    map_tiles: map.clone(),
+                };
+                if let Err(e) = write_save(req.slot, &data) {
+                    warn!("save_game: {}", e);
+                } else {
+                    info!("Saved game to {}", req.slot.path());
+                }
+            }
+            SaveAction::Load => {
+                let Ok(data) = read_save(req.slot) else {
+                    warn!("load_game: save file not found at {}", req.slot.path());
+                    continue;
+                };
+                map.tiles = data.map_tiles.tiles;
+                selection.0 = data.map_selection;
+                map_position.0 = data.player_tile;
+                current_area.0 = data.current_area;
+                timestamp.0 = data.timestamp;
+
+                if let Ok(mut player_tf) = player_q.single_mut() {
+                    player_tf.translation = Vec3::from(data.player_world);
+                }
+                if let Ok(mut cam_tf) = camera_q.single_mut() {
+                    cam_tf.translation = Vec3::from(data.player_world);
+                }
+
+                game_state.0 = Game_State::Exploring;
+                info!("Loaded game from {}", req.slot.path());
+            }
+        }
+    }
+}
+
+pub fn autosave_tick(
+    time: Res<Time>,
+    mut settings: ResMut<AutoSaveSettings>,
+    game_state: Res<GameState>,
+    mut requests: ResMut<Messages<SaveRequest>>,
+) {
+    if !settings.enabled {
+        return;
+    }
+    if game_state.0 != Game_State::Exploring {
         return;
     }
 
-    let Ok(contents) = fs::read_to_string(SAVE_PATH) else {
-        warn!("load_game: save file not found at {}", SAVE_PATH);
-        return;
-    };
-
-    let Ok(data) = serde_json::from_str::<SaveData>(&contents) else {
-        warn!("load_game: failed to parse save file");
-        return;
-    };
-
-    map.tiles = data.map_tiles.tiles;
-    selection.0 = data.map_selection;
-    map_position.0 = data.player_tile;
-    current_area.0 = data.current_area;
-    timestamp.0 = data.timestamp;
-
-    if let Ok(mut player_tf) = player_q.get_single_mut() {
-        player_tf.translation = Vec3::from(data.player_world);
+    settings.timer.tick(time.delta());
+    if settings.timer.just_finished() {
+        requests.write(SaveRequest {
+            action: SaveAction::Save,
+            slot: SaveSlot::Auto,
+        });
     }
-    if let Ok(mut cam_tf) = camera_q.get_single_mut() {
-        cam_tf.translation = Vec3::from(data.player_world);
-    }
+}
 
-    game_state.0 = Game_State::Exploring;
-    info!("Loaded game from {}", SAVE_PATH);
+fn write_save(slot: SaveSlot, data: &SaveData) -> Result<(), String> {
+    if let Err(e) = fs::create_dir_all(SAVE_DIR) {
+        return Err(format!("failed to create save directory: {}", e));
+    }
+    let path = slot.path();
+    let json = serde_json::to_string_pretty(data).map_err(|e| e.to_string())?;
+    fs::write(&path, json).map_err(|e| format!("failed to write save file: {}", e))?;
+    Ok(())
+}
+
+fn read_save(slot: SaveSlot) -> Result<SaveData, String> {
+    let path = slot.path();
+    let contents = fs::read_to_string(&path).map_err(|_| "save file not found".to_string())?;
+    serde_json::from_str::<SaveData>(&contents).map_err(|e| format!("failed to parse save: {}", e))
 }

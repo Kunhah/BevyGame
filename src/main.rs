@@ -21,7 +21,10 @@ mod quests;
 mod save;
 mod world;
 
-use battle::enter_battle;
+use battle::{
+    battle_trigger_system, combat_end_turn_input, end_battle_on_death,
+    setup_player_turns, sync_combat_move_points_from_world, test_log_button, transform_npc_to_enemy, BattleState,
+};
 use combat_plugin::{CombatPlugin, DamageQueue, HealthRegenEvent, MagicRegenEvent, StaminaRegenEvent, DeathEvent, AwardXpEvent, AttackIntentEvent};
 use constants::*;
 use core::{GameState, Game_State, GlobalVariables, Global_Variables, PlayerMapPosition, Position, Timestamp};
@@ -43,7 +46,9 @@ use map::{
     TileContentCache, TileEventCompleted, TileEventTriggered, handle_area_changed, update_travel_ui,
 };
 use quests::QuestPlugin;
-use save::{load_game, save_game};
+use save::{
+    autosave_tick, handle_save_requests, save_game_hotkeys, AutoSaveSettings, SaveRequest,
+};
 use quadtree::CachedColliders;
 use world::{setup, update_cache};
 
@@ -76,6 +81,7 @@ fn main() {
         .insert_resource(CachedInteractables(Vec::new()))
         .insert_resource(CachedColliders(Vec::new()))
         .insert_resource(GameState(Game_State::MainMenu))
+        .insert_resource(BattleState::default())
         .insert_resource(Global_Variables(GlobalVariables::default()))
         .insert_resource(Timestamp(0))
         .insert_resource(Dialogue_State(DialogueState::default()))
@@ -107,11 +113,20 @@ fn main() {
         .insert_resource(Messages::<TileEventTriggered>::default())
         .insert_resource(Messages::<TileEventCompleted>::default())
         .insert_resource(Messages::<AreaChanged>::default())
+        .insert_resource(Messages::<SaveRequest>::default())
+        .insert_resource(AutoSaveSettings::default())
         .add_systems(Startup, setup)
         .add_systems(Update, player_movement)
         .add_systems(Update, toggle_camera_lock)
         .add_systems(Update, update_cache)
         .add_systems(Update, mouse_click)
+        .add_systems(Update, battle_trigger_system)
+        .add_systems(Update, setup_player_turns)
+        .add_systems(Update, sync_combat_move_points_from_world.after(setup_player_turns))
+        .add_systems(Update, combat_end_turn_input)
+        .add_systems(Update, transform_npc_to_enemy)
+        .add_systems(Update, test_log_button)
+        .add_systems(Update, end_battle_on_death)
         .add_systems(Update, follow_path_system)
         // map travel mode
         .add_systems(Update, toggle_map_mode)
@@ -125,8 +140,9 @@ fn main() {
         .add_systems(Update, update_path_preview)
         .add_systems(Update, update_travel_ui)
         .add_systems(Update, handle_area_changed)
-        .add_systems(Update, save_game)
-        .add_systems(Update, load_game)
+        .add_systems(Update, save_game_hotkeys)
+        .add_systems(Update, handle_save_requests)
+        .add_systems(Update, autosave_tick)
         .add_systems(
             Update,
             movement::accumulate_manual_travel_time.after(player_movement),

@@ -28,7 +28,7 @@ pub enum TravelingMethod {
     Boat,
 }
 
-#[derive(Resource, Clone, Serialize, Deserialize)]
+#[derive(Resource, Clone, Debug, Serialize, Deserialize)]
 pub struct MapTiles {
     pub tiles: Vec<Vec<MapTile>>,
 }
@@ -81,7 +81,7 @@ pub struct TileContentCache {
     pub states: HashMap<Position, TileContentState>,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct MapTile {
     pub time: u32,
     pub location_id: u32,
@@ -132,20 +132,20 @@ pub struct ActiveTileEvent {
 }
 
 /// Fired when a tile event should start.
-#[derive(Event)]
+#[derive(Message)]
 pub struct TileEventTriggered {
     pub tile: Position,
     pub event_id: u32,
 }
 
 /// Fired by event handlers when the active event is complete.
-#[derive(Event)]
+#[derive(Message)]
 pub struct TileEventCompleted {
     pub event_id: u32,
 }
 
 /// Fired when the player enters a tile with a different area/location id.
-#[derive(Event)]
+#[derive(Message)]
 pub struct AreaChanged {
     pub from: u32,
     pub to: u32,
@@ -730,12 +730,7 @@ pub fn handle_tile_entry(
     tile_x = tile_x.clamp(0, width.saturating_sub(1));
     tile_y = tile_y.clamp(0, height.saturating_sub(1));
 
-    let min_x = 0.0;
-    let min_y = 0.0;
-    let max_x = (width.saturating_sub(1) as f32) * TILE_WORLD_SIZE;
-    let max_y = (height.saturating_sub(1) as f32) * TILE_WORLD_SIZE;
-    player_tf.translation.x = player_tf.translation.x.clamp(min_x, max_x);
-    player_tf.translation.y = player_tf.translation.y.clamp(min_y, max_y);
+    // Don't clamp world position here; allow free exploration beyond the map bounds.
 
     let tile = Position { x: tile_x, y: tile_y };
     map_position.0 = tile;
@@ -852,9 +847,11 @@ pub fn update_travel_ui(
     mut text_q: Query<&mut Text, With<MapTravelUiText>>,
 ) {
     if game_state.0 != Game_State::MapOpen {
+        if let Some(label) = ui.label.take() {
+            commands.entity(label).despawn();
+        }
         if let Some(root) = ui.root.take() {
-            commands.entity(root).despawn_recursive();
-            ui.label = None;
+            commands.entity(root).despawn();
         }
         return;
     }
@@ -863,35 +860,31 @@ pub fn update_travel_ui(
         let font = asset_server.load("fonts/FiraSans-Bold.ttf");
         let label = commands
             .spawn((
-                TextBundle::from_section(
-                    "",
-                    TextStyle {
-                        font,
-                        font_size: 24.0,
-                        color: Color::srgb(0.9, 0.95, 1.0),
-                    },
-                )
-                .with_style(Style {
+                Text::new(""),
+                TextFont {
+                    font,
+                    font_size: 24.0,
+                    ..default()
+                },
+                TextColor(Color::srgb(0.9, 0.95, 1.0)),
+                Node {
                     position_type: PositionType::Absolute,
                     left: Val::Px(24.0),
                     top: Val::Px(24.0),
                     ..default()
-                }),
+                },
                 MapTravelUiText,
             ))
             .id();
 
         let root = commands
             .spawn((
-                NodeBundle {
-                    style: Style {
-                        position_type: PositionType::Absolute,
-                        left: Val::Px(0.0),
-                        top: Val::Px(0.0),
-                        width: Val::Percent(100.0),
-                        height: Val::Percent(100.0),
-                        ..default()
-                    },
+                Node {
+                    position_type: PositionType::Absolute,
+                    left: Val::Px(0.0),
+                    top: Val::Px(0.0),
+                    width: Val::Percent(100.0),
+                    height: Val::Percent(100.0),
                     ..default()
                 },
                 MapTravelUiRoot,
@@ -919,7 +912,7 @@ pub fn update_travel_ui(
 
     if let Some(label) = ui.label {
         if let Ok(mut t) = text_q.get_mut(label) {
-            t.sections[0].value = text;
+            t.0 = text;
         }
     }
 }
