@@ -671,8 +671,7 @@ fn spawn_tile_content(commands: &mut Commands, coords: Position, tile: &MapTile)
         Transform::from_translation(world_pos + Vec3::new(0.0, 0.0, 10.0)),
         Collider { bounds },
         Occluder,
-        // Visible to main camera and occlusion camera.
-        RenderLayers::from_layers(&[0, 1]),
+        RenderLayers::layer(0),
         TileSpawn { coords },
         Name::new(format!("TileContent({}, {})", coords.x, coords.y)),
     ));

@@ -40,7 +40,7 @@ impl Default for GlobalVariables {
     fn default() -> Self {
         GlobalVariables {
             moving: false,
-            camera_locked: false,
+            camera_locked: true,
         }
     }
 }

@@ -46,6 +46,7 @@ pub fn setup(
         },
         Transform::from_xyz(0.0, 0.0, 0.0),
         Player,
+        crate::light_plugin::LightSensitive { threshold: 0.15 },
         CombatMovePoints::default(),
     ));
 
@@ -58,6 +59,7 @@ pub fn setup(
         },
         Transform::from_xyz(4.0 * 32.0, 0.0, 0.0),
         EnemyEncounter { id: 1 },
+        crate::light_plugin::LightSensitive { threshold: 0.15 },
     ));
 
     commands.spawn((
@@ -69,6 +71,7 @@ pub fn setup(
         },
         Transform::from_xyz(2.0 * 32.0, 1.0 * 32.0, 0.0),
         WorldNpc { id: 2 },
+        crate::light_plugin::LightSensitive { threshold: 0.15 },
         Name::new("TestNPC"),
     ));
 
@@ -81,6 +84,7 @@ pub fn setup(
         },
         Transform::from_xyz(-2.0 * 32.0, 0.0, 0.0),
         WorldAlly,
+        crate::light_plugin::LightSensitive { threshold: 0.15 },
         Name::new("AllyA"),
     ));
 
@@ -93,6 +97,7 @@ pub fn setup(
         },
         Transform::from_xyz(-3.0 * 32.0, -1.0 * 32.0, 0.0),
         WorldAlly,
+        crate::light_plugin::LightSensitive { threshold: 0.15 },
         Name::new("AllyB"),
     ));
 
@@ -115,8 +120,7 @@ pub fn setup(
             InheritedVisibility::default(),
             ViewVisibility::default(),
             Occluder,
-            // Visible in main camera (layer 0) and occlusion camera (layer 1).
-            RenderLayers::from_layers(&[0, 1]),
+            RenderLayers::layer(0),
         ));
     }
 
