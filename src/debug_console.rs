@@ -4,8 +4,8 @@ use bevy::input::keyboard::KeyCode;
 use bevy::prelude::*;
 
 use crate::combat_plugin::{
-    CharacterId, CombatStats, Equipment, EquipmentSlots, Experience, Health, Level, Magic,
-    Name as CombatName, Stamina,
+    CharacterId, CombatStats, Equipment, EquipmentSlots, Experience, Health, ItemMaterial,
+    ItemMaterialCost, Level, Magic, Name as CombatName, Stamina,
 };
 use crate::core::Player;
 
@@ -397,6 +397,11 @@ fn execute_command(
                                 .spawn(Equipment {
                                     id: item_id,
                                     name: format!("DebugItem{}", item_id),
+                                    base_price: 1000,
+                                    materials: vec![ItemMaterialCost {
+                                        material: ItemMaterial::IronIngot,
+                                        quantity: 1,
+                                    }],
                                     lethality: 0,
                                     hit: 0,
                                     armor: 0,

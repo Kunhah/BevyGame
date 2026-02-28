@@ -703,7 +703,6 @@ pub fn end_battle_on_death(
     mut tm: ResMut<TurnManager>,
     mut turn_order: ResMut<TurnOrder>,
     participants_q: Query<&BattleSide, With<BattleParticipant>>,
-    mut camera_q: Query<&mut Transform, With<MainCamera>>,
 ) {
     if !battle_state.active || game_state.0 != Game_State::Battle {
         return;
@@ -732,9 +731,6 @@ pub fn end_battle_on_death(
     battle_state.enemy_id = None;
     game_state.0 = Game_State::Exploring;
 
-    if let Ok(mut cam_tf) = camera_q.single_mut() {
-        cam_tf.translation.z = 0.0;
-    }
     info!("Battle ended");
 }
 

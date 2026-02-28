@@ -1,13 +1,14 @@
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::BufReader;
+use std::path::Path;
 
 use bevy::ecs::event::Events;
+use bevy::ecs::system::SystemParam;
 use bevy::input::keyboard::KeyCode;
 use bevy::prelude::*;
 use bevy::prelude::Messages;
 use serde::Deserialize;
-use serde_json::*;
 
 use crate::constants::Flags;
 use crate::core::{GameState, Game_State};
@@ -113,6 +114,20 @@ pub struct ChoiceButton {
 #[derive(Component)]
 pub struct DialogueBox;
 
+#[derive(Component)]
+pub struct DialoguePortrait;
+
+#[derive(SystemParam)]
+pub struct DialogueUiParams<'w, 's> {
+    pub commands: Commands<'w, 's>,
+    pub box_query: Query<'w, 's, (Entity, &'static Children), With<DialogueBox>>,
+    pub text_query: Query<'w, 's, Entity, With<DialogueText>>,
+    pub button_query: Query<'w, 's, Entity, With<ChoiceButton>>,
+    pub portrait_query:
+        Query<'w, 's, (&'static mut ImageNode, &'static mut Visibility), With<DialoguePortrait>>,
+    pub asset_server: Res<'w, AssetServer>,
+}
+
 #[derive(Event, Message)]
 pub struct DialogueBoxTriggerEvent {}
 
@@ -156,15 +171,43 @@ pub fn spawn_dialogue_box(
                         DialogueBox,
                     ))
                     .with_children(|box_node| {
-                        box_node.spawn((
-                            TextFont {
-                                font_size: 16.0,
-                                ..Default::default()
-                            },
-                            TextColor(Color::WHITE),
-                            Text::new(""),
-                            DialogueText,
-                        ));
+                        box_node
+                            .spawn((
+                                Node {
+                                    width: Val::Percent(100.0),
+                                    height: Val::Px(110.0),
+                                    display: Display::Flex,
+                                    flex_direction: FlexDirection::Row,
+                                    align_items: AlignItems::Center,
+                                    ..default()
+                                },
+                                BackgroundColor(Color::NONE),
+                            ))
+                            .with_children(|row| {
+                                row.spawn((
+                                    Node {
+                                        width: Val::Px(96.0),
+                                        height: Val::Px(96.0),
+                                        margin: UiRect::right(Val::Px(12.0)),
+                                        ..default()
+                                    },
+                                    ImageNode {
+                                        image_mode: NodeImageMode::Stretch,
+                                        ..default()
+                                    },
+                                    Visibility::Hidden,
+                                    DialoguePortrait,
+                                ));
+                                row.spawn((
+                                    TextFont {
+                                        font_size: 16.0,
+                                        ..Default::default()
+                                    },
+                                    TextColor(Color::WHITE),
+                                    Text::new(""),
+                                    DialogueText,
+                                ));
+                            });
                     });
             });
         let event = DialogueTriggerEvent {};
@@ -176,9 +219,11 @@ pub fn create_first_dialogue(
     mut commands: Commands,
     mut state: ResMut<Dialogue_State>,
     data: Res<Dialogue_Data>,
-    box_query: Query<(Entity, &Children), With<DialogueBox>>,
+    asset_server: Res<AssetServer>,
+    mut box_query: Query<(Entity, &Children), With<DialogueBox>>,
     text_query: Query<Entity, With<DialogueText>>,
     button_query: Query<Entity, With<ChoiceButton>>,
+    mut portrait_query: Query<(&mut ImageNode, &mut Visibility), With<DialoguePortrait>>,
     mut index: ResMut<Selected_Choice_Index>,
     mut selected: ResMut<Selected_Choice>,
     mut events_dialogue: ResMut<Messages<DialogueTriggerEvent>>,
@@ -195,9 +240,11 @@ pub fn create_first_dialogue(
                 &mut commands,
                 &mut state,
                 &data,
-                box_query,
-                text_query,
-                button_query,
+                &asset_server,
+                &mut box_query,
+                &text_query,
+                &button_query,
+                &mut portrait_query,
                 &mut index,
                 &mut selected,
             );
@@ -213,10 +260,11 @@ pub fn gui_selection(
     mut commands: Commands,
     mut state: ResMut<Dialogue_State>,
     data: Res<Dialogue_Data>,
-    _asset_server: Res<AssetServer>,
+    asset_server: Res<AssetServer>,
     mut box_query: Query<(Entity, &Children), With<DialogueBox>>,
     text_query: Query<Entity, With<DialogueText>>,
     button_query: Query<Entity, With<ChoiceButton>>,
+    mut portrait_query: Query<(&mut ImageNode, &mut Visibility), With<DialoguePortrait>>,
     mut selected: ResMut<Selected_Choice>,
 ) {
     let moved = input.just_pressed(KeyCode::KeyW)
@@ -269,9 +317,11 @@ pub fn gui_selection(
                 &mut commands,
                 &mut state,
                 &data,
-                box_query,
-                text_query,
-                button_query,
+                &asset_server,
+                &mut box_query,
+                &text_query,
+                &button_query,
+                &mut portrait_query,
                 &mut index,
                 &mut selected,
             );
@@ -291,10 +341,7 @@ pub fn interact(
     mut dialogue_state: ResMut<Dialogue_State>,
     dialogue_data: Res<Dialogue_Data>,
     mut selected_choice: ResMut<Selected_Choice>,
-    mut commands: Commands,
-    mut box_query: Query<(Entity, &Children), With<DialogueBox>>,
-    text_query: Query<Entity, With<DialogueText>>,
-    button_query: Query<Entity, With<ChoiceButton>>,
+    mut ui: DialogueUiParams,
     mut index: ResMut<Selected_Choice_Index>,
     mut next_id_map: ResMut<Next_Id>,
     mut conditionals: ResMut<Conditionals>,
@@ -361,12 +408,14 @@ pub fn interact(
                         index.0 = None;
                         selected_choice.0 = Choice::default();
                         display_dialogue(
-                            &mut commands,
+                            &mut ui.commands,
                             &mut dialogue_state,
                             &dialogue_data,
-                            box_query,
-                            text_query,
-                            button_query,
+                            &ui.asset_server,
+                            &mut ui.box_query,
+                            &ui.text_query,
+                            &ui.button_query,
+                            &mut ui.portrait_query,
                             &mut index,
                             &mut selected_choice,
                         );
@@ -402,12 +451,14 @@ pub fn interact(
                             }
                         }
                         display_dialogue(
-                            &mut commands,
+                            &mut ui.commands,
                             &mut dialogue_state,
                             &dialogue_data,
-                            box_query,
-                            text_query,
-                            button_query,
+                            &ui.asset_server,
+                            &mut ui.box_query,
+                            &ui.text_query,
+                            &ui.button_query,
+                            &mut ui.portrait_query,
                             &mut index,
                             &mut selected_choice,
                         );
@@ -442,14 +493,16 @@ pub fn load_dialogue() -> HashMap<String, DialogueLine> {
 }
 
 pub fn display_dialogue(
-    mut commands: &mut Commands,
-    mut state: &mut ResMut<Dialogue_State>,
+    commands: &mut Commands,
+    state: &mut ResMut<Dialogue_State>,
     data: &Res<Dialogue_Data>,
-    mut box_query: Query<(Entity, &Children), With<DialogueBox>>,
-    text_query: Query<Entity, With<DialogueText>>,
-    button_query: Query<Entity, With<ChoiceButton>>,
-    mut index: &mut ResMut<Selected_Choice_Index>,
-    mut selected: &mut ResMut<Selected_Choice>,
+    asset_server: &Res<AssetServer>,
+    box_query: &mut Query<(Entity, &Children), With<DialogueBox>>,
+    text_query: &Query<Entity, With<DialogueText>>,
+    button_query: &Query<Entity, With<ChoiceButton>>,
+    portrait_query: &mut Query<(&mut ImageNode, &mut Visibility), With<DialoguePortrait>>,
+    index: &mut ResMut<Selected_Choice_Index>,
+    selected: &mut ResMut<Selected_Choice>,
 ) {
     if let Some(current_id) = &state.0.current_id {
         if let Some(dialogue) = data.0.get(current_id) {
@@ -460,18 +513,26 @@ pub fn display_dialogue(
                     }
                 }
 
-                for child in children.iter() {
-                    if text_query.get(child).is_ok() {
-                        commands.entity(child).insert((
-                            Text::new(format!("{}: {}", dialogue.speaker, dialogue.text)),
-                            TextFont {
-                                font_size: 20.0,
-                                ..Default::default()
-                            },
-                            TextColor(Color::srgb(0.9, 0.9, 0.9)),
-                            Transform::from_translation(Vec3::new(0.0, 0.0, 0.0)),
-                            GlobalTransform::default(),
-                        ));
+                if let Ok(text_entity) = text_query.single() {
+                    commands.entity(text_entity).insert((
+                        Text::new(format!("{}: {}", dialogue.speaker, dialogue.text)),
+                        TextFont {
+                            font_size: 20.0,
+                            ..Default::default()
+                        },
+                        TextColor(Color::srgb(0.9, 0.9, 0.9)),
+                        Transform::from_translation(Vec3::new(0.0, 0.0, 0.0)),
+                        GlobalTransform::default(),
+                    ));
+                }
+
+                if let Ok((mut image_node, mut visibility)) = portrait_query.single_mut() {
+                    if let Some(path) = portrait_asset_path(&dialogue.speaker) {
+                        image_node.image = asset_server.load(path);
+                        image_node.image_mode = NodeImageMode::Stretch;
+                        *visibility = Visibility::Visible;
+                    } else {
+                        *visibility = Visibility::Hidden;
                     }
                 }
 
@@ -582,4 +643,24 @@ fn handle_next_id(id: Option<String>, next_id_map: &ResMut<Next_Id>) -> Option<S
         }
     };
     return_id
+}
+
+fn portrait_asset_path(speaker: &str) -> Option<String> {
+    let speaker = speaker.trim();
+    if speaker.is_empty() {
+        return None;
+    }
+
+    let base_dir = Path::new("assets").join("portraits");
+    let exts = ["png", "jpg", "jpeg", "webp"];
+
+    for ext in exts {
+        let file_name = format!("{}.{}", speaker, ext);
+        let fs_path = base_dir.join(&file_name);
+        if fs_path.is_file() {
+            return Some(format!("portraits/{}", file_name));
+        }
+    }
+
+    None
 }

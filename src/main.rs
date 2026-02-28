@@ -11,6 +11,7 @@ mod constants;
 mod core;
 mod debug_console;
 mod dialogue;
+mod economy;
 mod light_plugin;
 mod menu;
 mod map;
@@ -34,6 +35,7 @@ use dialogue::{
     Conditionals, DialogueSet, DialogueState, DialogueBoxTriggerEvent, DialogueTriggerEvent,
     Dialogue_Data, Dialogue_State, Next_Id, Selected_Choice, Selected_Choice_Index,
 };
+use economy::EconomyPlugin;
 use light_plugin::LightPlugin;
 use menu::MenuPlugin;
 use movement::{follow_path_system, mouse_click, player_movement, toggle_camera_lock};
@@ -43,7 +45,8 @@ use map::{
     update_active_tile_background, update_path_preview, demo_tile_event_handler,
     ActiveMapBackgrounds, ActiveTileEvent, AreaChanged, AreaTransitionLog, CurrentArea,
     LastEnteredTile, MapOverlay, MapPathPreview, MapSelection, MapTiles, MapTravelUi,
-    TileContentCache, TileEventCompleted, TileEventTriggered, handle_area_changed, update_travel_ui,
+    TerrainSlowEffectList, TileContentCache, TileEventCompleted, TileEventTriggered,
+    handle_area_changed, update_travel_ui,
 };
 use quests::QuestPlugin;
 use save::{
@@ -73,6 +76,7 @@ fn main() {
         )
         .add_plugins(LightPlugin)
         .add_plugins(CombatPlugin)
+        .add_plugins(EconomyPlugin)
         .add_plugins(QuestPlugin)
         .add_plugins(MenuPlugin)
         .add_plugins(DebugConsolePlugin)
@@ -110,6 +114,7 @@ fn main() {
         .insert_resource(AreaTransitionLog::default())
         .insert_resource(ActiveTileEvent::default())
         .insert_resource(MapPathPreview::default())
+        .insert_resource(TerrainSlowEffectList::default())
         .insert_resource(Messages::<TileEventTriggered>::default())
         .insert_resource(Messages::<TileEventCompleted>::default())
         .insert_resource(Messages::<AreaChanged>::default())

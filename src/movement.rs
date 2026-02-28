@@ -7,7 +7,11 @@ use crate::constants::{
 };
 use crate::battle::{CombatMovePoints, CombatMoveTarget};
 use crate::core::{GameState, Game_State, Global_Variables, MainCamera, Player, Position, Timestamp};
-use crate::map::{time_cost_for_tile, MapTiles, TILE_WORLD_SIZE};
+use crate::map::{
+    movement_speed_multiplier_at_world, movement_speed_multiplier_with_effects_at_world,
+    total_time_cost_for_tile, MapTiles,
+    TerrainSlowEffectList, TILE_WORLD_SIZE,
+};
 use crate::pathfinding::{is_walkable_move, pathfinding};
 use crate::quadtree::QuadTree;
 
@@ -89,6 +93,7 @@ pub fn player_movement(
     input: Res<ButtonInput<KeyCode>>,
     time: Res<Time>,
     map_tiles: Option<Res<MapTiles>>,
+    slow_effects: Option<Res<TerrainSlowEffectList>>,
     mut commands: Commands,
 ) {
     // Allow exploration and battle movement; other modes are blocked.
@@ -111,7 +116,7 @@ pub fn player_movement(
         direction.x -= 1.0;
     }
 
-    let movement_speed = PLAYER_SPEED * time.delta_secs();
+    let base_movement_speed = PLAYER_SPEED * time.delta_secs();
 
     let camera_locked = param_set.p2().0.camera_locked;
 
@@ -163,8 +168,6 @@ pub fn player_movement(
         let mut new_y_out: Option<f32> = None;
 
         if direction.x != 0.0 && direction.y != 0.0 {
-            let diagonal_speed = movement_speed / (2.0_f32.sqrt());
-
             let mut p0 = param_set.p0();
 
             for (entity, mut transform, mut mp_opt, target_opt) in p0.iter_mut() {
@@ -179,6 +182,23 @@ pub fn player_movement(
                         continue;
                     }
                 }
+                let terrain_factor = if battle_move {
+                    1.0
+                } else {
+                    match (map_tiles.as_ref(), slow_effects.as_ref()) {
+                        (Some(map), Some(effects)) => movement_speed_multiplier_with_effects_at_world(
+                            map,
+                            effects,
+                            transform.translation.truncate(),
+                        ),
+                        (Some(map), None) => {
+                            movement_speed_multiplier_at_world(map, transform.translation.truncate())
+                        }
+                        (None, _) => 1.0,
+                    }
+                };
+                let movement_speed = base_movement_speed * terrain_factor;
+                let diagonal_speed = movement_speed / (2.0_f32.sqrt());
                 let new_x = transform.translation.x + direction.x * diagonal_speed;
                 let new_y = transform.translation.y + direction.y * diagonal_speed;
 
@@ -244,6 +264,22 @@ pub fn player_movement(
                         continue;
                     }
                 }
+                let terrain_factor = if battle_move {
+                    1.0
+                } else {
+                    match (map_tiles.as_ref(), slow_effects.as_ref()) {
+                        (Some(map), Some(effects)) => movement_speed_multiplier_with_effects_at_world(
+                            map,
+                            effects,
+                            transform.translation.truncate(),
+                        ),
+                        (Some(map), None) => {
+                            movement_speed_multiplier_at_world(map, transform.translation.truncate())
+                        }
+                        (None, _) => 1.0,
+                    }
+                };
+                let movement_speed = base_movement_speed * terrain_factor;
                 let new_x = transform.translation.x + direction.x * movement_speed;
                 let new_y = transform.translation.y + direction.y * movement_speed;
 
@@ -354,6 +390,7 @@ pub fn accumulate_manual_travel_time(
     mut timestamp: ResMut<Timestamp>,
     game_state: Res<GameState>,
     map: Res<MapTiles>,
+    slow_effects: Res<TerrainSlowEffectList>,
     player_q: Query<(&Transform, Option<&MoveAlongPath>), With<Player>>,
 ) {
     if game_state.0 != Game_State::Exploring {
@@ -391,7 +428,14 @@ pub fn accumulate_manual_travel_time(
         {
                 if let Some(row) = map.tiles.get(tile_coords.y as usize) {
                 if let Some(tile) = row.get(tile_coords.x as usize) {
-                    timestamp.0 = timestamp.0.saturating_add(time_cost_for_tile(tile));
+                    timestamp.0 = timestamp.0.saturating_add(total_time_cost_for_tile(
+                        tile,
+                        Position {
+                            x: tile_coords.x,
+                            y: tile_coords.y,
+                        },
+                        &slow_effects,
+                    ));
                 }
             }
         }

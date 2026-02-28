@@ -10,6 +10,9 @@ use crate::light_plugin::Occluder;
 use crate::quadtree::{Collider, QuadTree, QuadtreeNode};
 use bevy_camera::visibility::RenderLayers;
 
+const MAIN_CAMERA_HEIGHT: f32 = 700.0;
+const MAIN_CAMERA_PITCH_RAD: f32 = 35.0_f32.to_radians();
+
 pub fn setup(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
@@ -32,10 +35,15 @@ pub fn setup(
 
     commands
         .spawn((
-            Camera2d::default(),
+            Camera3d::default(),
+            Projection::Orthographic(OrthographicProjection::default_3d()),
             RenderLayers::layer(0), // explicitly see layer 0 (light quad and world)
             MainCamera,
-            Transform::from_xyz(0.0, 0.0, 0.0),
+            Transform {
+                translation: Vec3::new(0.0, 0.0, MAIN_CAMERA_HEIGHT),
+                rotation: Quat::from_rotation_x(MAIN_CAMERA_PITCH_RAD),
+                ..default()
+            },
         ));
 
     commands.spawn((

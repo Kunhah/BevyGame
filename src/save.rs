@@ -163,7 +163,9 @@ pub fn handle_save_requests(
                     player_tf.translation = Vec3::from(data.player_world);
                 }
                 if let Ok(mut cam_tf) = camera_q.single_mut() {
-                    cam_tf.translation = Vec3::from(data.player_world);
+                    let loaded = Vec3::from(data.player_world);
+                    cam_tf.translation.x = loaded.x;
+                    cam_tf.translation.y = loaded.y;
                 }
 
                 game_state.0 = Game_State::Exploring;

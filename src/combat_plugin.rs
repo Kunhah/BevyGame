@@ -311,16 +311,36 @@ pub struct RogueBehavior; // Niira
 pub struct SpiritMediumBehavior; // Toshiko
 
 /// Equipment entity
-#[derive(Component, Debug)]
+
+#[derive(Component, Debug, Clone, Serialize, Deserialize)]
 pub struct Equipment {
     pub id: u32,
     pub name: String,
+    pub base_price: u32,
+    pub materials: Vec<ItemMaterialCost>,
     pub lethality: i32,
     pub hit: i32,
     pub armor: i32,
     pub agility: i32,
     pub mind: i32,
     pub morale: i32,
+}
+
+#[repr(u32)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum ItemMaterial {
+    IronIngot = 600,
+    SilverSteelIngot = 1000,
+    OakWood = 400,
+    Leather = 500,
+    Cloth = 300,
+    CrystalDust = 800,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ItemMaterialCost {
+    pub material: ItemMaterial,
+    pub quantity: u32,
 }
 
 /// A single equipment-provided effect that can react to events.
@@ -2085,6 +2105,27 @@ fn spawn_examples(mut commands: Commands, mut tm: ResMut<TurnManager>, timestamp
         .insert(Equipment {
             id: 5001,
             name: "Silversteel Blade".to_string(),
+            base_price: 32000,
+            // Material total with enum unit costs:
+            // 20*1000 + 4*400 + 3*500 + 2*800 = 24700 (below base_price)
+            materials: vec![
+                ItemMaterialCost {
+                    material: ItemMaterial::SilverSteelIngot,
+                    quantity: 20,
+                },
+                ItemMaterialCost {
+                    material: ItemMaterial::OakWood,
+                    quantity: 4,
+                },
+                ItemMaterialCost {
+                    material: ItemMaterial::Leather,
+                    quantity: 3,
+                },
+                ItemMaterialCost {
+                    material: ItemMaterial::CrystalDust,
+                    quantity: 2,
+                },
+            ],
             lethality: 10,
             hit: 5,
             armor: 0,

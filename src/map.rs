@@ -33,6 +33,23 @@ pub struct MapTiles {
     pub tiles: Vec<Vec<MapTile>>,
 }
 
+#[derive(Clone, Debug)]
+pub struct TerrainSlowEffect {
+    /// Label for debug/UI.
+    pub name: String,
+    /// Tile where this local effect applies (e.g. mud puddle).
+    pub tile: Position,
+    /// Subtractive penalty applied after base terrain multiplier.
+    pub speed_penalty: f32,
+    /// Extra travel-time cost used by path/travel time calculations.
+    pub extra_time_cost: u32,
+}
+
+#[derive(Resource, Default, Clone, Debug)]
+pub struct TerrainSlowEffectList {
+    pub effects: Vec<TerrainSlowEffect>,
+}
+
 /// Tracks the currently loaded area/location.
 #[derive(Resource, Default, Clone, Copy, Debug)]
 pub struct CurrentArea(pub u32);
@@ -104,16 +121,118 @@ impl Default for MapTile {
     }
 }
 
-/// Returns the time cost to enter/traverse a tile based on its type.
-/// Type mapping is provisional; adjust when you formalize terrain IDs:
-/// 0 = road/plain (cheap), 1 = forest, 2 = mountain, fallback = road.
-pub fn time_cost_for_tile(tile: &MapTile) -> u32 {
-    match tile.type_id {
-        0 => 1,
-        1 => 3,
-        2 => 5,
-        _ => 1,
+#[derive(Clone, Copy, Debug)]
+pub struct TerrainTravelProfile {
+    pub movement_speed_multiplier: f32,
+    pub tile_time_cost: u32,
+}
+
+/// Returns tuning values shared by manual movement and map fast travel.
+/// Type mapping is provisional; adjust when terrain IDs are finalized.
+/// 0 = road, 1 = plains, 2 = forest, 3 = mountains, fallback = road.
+pub fn terrain_travel_profile_for_type(type_id: u8) -> TerrainTravelProfile {
+    match type_id {
+        // road
+        0 => TerrainTravelProfile {
+            movement_speed_multiplier: 1.0,
+            tile_time_cost: 1,
+        },
+        // plains
+        1 => TerrainTravelProfile {
+            movement_speed_multiplier: 0.92,
+            tile_time_cost: 2,
+        },
+        // forest
+        2 => TerrainTravelProfile {
+            movement_speed_multiplier: 0.86,
+            tile_time_cost: 3,
+        },
+        // mountains
+        3 => TerrainTravelProfile {
+            movement_speed_multiplier: 0.80,
+            tile_time_cost: 4,
+        },
+        _ => TerrainTravelProfile {
+            movement_speed_multiplier: 1.0,
+            tile_time_cost: 1,
+        },
     }
+}
+
+pub fn terrain_travel_profile_for_tile(tile: &MapTile) -> TerrainTravelProfile {
+    terrain_travel_profile_for_type(tile.type_id)
+}
+
+/// Returns the time cost to enter/traverse a tile based on its type.
+pub fn time_cost_for_tile(tile: &MapTile) -> u32 {
+    terrain_travel_profile_for_tile(tile).tile_time_cost
+}
+
+pub fn additional_speed_penalty_at_tile(
+    tile_pos: Position,
+    effects: &TerrainSlowEffectList,
+) -> f32 {
+    effects
+        .effects
+        .iter()
+        .filter(|effect| effect.tile == tile_pos)
+        .map(|effect| effect.speed_penalty.max(0.0))
+        .sum()
+}
+
+pub fn additional_time_cost_at_tile(tile_pos: Position, effects: &TerrainSlowEffectList) -> u32 {
+    effects
+        .effects
+        .iter()
+        .filter(|effect| effect.tile == tile_pos)
+        .map(|effect| effect.extra_time_cost)
+        .sum()
+}
+
+pub fn total_time_cost_for_tile(
+    tile: &MapTile,
+    tile_pos: Position,
+    effects: &TerrainSlowEffectList,
+) -> u32 {
+    time_cost_for_tile(tile).saturating_add(additional_time_cost_at_tile(tile_pos, effects))
+}
+
+/// Returns the movement multiplier applied for manual exploration movement.
+pub fn movement_speed_multiplier_for_tile(tile: &MapTile) -> f32 {
+    terrain_travel_profile_for_tile(tile).movement_speed_multiplier
+}
+
+/// Looks up terrain movement multiplier from a world-space position.
+pub fn movement_speed_multiplier_at_world(map: &MapTiles, world_pos: Vec2) -> f32 {
+    let tile_x = (world_pos.x / TILE_WORLD_SIZE).floor() as i32;
+    let tile_y = (world_pos.y / TILE_WORLD_SIZE).floor() as i32;
+
+    if tile_x < 0 || tile_y < 0 {
+        return 1.0;
+    }
+
+    map.tiles
+        .get(tile_y as usize)
+        .and_then(|row| row.get(tile_x as usize))
+        .map(movement_speed_multiplier_for_tile)
+        .unwrap_or(1.0)
+}
+
+pub fn movement_speed_multiplier_with_effects_at_world(
+    map: &MapTiles,
+    effects: &TerrainSlowEffectList,
+    world_pos: Vec2,
+) -> f32 {
+    let tile_x = (world_pos.x / TILE_WORLD_SIZE).floor() as i32;
+    let tile_y = (world_pos.y / TILE_WORLD_SIZE).floor() as i32;
+    let tile_pos = Position {
+        x: tile_x,
+        y: tile_y,
+    };
+
+    let base = movement_speed_multiplier_at_world(map, world_pos);
+    let penalty = additional_speed_penalty_at_tile(tile_pos, effects);
+    (base - penalty).clamp(0.2, 1.0)
 }
 
 /// Stores the player's cursor/selection when in map (travel) mode.
@@ -326,6 +445,7 @@ pub fn navigate_map_selection_mouse(
     mut camera_tf_q: Query<&mut Transform, (With<MainCamera>, Without<Player>)>,
     mut game_state: ResMut<GameState>,
     map: Res<MapTiles>,
+    slow_effects: Res<TerrainSlowEffectList>,
 ) {
     if game_state.0 != Game_State::MapOpen {
         return;
@@ -361,6 +481,7 @@ pub fn navigate_map_selection_mouse(
         &mut map_position,
         &mut current_area,
         &map,
+        &slow_effects,
         &mut timestamp,
         &mut player_q,
         &mut camera_tf_q,
@@ -381,6 +502,7 @@ pub fn confirm_travel(
     map: Res<MapTiles>,
     mut current_area: ResMut<CurrentArea>,
     mut timestamp: ResMut<Timestamp>,
+    slow_effects: Res<TerrainSlowEffectList>,
 ) {
     if game_state.0 != Game_State::MapOpen {
         return;
@@ -396,6 +518,7 @@ pub fn confirm_travel(
         &mut map_position,
         &mut current_area,
         &map,
+        &slow_effects,
         &mut timestamp,
         &mut player_q,
         &mut camera_q,
@@ -409,6 +532,7 @@ fn shortest_time_path_and_cost(
     start: Position,
     dest: Position,
     map: &MapTiles,
+    slow_effects: &TerrainSlowEffectList,
 ) -> Option<(Vec<Position>, u32)> {
     let height = map.tiles.len() as i32;
     let width = map.tiles.get(0).map(|r| r.len()).unwrap_or(0) as i32;
@@ -460,9 +584,9 @@ fn shortest_time_path_and_cost(
                 continue;
             };
 
-            let step_cost = time_cost_for_tile(tile);
-            let next_cost = cost.saturating_add(step_cost);
             let next_pos = Position { x: nx, y: ny };
+            let step_cost = total_time_cost_for_tile(tile, next_pos, slow_effects);
+            let next_cost = cost.saturating_add(step_cost);
 
             if next_cost < *dist.get(&next_pos).unwrap_or(&u32::MAX) {
                 dist.insert(next_pos, next_cost);
@@ -494,12 +618,13 @@ fn travel_to_destination(
     map_position: &mut PlayerMapPosition,
     current_area: &mut CurrentArea,
     map: &MapTiles,
+    slow_effects: &TerrainSlowEffectList,
     timestamp: &mut Timestamp,
     player_q: &mut Query<&mut Transform, With<Player>>,
     camera_q: &mut Query<&mut Transform, (With<MainCamera>, Without<Player>)>,
 ) -> bool {
     let start = map_position.0;
-    let Some((path, travel_time)) = shortest_time_path_and_cost(start, dest, map) else {
+    let Some((path, travel_time)) = shortest_time_path_and_cost(start, dest, map, slow_effects) else {
         warn!(
             "travel_to_destination: could not compute path from ({}, {}) to ({}, {})",
             start.x, start.y, dest.x, dest.y
@@ -784,6 +909,7 @@ pub fn update_path_preview(
     map: Res<MapTiles>,
     map_position: Res<PlayerMapPosition>,
     selection: Res<MapSelection>,
+    slow_effects: Res<TerrainSlowEffectList>,
     mut preview: ResMut<MapPathPreview>,
 ) {
     if game_state.0 != Game_State::MapOpen {
@@ -805,7 +931,7 @@ pub fn update_path_preview(
         commands.entity(e).despawn();
     }
 
-    let Some((path, _)) = shortest_time_path_and_cost(map_position.0, selection.0, &map) else {
+    let Some((path, _)) = shortest_time_path_and_cost(map_position.0, selection.0, &map, &slow_effects) else {
         preview.last_start = Some(map_position.0);
         preview.last_dest = Some(selection.0);
         return;
@@ -841,6 +967,7 @@ pub fn update_travel_ui(
     map: Res<MapTiles>,
     map_position: Res<PlayerMapPosition>,
     selection: Res<MapSelection>,
+    slow_effects: Res<TerrainSlowEffectList>,
     asset_server: Res<AssetServer>,
     mut ui: ResMut<MapTravelUi>,
     mut text_q: Query<&mut Text, With<MapTravelUiText>>,
@@ -895,7 +1022,7 @@ pub fn update_travel_ui(
         ui.label = Some(label);
     }
 
-    let (path, cost) = shortest_time_path_and_cost(map_position.0, selection.0, &map)
+    let (path, cost) = shortest_time_path_and_cost(map_position.0, selection.0, &map, &slow_effects)
         .map(|(p, c)| (p, c))
         .unwrap_or((Vec::new(), 0));
     let steps = path.len().saturating_sub(1);
