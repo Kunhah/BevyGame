@@ -1,7 +1,7 @@
 // bevy_egui_dialogue_editor.rs
-// Dialogue editor with graph visualization using Bevy + bevy_egui + ron + petgraph
+// Dialogue editor with graph visualization using Bevy + bevy_egui + serde_json + petgraph
 // Features:
-// - Load / Save dialogues.ron from ./dialogues/dialogues.ron
+// - Load / Save dialogues.json from ./dialogues/dialogues.json
 // - List dialogues, select/edit/delete
 // - Edit id, speaker, text, next, choices
 // - Validation: missing refs, cycles, unreachable
@@ -13,14 +13,10 @@
 // bevy = { version = "0.11" }
 // bevy_egui = "0.22"
 // serde = { version = "1.0", features = ["derive"] }
-// ron = "0.8"
+// serde_json = "1.0"
 // petgraph = "0.6"
 
 use bevy::prelude::*;
-use bevy::render::{
-    settings::{Backends, WgpuSettings},
-    RenderPlugin,
-};
 use bevy::window::{Window, WindowPlugin};
 use bevy_egui::{egui, EguiContexts, EguiPlugin};
 use serde::{Deserialize, Serialize};
@@ -33,7 +29,7 @@ use petgraph::dot::{Config, Dot};
 use petgraph::graph::{DiGraph, NodeIndex};
 
 const DEFAULT_DIALOGUE_DIR: &str = "dialogues";
-const DEFAULT_DIALOGUE_FILE: &str = "dialogues.ron";
+const DEFAULT_DIALOGUE_FILE: &str = "dialogues.json";
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct Dialogue {
@@ -82,14 +78,6 @@ fn main() {
     App::new()
         .add_plugins(
             DefaultPlugins
-                .set(RenderPlugin {
-                    render_creation: WgpuSettings {
-                        backends: Some(Backends::VULKAN),
-                        ..default()
-                    }
-                    .into(),
-                    ..default()
-                })
                 .set(WindowPlugin {
                     primary_window: Some(Window {
                         title: "Dialogue Editor".into(),
@@ -109,7 +97,7 @@ fn main() {
 fn setup_system(mut d: ResMut<DialoguesResource>) {
     if d.dialogues.is_empty() {
         if let Ok(content) = fs::read_to_string(&d.file_path) {
-            if let Ok(v) = ron::de::from_str::<Vec<Dialogue>>(&content) {
+            if let Ok(v) = serde_json::from_str::<Vec<Dialogue>>(&content) {
                 d.dialogues = v;
                 d.dirty = false;
                 return;
@@ -555,7 +543,7 @@ fn ui_system(mut contexts: EguiContexts, mut d: ResMut<DialoguesResource>) {
     // Load
     if cmd_load {
         match fs::read_to_string(&d.file_path) {
-            Ok(content) => match ron::de::from_str::<Vec<Dialogue>>(&content) {
+            Ok(content) => match serde_json::from_str::<Vec<Dialogue>>(&content) {
                 Ok(v) => {
                     d.dialogues = v;
                     d.validation_messages.clear();
@@ -563,7 +551,7 @@ fn ui_system(mut contexts: EguiContexts, mut d: ResMut<DialoguesResource>) {
                     d.dirty = false;
                 }
                 Err(e) => {
-                    d.validation_messages = vec![format!("Failed to parse RON: {}", e)];
+                    d.validation_messages = vec![format!("Failed to parse JSON: {}", e)];
                 }
             },
             Err(e) => {
@@ -1005,12 +993,8 @@ fn unique_id(dialogues: &Vec<Dialogue>, prefix: &str, second_prefix: &str) -> St
 
 
 fn save_dialogues_to_path(dialogues: &Vec<Dialogue>, path: &PathBuf) -> Result<(), String> {
-    let pretty = ron::ser::PrettyConfig::new()
-        .depth_limit(8)
-        .indentor("    ".to_string())
-        .struct_names(false);
-    match ron::ser::to_string_pretty(dialogues, pretty) {
-        Ok(text) => match fs::write(path, text) {
+    match serde_json::to_string_pretty(dialogues) {
+        Ok(json) => match fs::write(path, json) {
             Ok(_) => Ok(()),
             Err(e) => Err(format!("Failed to write file: {}", e)),
         },

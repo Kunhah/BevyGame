@@ -7,13 +7,9 @@
 // bevy = { version = "0.11" }
 // bevy_egui = "0.22"
 // serde = { version = "1.0", features = ["derive"] }
-// ron = "0.8"
+// serde_json = "1.0"
 
 use bevy::prelude::*;
-use bevy::render::{
-    settings::{Backends, WgpuSettings},
-    RenderPlugin,
-};
 use bevy::window::{Window, WindowPlugin};
 use bevy_egui::{egui, EguiContexts, EguiPlugin};
 use serde::{Deserialize, Serialize};
@@ -21,7 +17,7 @@ use std::collections::HashSet;
 use std::fs;
 use std::path::PathBuf;
 
-const DEFAULT_ABILITY_PATH: &str = "src/abilities/AbilitiesExample.ron";
+const DEFAULT_ABILITY_PATH: &str = "src/abilities/AbilitiesExample.json";
 
 // ---------------- Data models ----------------
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -58,26 +54,14 @@ pub enum AbilityShape {
     Select,
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, Default, PartialEq, Eq)]
-pub enum MagicSchool {
-    #[default]
-    Kiho,
-    Chiseijutsu,
-    Yokaijutsu,
-    Kamishin,
-}
-
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Ability {
     pub id: u16,
     pub next_id: Option<u16>,
     pub name: String,
     pub health_cost: i32,
-    pub magic_cost: f32,
-    #[serde(default)]
-    pub magic_school: MagicSchool,
-    #[serde(alias = "stamina_cost")]
-    pub action_point_cost: i32,
+    pub magic_cost: i32,
+    pub stamina_cost: i32,
     pub cooldown: u8,
     pub description: String,
     pub effects: Vec<AbilityEffect>,
@@ -93,9 +77,8 @@ impl Default for Ability {
             next_id: None,
             name: "New Ability".into(),
             health_cost: 0,
-            magic_cost: 0.0,
-            magic_school: MagicSchool::Kiho,
-            action_point_cost: 0,
+            magic_cost: 0,
+            stamina_cost: 0,
             cooldown: 0,
             description: String::new(),
             effects: Vec::new(),
@@ -133,14 +116,6 @@ fn main() {
     App::new()
         .add_plugins(
             DefaultPlugins
-                .set(RenderPlugin {
-                    render_creation: WgpuSettings {
-                        backends: Some(Backends::VULKAN),
-                        ..default()
-                    }
-                    .into(),
-                    ..default()
-                })
                 .set(WindowPlugin {
                     primary_window: Some(Window {
                         title: "Ability Editor".into(),
@@ -160,7 +135,7 @@ fn main() {
 fn setup_system(mut r: ResMut<AbilitiesResource>) {
     if r.abilities.is_empty() {
         if let Ok(content) = fs::read_to_string(&r.file_path) {
-            if let Ok(v) = ron::de::from_str::<Vec<Ability>>(&content) {
+            if let Ok(v) = serde_json::from_str::<Vec<Ability>>(&content) {
                 r.abilities = v;
                 r.dirty = false;
                 return;
@@ -173,9 +148,8 @@ fn setup_system(mut r: ResMut<AbilitiesResource>) {
             next_id: None,
             name: "Minor Heal".into(),
             health_cost: 0,
-            magic_cost: 8.0,
-            magic_school: MagicSchool::Kiho,
-            action_point_cost: 0,
+            magic_cost: 8,
+            stamina_cost: 0,
             cooldown: 1,
             description: "Restore a small amount of HP to a single ally.".into(),
             effects: vec![AbilityEffect::Heal { floor: 12, ceiling: 18, scaled_with: Stat::Mind }],
@@ -204,12 +178,8 @@ fn next_free_id(abilities: &Vec<Ability>, level: u8) -> u16 { // I COMPLETELY FO
 }
 
 fn save_abilities_to_path(abilities: &Vec<Ability>, path: &PathBuf) -> Result<(), String> {
-    let pretty = ron::ser::PrettyConfig::new()
-        .depth_limit(8)
-        .indentor("    ".to_string())
-        .struct_names(false);
-    match ron::ser::to_string_pretty(abilities, pretty) {
-        Ok(text) => match fs::write(path, text) {
+    match serde_json::to_string_pretty(abilities) {
+        Ok(json) => match fs::write(path, json) {
             Ok(_) => Ok(()),
             Err(e) => Err(format!("Failed to write file: {}", e)),
         },
@@ -271,9 +241,8 @@ fn ui_system(mut contexts: EguiContexts, mut r: ResMut<AbilitiesResource>) {
     let mut edit_next_id: Option<Option<u16>> = None;
     let mut edit_name: Option<String> = None;
     let mut edit_health: Option<i32> = None;
-    let mut edit_magic: Option<f32> = None;
-    let mut edit_magic_school: Option<MagicSchool> = None;
-    let mut edit_action_points: Option<i32> = None;
+    let mut edit_magic: Option<i32> = None;
+    let mut edit_stamina: Option<i32> = None;
     let mut edit_cooldown: Option<u8> = None;
     let mut edit_description: Option<String> = None;
     let mut edit_duration: Option<u8> = None;
@@ -363,19 +332,11 @@ fn ui_system(mut contexts: EguiContexts, mut r: ResMut<AbilitiesResource>) {
         // costs and cooldown
         let mut tmp_h = ability.health_cost;
         let mut tmp_m = ability.magic_cost;
-        let mut tmp_magic_school = ability.magic_school;
-        let mut tmp_ap = ability.action_point_cost;
+        let mut tmp_s = ability.stamina_cost;
         ui.horizontal(|ui| {
             ui.label("Health:"); if ui.add(egui::DragValue::new(&mut tmp_h)).changed() { edit_health = Some(tmp_h); }
-            ui.label("Magic:"); if ui.add(egui::DragValue::new(&mut tmp_m).speed(0.1)).changed() { edit_magic = Some(tmp_m); }
-            egui::ComboBox::from_id_source("magic_school_combo").selected_text(format!("{:?}", tmp_magic_school)).show_ui(ui, |ui| {
-                ui.selectable_value(&mut tmp_magic_school, MagicSchool::Kiho, "Kiho");
-                ui.selectable_value(&mut tmp_magic_school, MagicSchool::Chiseijutsu, "Chiseijutsu");
-                ui.selectable_value(&mut tmp_magic_school, MagicSchool::Yokaijutsu, "Yokaijutsu");
-                ui.selectable_value(&mut tmp_magic_school, MagicSchool::Kamishin, "Kamishin");
-            });
-            if tmp_magic_school != ability.magic_school { edit_magic_school = Some(tmp_magic_school); }
-            ui.label("Action Points:"); if ui.add(egui::DragValue::new(&mut tmp_ap)).changed() { edit_action_points = Some(tmp_ap); }
+            ui.label("Magic:"); if ui.add(egui::DragValue::new(&mut tmp_m)).changed() { edit_magic = Some(tmp_m); }
+            ui.label("Stamina:"); if ui.add(egui::DragValue::new(&mut tmp_s)).changed() { edit_stamina = Some(tmp_s); }
         });
 
         let mut tmp_cd = ability.cooldown;
@@ -448,9 +409,9 @@ fn ui_system(mut contexts: EguiContexts, mut r: ResMut<AbilitiesResource>) {
 
     if cmd_load {
         match fs::read_to_string(&r.file_path) {
-            Ok(content) => match ron::de::from_str::<Vec<Ability>>(&content) {
+            Ok(content) => match serde_json::from_str::<Vec<Ability>>(&content) {
                 Ok(v) => { r.abilities = v; r.validation_messages.clear(); r.selected = None; r.dirty = false; }
-                Err(e) => { r.validation_messages = vec![format!("Failed to parse RON: {}", e)]; }
+                Err(e) => { r.validation_messages = vec![format!("Failed to parse JSON: {}", e)]; }
             },
             Err(e) => { r.validation_messages = vec![format!("Failed to read {}: {}", r.file_path.display(), e)]; }
         }
@@ -479,8 +440,7 @@ fn ui_system(mut contexts: EguiContexts, mut r: ResMut<AbilitiesResource>) {
                 if let Some(name) = edit_name { a.name = name; dirty = true; }
                 if let Some(h) = edit_health { a.health_cost = h; dirty = true; }
                 if let Some(m) = edit_magic { a.magic_cost = m; dirty = true; }
-                if let Some(school) = edit_magic_school { a.magic_school = school; dirty = true; }
-                if let Some(ap) = edit_action_points { a.action_point_cost = ap; dirty = true; }
+                if let Some(s) = edit_stamina { a.stamina_cost = s; dirty = true; }
                 if let Some(cd) = edit_cooldown { a.cooldown = cd; dirty = true; }
                 if let Some(desc) = edit_description { a.description = desc; dirty = true; }
                 if let Some(dur) = edit_duration { a.duration = dur; dirty = true; }

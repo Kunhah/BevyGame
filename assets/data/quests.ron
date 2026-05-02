@@ -1,0 +1,144 @@
+// Quest catalogue. Loaded by `crate::quests::load_quest_registry` at startup
+// into [`QuestRegistry`]. See `src/quests.rs` for the full data model.
+//
+// Quick reference:
+//   ObjectiveKind:
+//     Kill { enemy_id: Some(42) | None }   — None matches any enemy
+//     Reach { area_id: 100 }
+//     Talk { dialogue_id: "the last goodbye 24" }
+//     DialogueChoice { event_id: 30 }
+//     ReputationAtLeast { target: ..., threshold: 50 }
+//     ManualFlag { tag: "village_saved" }
+//
+//   QuestPrecondition:
+//     QuestCompleted(1)
+//     ReputationAtLeast { target: ..., threshold: 0 }
+//     PlayerLevelAtLeast(3)
+//     FlagSet("met_gustav")
+//
+//   QuestReward:
+//     Experience(150)
+//     Reputation { target: Governor(city_id: 100), delta: 10 }
+//     Flag("village_saved")
+//     UnlockQuest(2)
+//
+//   ReputationTarget:
+//     Governor(city_id: 100)
+//     Merchant(merchant_id: 5)
+//     Clan(clan_name: "Mizuno")
+(
+    quests: [
+        // ----------------------------------------------------------------
+        // Tutorial-style: ends when the intro dialogue finishes.
+        // Auto-offered to every new game.
+        // ----------------------------------------------------------------
+        (
+            id: 1,
+            title: "The Last Goodbye",
+            description: "Meet Gustav and learn what brought you here.",
+            objectives: [
+                (
+                    id: 1,
+                    description: "Listen to Gustav's introduction.",
+                    kind: Talk(dialogue_id: "The last goodbye 24"),
+                    required: 1,
+                ),
+            ],
+            preconditions: [],
+            rewards: [
+                Experience(50),
+                Flag("met_gustav"),
+                UnlockQuest(2),
+            ],
+            auto_offer: true,
+        ),
+
+        // ----------------------------------------------------------------
+        // Becomes available only after the intro is done. Demonstrates
+        // QuestCompleted preconditions and a kill-count objective.
+        // ----------------------------------------------------------------
+        (
+            id: 2,
+            title: "First Blood",
+            description: "Prove your edge by defeating any three foes.",
+            objectives: [
+                (
+                    id: 1,
+                    description: "Defeat 3 enemies.",
+                    kind: Kill(enemy_id: None),
+                    required: 3,
+                ),
+            ],
+            preconditions: [
+                FlagSet("met_gustav"),
+            ],
+            rewards: [
+                Experience(120),
+                Reputation(target: Clan(clan_name: "Mizuno"), delta: 5),
+            ],
+            auto_offer: false,
+        ),
+
+        // ----------------------------------------------------------------
+        // Multi-objective quest mixing Reach, ManualFlag, and a
+        // reputation precondition.
+        // ----------------------------------------------------------------
+        (
+            id: 3,
+            title: "A Word with the Daimyo",
+            description: "Reach Ironpass and present yourself.",
+            objectives: [
+                (
+                    id: 1,
+                    description: "Travel to Ironpass.",
+                    kind: Reach(area_id: 200),
+                    required: 1,
+                ),
+                (
+                    id: 2,
+                    description: "Speak with Takeda Ren in person.",
+                    kind: Talk(dialogue_id: "Interactable 1"),
+                    required: 1,
+                ),
+            ],
+            preconditions: [
+                QuestCompleted(2),
+            ],
+            rewards: [
+                Experience(200),
+                Reputation(target: Governor(city_id: 200), delta: 20),
+                Flag("greeted_takeda"),
+            ],
+            auto_offer: true,
+        ),
+
+        // ----------------------------------------------------------------
+        // Reputation-driven completion — finishes itself when the player
+        // earns enough standing with the local merchants.
+        // ----------------------------------------------------------------
+        (
+            id: 4,
+            title: "Friend of the Markets",
+            description: "Earn a positive reputation with merchant 5.",
+            objectives: [
+                (
+                    id: 1,
+                    description: "Reach 30 reputation with merchant 5.",
+                    kind: ReputationAtLeast(
+                        target: Merchant(merchant_id: 5),
+                        threshold: 30,
+                    ),
+                    required: 1,
+                ),
+            ],
+            preconditions: [
+                FlagSet("met_gustav"),
+            ],
+            rewards: [
+                Experience(80),
+                Reputation(target: Merchant(merchant_id: 5), delta: 5),
+            ],
+            auto_offer: true,
+        ),
+    ],
+)

@@ -1,15 +1,28 @@
+use bevy::asset::RenderAssetUsages;
+use bevy::asset::{load_internal_asset, uuid_handle};
+use bevy_camera::{Camera2d, RenderTarget, visibility::RenderLayers};
+use bevy::mesh::{Indices, Mesh};
 use bevy::prelude::*;
 use bevy::reflect::TypePath;
 use bevy::render::render_resource::*;
-use bevy::shader::ShaderRef;
-use bevy::mesh::{Indices, Mesh};
-use bevy::asset::RenderAssetUsages;
-use bevy_camera::{Camera2d, RenderTarget, visibility::RenderLayers};
-use bevy_sprite_render::{Material2d, Material2dPlugin, MeshMaterial2d, AlphaMode2d};
-use bytemuck::{Pod, Zeroable};
+use bevy::shader::{Shader, ShaderRef};
 use bevy::window::WindowResized;
+use bevy_sprite_render::{AlphaMode2d, Material2d, Material2dPlugin, MeshMaterial2d};
+use bytemuck::{Pod, Zeroable};
 
 use crate::core::{Global_Variables, MainCamera, Player};
+use crate::settings::GraphicsSettings;
+
+const LIGHT_FRAGMENT_SHADER_HANDLE: Handle<Shader> =
+    uuid_handle!("f6a1f60b-4d9d-45d1-9a36-18a93f36f81d");
+
+fn load_light_fragment_shader(source: &str, path: impl Into<String>) -> Shader {
+    Shader::from_glsl(
+        format!("#define LIGHT_PASS\n{source}"),
+        ShaderStage::Fragment,
+        path.into(),
+    )
+}
 
 /// Marker for occluders
 #[derive(Component)]
@@ -79,7 +92,13 @@ pub struct OcclusionMaskImage {
     pub image: Handle<Image>,
 }
 
-/// A simple POD uniform for the shader (packed for WGSL layout)
+/// A simple POD uniform for the shader (packed for WGSL layout).
+///
+/// `raymarch_steps` controls the shadow raymarch loop in the fragment shader.
+/// 0 disables shadows entirely (cheapest), 8 is the default.
+///
+/// Padded to a multiple of 16 bytes (Vec4 alignment) so that bytemuck::Pod
+/// can be derived without complaints about trailing padding.
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable, ShaderType)]
 pub struct LightUniform {
@@ -90,6 +109,10 @@ pub struct LightUniform {
     pub occlusion_size: Vec2,
     pub visibility: f32,
     pub debug_mode: f32,
+    pub raymarch_steps: f32,
+    pub _pad0: f32,
+    pub _pad1: f32,
+    pub _pad2: f32,
 }
 
 const OCCLUSION_SCALE: f32 = 0.5;
@@ -105,6 +128,10 @@ impl Default for LightUniform {
             occlusion_size: Vec2::new(512.0, 512.0),
             visibility: 1.0,
             debug_mode: 0.0,
+            raymarch_steps: 8.0,
+            _pad0: 0.0,
+            _pad1: 0.0,
+            _pad2: 0.0,
         }
     }
 }
@@ -122,7 +149,7 @@ pub struct LightMaterial {
 
 impl Material2d for LightMaterial {
     fn fragment_shader() -> ShaderRef {
-        "shaders/light_plugin.wgsl".into()
+        LIGHT_FRAGMENT_SHADER_HANDLE.clone().into()
     }
 
     fn depth_bias(&self) -> f32 {
@@ -537,6 +564,7 @@ pub fn update_light_params(
     mut mats: ResMut<Assets<LightMaterial>>,
     occ: Res<OcclusionTarget>,
     debug: Res<LightDebugSettings>,
+    graphics: Res<GraphicsSettings>,
     globals: Res<Global_Variables>,
     mut light_state: ResMut<LightState>,
     mask: Option<Res<OcclusionMaskImage>>,
@@ -601,12 +629,14 @@ pub fn update_light_params(
         let max_visible_distance = params.radius;
         if dist > max_visible_distance {
             params.visibility = 0.0;
+            params.raymarch_steps = if graphics.light_raymarch { 8.0 } else { 0.0 };
             mat.params = params;
             continue;
         }
 
         params.visibility = 1.0;
         params.debug_mode = debug.mode as f32;
+        params.raymarch_steps = if graphics.light_raymarch { 8.0 } else { 0.0 };
         mat.params = params;
 
         light_state.world_pos = light_world_pos;
@@ -779,6 +809,13 @@ pub struct LightPlugin;
 
 impl Plugin for LightPlugin {
     fn build(&self, app: &mut App) {
+        load_internal_asset!(
+            app,
+            LIGHT_FRAGMENT_SHADER_HANDLE,
+            "../shaders/light_plugin.glsl",
+            load_light_fragment_shader
+        );
+
         app.add_plugins(Material2dPlugin::<LightMaterial>::default())
             .add_systems(Startup, setup_occlusion_pass)
             .add_systems(
@@ -795,9 +832,23 @@ impl Plugin for LightPlugin {
                     toggle_debug_marker,
                     sync_debug_overlay,
                     update_light_params,
-                    apply_light_visibility,
-                    log_occluder_motion,
                 ),
+            )
+            .add_systems(
+                Update,
+                apply_light_visibility.run_if(graphics_setting_light_visibility_culling),
+            )
+            .add_systems(
+                Update,
+                log_occluder_motion.run_if(graphics_setting_log_occluder_motion),
             );
     }
+}
+
+fn graphics_setting_light_visibility_culling(graphics: Res<GraphicsSettings>) -> bool {
+    graphics.light_visibility_culling
+}
+
+fn graphics_setting_log_occluder_motion(graphics: Res<GraphicsSettings>) -> bool {
+    graphics.log_occluder_motion
 }

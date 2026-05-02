@@ -1,17 +1,124 @@
-use std::collections::HashMap;
+//! Data-driven quest framework.
+//!
+//! A quest is a declarative bundle of:
+//!   * **objectives** with typed [`ObjectiveKind`]s and progress counters,
+//!   * **preconditions** that gate when the quest auto-offers, and
+//!   * **rewards** that fire on completion.
+//!
+//! The full definition catalogue lives in `assets/data/quests.ron` and is
+//! loaded into a [`QuestRegistry`] resource at startup. The runtime
+//! [`QuestLog`] tracks per-quest, per-objective progress; an auto-offer
+//! system activates quests once their preconditions are met. Game events
+//! (kills, area changes, dialogue completion, reputation changes) flow into
+//! advance dispatchers that bump matching objectives.
+//!
+//! Existing per-entity hook components (`OnItemPickup`, `OnDeath`, `OnReach`)
+//! still work and are kept for one-off scripted triggers — they call
+//! [`UpdateObjectiveEvent`] just like the old version.
 
-use bevy::ecs::message::MessageReader;
+use std::collections::{HashMap, HashSet};
+use std::fs;
+
 use bevy::prelude::*;
+use serde::{Deserialize, Serialize};
 
-use crate::combat_plugin::DeathEvent;
+use crate::battle::EnemyEncounter;
+use crate::combat_plugin::{DeathEvent, Experience, Level};
 use crate::core::Player;
+use crate::dialogue::{Dialogue_State, Selected_Choice};
+use crate::governance::{ReputationChangeEvent, ReputationLedger, ReputationTarget};
+use crate::map::AreaChanged;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ObjectiveState {
-    Pending,
-    Completed,
-    Failed,
+const QUEST_REGISTRY_PATH: &str = "assets/data/quests.ron";
+
+// ---------------------------------------------------------------------------
+// Authoring types (deserialised from RON)
+// ---------------------------------------------------------------------------
+
+/// What event advances an objective. Each variant is matched against incoming
+/// game events; matching variants increment the objective's progress counter
+/// (or set it to its `required` value for binary kinds).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ObjectiveKind {
+    /// Advances by 1 each time an enemy dies. `enemy_id: None` matches any.
+    Kill { enemy_id: Option<u32> },
+    /// Advances when the player enters the named area (location id).
+    Reach { area_id: u16 },
+    /// Advances when a dialogue ends with the named id as the last node.
+    Talk { dialogue_id: String },
+    /// Advances when the player picks a choice carrying this event id.
+    DialogueChoice { event_id: u32 },
+    /// Auto-completes when reputation with the target is at or above the
+    /// threshold. Re-checked every reputation change.
+    ReputationAtLeast {
+        target: ReputationTarget,
+        threshold: i32,
+    },
+    /// Hand-fired progress: external code calls `advance_manual_flag`.
+    ManualFlag { tag: String },
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ObjectiveDefinition {
+    pub id: u32,
+    pub description: String,
+    pub kind: ObjectiveKind,
+    /// How many advance events are needed to complete. 1 for binary
+    /// objectives like `Reach` / `Talk`.
+    #[serde(default = "default_required")]
+    pub required: u32,
+}
+
+fn default_required() -> u32 {
+    1
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum QuestPrecondition {
+    QuestCompleted(u32),
+    ReputationAtLeast {
+        target: ReputationTarget,
+        threshold: i32,
+    },
+    PlayerLevelAtLeast(u32),
+    FlagSet(String),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum QuestReward {
+    Experience(u32),
+    Reputation { target: ReputationTarget, delta: i16 },
+    Flag(String),
+    /// Convenience: chain into another quest by id (auto-offer it after
+    /// completion if its preconditions are met).
+    UnlockQuest(u32),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QuestDefinition {
+    pub id: u32,
+    pub title: String,
+    pub description: String,
+    pub objectives: Vec<ObjectiveDefinition>,
+    #[serde(default)]
+    pub preconditions: Vec<QuestPrecondition>,
+    #[serde(default)]
+    pub rewards: Vec<QuestReward>,
+    /// If true, the quest activates automatically as soon as its
+    /// preconditions are satisfied. If false, the quest must be added
+    /// manually via [`AddQuestEvent`].
+    #[serde(default)]
+    pub auto_offer: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct QuestCatalog {
+    pub quests: Vec<QuestDefinition>,
+}
+
+// ---------------------------------------------------------------------------
+// Runtime state
+// ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum QuestStatus {
@@ -24,7 +131,21 @@ pub enum QuestStatus {
 pub struct QuestObjective {
     pub id: u32,
     pub description: String,
-    pub state: ObjectiveState,
+    pub kind: ObjectiveKind,
+    pub progress: u32,
+    pub required: u32,
+    pub failed: bool,
+}
+
+impl QuestObjective {
+    pub fn is_complete(&self) -> bool {
+        self.progress >= self.required && !self.failed
+    }
+
+    /// Bump progress by `delta`, clamped to `required`.
+    pub fn advance(&mut self, delta: u32) {
+        self.progress = self.progress.saturating_add(delta).min(self.required);
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -34,174 +155,58 @@ pub struct Quest {
     pub description: String,
     pub objectives: Vec<QuestObjective>,
     pub status: QuestStatus,
+    pub rewards: Vec<QuestReward>,
 }
 
 impl Quest {
     fn recalc_status(&mut self) {
-        if self
-            .objectives
-            .iter()
-            .any(|objective| objective.state == ObjectiveState::Failed)
-        {
+        if self.objectives.iter().any(|o| o.failed) {
             self.status = QuestStatus::Failed;
             return;
         }
-
-        if self
-            .objectives
-            .iter()
-            .all(|objective| objective.state == ObjectiveState::Completed)
-        {
+        if self.objectives.iter().all(|o| o.is_complete()) {
             self.status = QuestStatus::Completed;
             return;
         }
-
         self.status = QuestStatus::Active;
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct ObjectiveDefinition {
-    pub id: u32,
-    pub description: String,
-}
-
-#[derive(Debug, Clone)]
-pub struct QuestDefinition {
-    pub id: u32,
-    pub title: String,
-    pub description: String,
-    pub objectives: Vec<ObjectiveDefinition>,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct QuestUpdateAction {
-    pub quest_id: u32,
-    pub objective_id: u32,
-    pub new_state: ObjectiveState,
-}
+#[derive(Resource, Default)]
+pub struct QuestRegistry(pub HashMap<u32, QuestDefinition>);
 
 #[derive(Resource, Default)]
 pub struct QuestLog {
     pub quests: HashMap<u32, Quest>,
+    pub offered: HashSet<u32>, // quest ids that have been auto-offered already
+    pub completed: HashSet<u32>,
+    pub failed: HashSet<u32>,
 }
 
-impl QuestLog {
-    pub fn add_quest(&mut self, definition: QuestDefinition) -> bool {
-        if self.quests.contains_key(&definition.id) {
-            return false;
-        }
+#[derive(Resource, Default)]
+pub struct QuestFlags(pub HashSet<String>);
 
-        let objectives = definition
-            .objectives
-            .into_iter()
-            .map(|objective| QuestObjective {
-                id: objective.id,
-                description: objective.description,
-                state: ObjectiveState::Pending,
-            })
-            .collect();
-
-        let quest = Quest {
-            id: definition.id,
-            title: definition.title,
-            description: definition.description,
-            objectives,
-            status: QuestStatus::Active,
-        };
-
-        self.quests.insert(quest.id, quest);
-        true
-    }
-
-    pub fn add_objective(
-        &mut self,
-        quest_id: u32,
-        objective: ObjectiveDefinition,
-    ) -> Result<(), QuestUpdateError> {
-        let quest = self
-            .quests
-            .get_mut(&quest_id)
-            .ok_or(QuestUpdateError::MissingQuest(quest_id))?;
-
-        if quest
-            .objectives
-            .iter()
-            .any(|existing| existing.id == objective.id)
-        {
-            return Err(QuestUpdateError::DuplicateObjective {
-                quest_id,
-                objective_id: objective.id,
-            });
-        }
-
-        quest.objectives.push(QuestObjective {
-            id: objective.id,
-            description: objective.description,
-            state: ObjectiveState::Pending,
-        });
-        quest.recalc_status();
-        Ok(())
-    }
-
-    pub fn update_objective_state(
-        &mut self,
-        quest_id: u32,
-        objective_id: u32,
-        new_state: ObjectiveState,
-    ) -> Result<Option<QuestStatus>, QuestUpdateError> {
-        let quest = self
-            .quests
-            .get_mut(&quest_id)
-            .ok_or(QuestUpdateError::MissingQuest(quest_id))?;
-
-        let Some(objective) = quest
-            .objectives
-            .iter_mut()
-            .find(|objective| objective.id == objective_id)
-        else {
-            return Err(QuestUpdateError::MissingObjective {
-                quest_id,
-                objective_id,
-            });
-        };
-
-        objective.state = new_state;
-
-        let previous_status = quest.status;
-        quest.recalc_status();
-
-        if quest.status != previous_status {
-            Ok(Some(quest.status))
-        } else {
-            Ok(None)
-        }
-    }
-}
-
-#[derive(Debug)]
-pub enum QuestUpdateError {
-    MissingQuest(u32),
-    MissingObjective { quest_id: u32, objective_id: u32 },
-    DuplicateObjective { quest_id: u32, objective_id: u32 },
-}
+// ---------------------------------------------------------------------------
+// Events
+// ---------------------------------------------------------------------------
 
 #[derive(Event, Message, Debug, Clone)]
 pub struct AddQuestEvent {
-    pub quest: QuestDefinition,
+    pub quest_id: u32,
 }
 
 #[derive(Event, Message, Debug, Clone)]
-pub struct AddObjectiveEvent {
+pub struct AdvanceObjectiveEvent {
     pub quest_id: u32,
-    pub objective: ObjectiveDefinition,
+    pub objective_id: u32,
+    pub delta: u32,
 }
 
-#[derive(Event, Message, Debug, Clone, Copy)]
+#[derive(Event, Message, Debug, Clone)]
 pub struct UpdateObjectiveEvent {
     pub quest_id: u32,
     pub objective_id: u32,
-    pub new_state: ObjectiveState,
+    pub failed: bool,
 }
 
 #[derive(Event, Message, Debug, Clone, Copy)]
@@ -210,12 +215,43 @@ pub struct QuestStatusChangedEvent {
     pub status: QuestStatus,
 }
 
-#[derive(Event, Message, Debug, Clone, Copy)]
+#[derive(Event, Message, Debug, Clone)]
 pub struct ItemPickupEvent {
     pub entity: Entity,
 }
 
-/// Optional quest hooks attached to gameplay entities.
+#[derive(Event, Message, Debug, Clone)]
+pub struct DialogueCompletedEvent {
+    pub dialogue_id: String,
+}
+
+#[derive(Event, Message, Debug, Clone)]
+pub struct DialogueChoicePickedEvent {
+    pub event_id: u32,
+}
+
+#[derive(Event, Message, Debug, Clone)]
+pub struct QuestRewardGrantedEvent {
+    pub quest_id: u32,
+    pub reward: QuestReward,
+}
+
+#[derive(Event, Message, Debug, Clone)]
+pub struct ManualFlagEvent {
+    pub tag: String,
+}
+
+// ---------------------------------------------------------------------------
+// Hook components — preserved for entity-specific scripted triggers
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Copy)]
+pub struct QuestUpdateAction {
+    pub quest_id: u32,
+    pub objective_id: u32,
+    pub delta: u32,
+}
+
 #[derive(Component, Default)]
 pub struct OnItemPickup(pub Option<QuestUpdateAction>);
 
@@ -239,140 +275,417 @@ impl Default for OnReach {
     }
 }
 
-fn ingest_new_quests(mut quest_log: ResMut<QuestLog>, mut events: ResMut<Messages<AddQuestEvent>>) {
-    for event in events.drain() {
-        let quest_id = event.quest.id;
+// ---------------------------------------------------------------------------
+// Loading
+// ---------------------------------------------------------------------------
 
-        if !quest_log.add_quest(event.quest) {
-            warn!("Quest with id {quest_id} already exists; ignoring add request.");
+fn load_quest_registry(mut registry: ResMut<QuestRegistry>) {
+    let text = match fs::read_to_string(QUEST_REGISTRY_PATH) {
+        Ok(t) => t,
+        Err(err) => {
+            warn!("Failed to read {QUEST_REGISTRY_PATH}: {err}");
+            return;
         }
+    };
+    let catalog: QuestCatalog = match ron::de::from_str(&text) {
+        Ok(c) => c,
+        Err(err) => {
+            warn!("Failed to parse {QUEST_REGISTRY_PATH}: {err}");
+            return;
+        }
+    };
+    for def in catalog.quests {
+        registry.0.insert(def.id, def);
+    }
+    info!("Loaded {} quest definition(s)", registry.0.len());
+}
+
+// ---------------------------------------------------------------------------
+// Activation: turn definitions into runtime quests
+// ---------------------------------------------------------------------------
+
+fn instantiate_quest(def: &QuestDefinition) -> Quest {
+    let objectives = def
+        .objectives
+        .iter()
+        .map(|o| QuestObjective {
+            id: o.id,
+            description: o.description.clone(),
+            kind: o.kind.clone(),
+            progress: 0,
+            required: o.required.max(1),
+            failed: false,
+        })
+        .collect();
+    Quest {
+        id: def.id,
+        title: def.title.clone(),
+        description: def.description.clone(),
+        objectives,
+        status: QuestStatus::Active,
+        rewards: def.rewards.clone(),
     }
 }
 
-fn ingest_new_objectives(
-    mut quest_log: ResMut<QuestLog>,
-    mut events: ResMut<Messages<AddObjectiveEvent>>,
+fn check_preconditions(
+    pre: &[QuestPrecondition],
+    log: &QuestLog,
+    flags: &QuestFlags,
+    rep: &ReputationLedger,
+    player_level: u32,
+) -> bool {
+    pre.iter().all(|p| match p {
+        QuestPrecondition::QuestCompleted(id) => log.completed.contains(id),
+        QuestPrecondition::ReputationAtLeast { target, threshold } => {
+            current_reputation(rep, target) >= *threshold
+        }
+        QuestPrecondition::PlayerLevelAtLeast(level) => player_level >= *level,
+        QuestPrecondition::FlagSet(name) => flags.0.contains(name),
+    })
+}
+
+fn current_reputation(rep: &ReputationLedger, target: &ReputationTarget) -> i32 {
+    match target {
+        ReputationTarget::Governor { city_id } => rep.get_governor(*city_id),
+        ReputationTarget::Merchant { merchant_id } => rep.get_merchant(*merchant_id),
+        ReputationTarget::Clan { clan_name } => rep.get_clan(clan_name),
+    }
+}
+
+fn auto_offer_eligible_quests(
+    registry: Res<QuestRegistry>,
+    mut log: ResMut<QuestLog>,
+    flags: Res<QuestFlags>,
+    rep: Res<ReputationLedger>,
+    player_level_q: Query<&Level, With<Player>>,
+) {
+    let player_level = player_level_q
+        .iter()
+        .next()
+        .map(|level| level.0)
+        .unwrap_or(0);
+
+    for (id, def) in registry.0.iter() {
+        if !def.auto_offer {
+            continue;
+        }
+        if log.offered.contains(id)
+            || log.completed.contains(id)
+            || log.quests.contains_key(id)
+        {
+            continue;
+        }
+        if !check_preconditions(&def.preconditions, &log, &flags, &rep, player_level) {
+            continue;
+        }
+        log.quests.insert(*id, instantiate_quest(def));
+        log.offered.insert(*id);
+        info!("Auto-offered quest {id}: {}", def.title);
+    }
+}
+
+fn ingest_add_quest_events(
+    mut events: ResMut<Messages<AddQuestEvent>>,
+    registry: Res<QuestRegistry>,
+    mut log: ResMut<QuestLog>,
 ) {
     for event in events.drain() {
-        if let Err(err) = quest_log.add_objective(event.quest_id, event.objective.clone()) {
-            match err {
-                QuestUpdateError::MissingQuest(quest_id) => {
-                    warn!(
-                        "Received AddObjectiveEvent for missing quest {quest_id} (objective {}).",
-                        event.objective.id
-                    );
-                }
-                QuestUpdateError::DuplicateObjective {
-                    quest_id,
-                    objective_id,
-                } => {
-                    warn!(
-                        "Quest {quest_id} already has objective {objective_id}; skipping add."
-                    );
-                }
-                _ => {}
-            }
+        if log.quests.contains_key(&event.quest_id) || log.completed.contains(&event.quest_id) {
+            continue;
         }
+        let Some(def) = registry.0.get(&event.quest_id) else {
+            warn!("AddQuestEvent for unknown quest id {}", event.quest_id);
+            continue;
+        };
+        log.quests.insert(event.quest_id, instantiate_quest(def));
+        log.offered.insert(event.quest_id);
     }
 }
 
-fn apply_objective_updates(
-    mut quest_log: ResMut<QuestLog>,
-    mut update_events: ResMut<Messages<UpdateObjectiveEvent>>,
-    mut status_changed: ResMut<Messages<QuestStatusChangedEvent>>,
+// ---------------------------------------------------------------------------
+// Progress dispatchers — funnel game events into objective progress
+// ---------------------------------------------------------------------------
+
+fn advance_for(
+    log: &mut QuestLog,
+    delta: u32,
+    matches: impl Fn(&ObjectiveKind) -> bool,
+) -> Vec<(u32, QuestStatus)> {
+    let mut status_changes = Vec::new();
+    for quest in log.quests.values_mut() {
+        if quest.status != QuestStatus::Active {
+            continue;
+        }
+        let prev = quest.status;
+        let mut any = false;
+        for objective in quest.objectives.iter_mut() {
+            if objective.failed || objective.is_complete() {
+                continue;
+            }
+            if matches(&objective.kind) {
+                objective.advance(delta);
+                any = true;
+            }
+        }
+        if any {
+            quest.recalc_status();
+            if quest.status != prev {
+                status_changes.push((quest.id, quest.status));
+            }
+        }
+    }
+    status_changes
+}
+
+fn dispatch_kill_progress(
+    mut deaths: MessageReader<DeathEvent>,
+    enemy_encounters: Query<&EnemyEncounter>,
+    mut log: ResMut<QuestLog>,
+    mut status_writer: MessageWriter<QuestStatusChangedEvent>,
 ) {
-    for event in update_events.drain() {
-        match quest_log.update_objective_state(
-            event.quest_id,
-            event.objective_id,
-            event.new_state,
-        ) {
-            Ok(Some(status)) => {
-                let _ = status_changed.send(QuestStatusChangedEvent {
-                    quest_id: event.quest_id,
-                    status,
-                });
-            }
-            Ok(None) => {}
-            Err(QuestUpdateError::MissingQuest(quest_id)) => {
-                warn!(
-                    "Received objective update for unknown quest {quest_id} (objective {}).",
-                    event.objective_id
-                );
-            }
-            Err(QuestUpdateError::MissingObjective {
-                quest_id,
-                objective_id,
-            }) => {
-                warn!("Quest {quest_id} has no objective {objective_id} to update.");
-            }
-            Err(err) => {
-                warn!(
-                    "Failed to update objective {} for quest {}: {:?}",
-                    event.objective_id, event.quest_id, err
-                );
-            }
+    for ev in deaths.read() {
+        let enemy_id = enemy_encounters.get(ev.entity).ok().map(|e| e.id);
+        let changes = advance_for(&mut log, 1, |kind| match kind {
+            ObjectiveKind::Kill { enemy_id: None } => true,
+            ObjectiveKind::Kill { enemy_id: Some(id) } => Some(*id) == enemy_id,
+            _ => false,
+        });
+        for (quest_id, status) in changes {
+            status_writer.write(QuestStatusChangedEvent { quest_id, status });
         }
     }
 }
 
-/// Trigger quest updates for items when they are picked up.
+fn dispatch_area_progress(
+    mut areas: MessageReader<AreaChanged>,
+    mut log: ResMut<QuestLog>,
+    mut status_writer: MessageWriter<QuestStatusChangedEvent>,
+) {
+    for ev in areas.read() {
+        let to = ev.to;
+        let changes = advance_for(&mut log, 1, |kind| {
+            matches!(kind, ObjectiveKind::Reach { area_id } if *area_id == to)
+        });
+        for (quest_id, status) in changes {
+            status_writer.write(QuestStatusChangedEvent { quest_id, status });
+        }
+    }
+}
+
+fn dispatch_dialogue_progress(
+    mut completed: MessageReader<DialogueCompletedEvent>,
+    mut chose: MessageReader<DialogueChoicePickedEvent>,
+    mut log: ResMut<QuestLog>,
+    mut status_writer: MessageWriter<QuestStatusChangedEvent>,
+) {
+    for ev in completed.read() {
+        let id = ev.dialogue_id.clone();
+        let changes = advance_for(&mut log, 1, |kind| {
+            matches!(kind, ObjectiveKind::Talk { dialogue_id } if *dialogue_id == id)
+        });
+        for (quest_id, status) in changes {
+            status_writer.write(QuestStatusChangedEvent { quest_id, status });
+        }
+    }
+    for ev in chose.read() {
+        let event_id = ev.event_id;
+        let changes = advance_for(&mut log, 1, |kind| {
+            matches!(kind, ObjectiveKind::DialogueChoice { event_id: e } if *e == event_id)
+        });
+        for (quest_id, status) in changes {
+            status_writer.write(QuestStatusChangedEvent { quest_id, status });
+        }
+    }
+}
+
+fn dispatch_reputation_progress(
+    mut events: MessageReader<ReputationChangeEvent>,
+    rep: Res<ReputationLedger>,
+    mut log: ResMut<QuestLog>,
+    mut status_writer: MessageWriter<QuestStatusChangedEvent>,
+) {
+    if events.is_empty() {
+        return;
+    }
+    // Drain so we don't re-process; we re-check thresholds based on the
+    // current ledger snapshot regardless of which target moved.
+    for _ in events.read() {}
+
+    let mut status_changes = Vec::new();
+    for quest in log.quests.values_mut() {
+        if quest.status != QuestStatus::Active {
+            continue;
+        }
+        let prev = quest.status;
+        let mut any = false;
+        for objective in quest.objectives.iter_mut() {
+            if objective.failed || objective.is_complete() {
+                continue;
+            }
+            if let ObjectiveKind::ReputationAtLeast { target, threshold } = &objective.kind {
+                if current_reputation(&rep, target) >= *threshold {
+                    objective.progress = objective.required;
+                    any = true;
+                }
+            }
+        }
+        if any {
+            quest.recalc_status();
+            if quest.status != prev {
+                status_changes.push((quest.id, quest.status));
+            }
+        }
+    }
+    for (quest_id, status) in status_changes {
+        status_writer.write(QuestStatusChangedEvent { quest_id, status });
+    }
+}
+
+fn dispatch_manual_flag_progress(
+    mut events: MessageReader<ManualFlagEvent>,
+    mut log: ResMut<QuestLog>,
+    mut status_writer: MessageWriter<QuestStatusChangedEvent>,
+) {
+    for ev in events.read() {
+        let tag = ev.tag.clone();
+        let changes = advance_for(&mut log, 1, |kind| {
+            matches!(kind, ObjectiveKind::ManualFlag { tag: t } if *t == tag)
+        });
+        for (quest_id, status) in changes {
+            status_writer.write(QuestStatusChangedEvent { quest_id, status });
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Hook components and explicit advance/update events
+// ---------------------------------------------------------------------------
+
+fn advance_specific_objective(
+    log: &mut QuestLog,
+    quest_id: u32,
+    objective_id: u32,
+    delta: u32,
+) -> Option<QuestStatus> {
+    let quest = log.quests.get_mut(&quest_id)?;
+    if quest.status != QuestStatus::Active {
+        return None;
+    }
+    let prev = quest.status;
+    let objective = quest.objectives.iter_mut().find(|o| o.id == objective_id)?;
+    if objective.failed || objective.is_complete() {
+        return None;
+    }
+    objective.advance(delta);
+    quest.recalc_status();
+    if quest.status != prev {
+        Some(quest.status)
+    } else {
+        None
+    }
+}
+
+fn ingest_advance_events(
+    mut events: ResMut<Messages<AdvanceObjectiveEvent>>,
+    mut log: ResMut<QuestLog>,
+    mut status_writer: ResMut<Messages<QuestStatusChangedEvent>>,
+) {
+    for ev in events.drain() {
+        if let Some(status) =
+            advance_specific_objective(&mut log, ev.quest_id, ev.objective_id, ev.delta.max(1))
+        {
+            status_writer.write(QuestStatusChangedEvent {
+                quest_id: ev.quest_id,
+                status,
+            });
+        }
+    }
+}
+
+fn ingest_update_events(
+    mut events: ResMut<Messages<UpdateObjectiveEvent>>,
+    mut log: ResMut<QuestLog>,
+    mut status_writer: ResMut<Messages<QuestStatusChangedEvent>>,
+) {
+    for ev in events.drain() {
+        let Some(quest) = log.quests.get_mut(&ev.quest_id) else {
+            continue;
+        };
+        if quest.status != QuestStatus::Active {
+            continue;
+        }
+        let prev = quest.status;
+        let Some(objective) = quest.objectives.iter_mut().find(|o| o.id == ev.objective_id)
+        else {
+            continue;
+        };
+        if ev.failed {
+            objective.failed = true;
+        } else {
+            objective.progress = objective.required;
+        }
+        quest.recalc_status();
+        if quest.status != prev {
+            status_writer.write(QuestStatusChangedEvent {
+                quest_id: ev.quest_id,
+                status: quest.status,
+            });
+        }
+    }
+}
+
 fn trigger_on_item_pickup(
     mut pickup_events: ResMut<Messages<ItemPickupEvent>>,
     hooks: Query<&OnItemPickup>,
-    mut updates: ResMut<Messages<UpdateObjectiveEvent>>,
+    mut updates: ResMut<Messages<AdvanceObjectiveEvent>>,
 ) {
     for event in pickup_events.drain() {
         if let Ok(OnItemPickup(Some(action))) = hooks.get(event.entity) {
-            updates.send(UpdateObjectiveEvent {
+            updates.write(AdvanceObjectiveEvent {
                 quest_id: action.quest_id,
                 objective_id: action.objective_id,
-                new_state: action.new_state,
+                delta: action.delta,
             });
         }
     }
 }
 
-/// Trigger quest updates when entities with `OnDeath` die in combat.
 fn trigger_on_death(
     mut death_events: MessageReader<DeathEvent>,
     hooks: Query<&OnDeath>,
-    mut updates: ResMut<Messages<UpdateObjectiveEvent>>,
+    mut updates: ResMut<Messages<AdvanceObjectiveEvent>>,
 ) {
     for event in death_events.read() {
         if let Ok(OnDeath(Some(action))) = hooks.get(event.entity) {
-            updates.send(UpdateObjectiveEvent {
+            updates.write(AdvanceObjectiveEvent {
                 quest_id: action.quest_id,
                 objective_id: action.objective_id,
-                new_state: action.new_state,
+                delta: action.delta,
             });
         }
     }
 }
 
-/// Trigger quest updates when the player comes within `radius` of an entity.
 fn trigger_on_reach(
     player: Query<&Transform, With<Player>>,
     mut hooks: Query<(&Transform, &mut OnReach)>,
-    mut updates: ResMut<Messages<UpdateObjectiveEvent>>,
+    mut updates: ResMut<Messages<AdvanceObjectiveEvent>>,
 ) {
     let Ok(player_tf) = player.single() else {
         return;
     };
     let player_pos = player_tf.translation.truncate();
-
     for (tf, mut hook) in hooks.iter_mut() {
         if hook.fired {
             continue;
         }
-
         if let Some(action) = hook.action {
             let pos = tf.translation.truncate();
             if player_pos.distance(pos) <= hook.radius {
-                updates.send(UpdateObjectiveEvent {
+                updates.write(AdvanceObjectiveEvent {
                     quest_id: action.quest_id,
                     objective_id: action.objective_id,
-                    new_state: action.new_state,
+                    delta: action.delta,
                 });
                 hook.fired = true;
             }
@@ -380,26 +693,180 @@ fn trigger_on_reach(
     }
 }
 
+// ---------------------------------------------------------------------------
+// Reward fulfillment
+// ---------------------------------------------------------------------------
+
+#[allow(clippy::too_many_arguments)]
+fn fulfill_quest_rewards(
+    mut events: MessageReader<QuestStatusChangedEvent>,
+    mut log: ResMut<QuestLog>,
+    mut flags: ResMut<QuestFlags>,
+    mut rep_ledger: ResMut<ReputationLedger>,
+    mut rep_writer: MessageWriter<ReputationChangeEvent>,
+    mut player_xp: Query<&mut Experience, With<Player>>,
+    mut granted: MessageWriter<QuestRewardGrantedEvent>,
+    mut add_writer: MessageWriter<AddQuestEvent>,
+) {
+    for ev in events.read() {
+        match ev.status {
+            QuestStatus::Completed => {
+                log.completed.insert(ev.quest_id);
+                let rewards = log
+                    .quests
+                    .get(&ev.quest_id)
+                    .map(|q| q.rewards.clone())
+                    .unwrap_or_default();
+                for reward in rewards {
+                    grant_reward(
+                        &reward,
+                        ev.quest_id,
+                        &mut flags,
+                        &mut rep_ledger,
+                        &mut rep_writer,
+                        &mut player_xp,
+                        &mut add_writer,
+                    );
+                    granted.write(QuestRewardGrantedEvent {
+                        quest_id: ev.quest_id,
+                        reward,
+                    });
+                }
+                info!("Quest {} completed", ev.quest_id);
+            }
+            QuestStatus::Failed => {
+                log.failed.insert(ev.quest_id);
+                info!("Quest {} failed", ev.quest_id);
+            }
+            QuestStatus::Active => {}
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn grant_reward(
+    reward: &QuestReward,
+    quest_id: u32,
+    flags: &mut QuestFlags,
+    rep_ledger: &mut ReputationLedger,
+    rep_writer: &mut MessageWriter<ReputationChangeEvent>,
+    player_xp: &mut Query<&mut Experience, With<Player>>,
+    add_writer: &mut MessageWriter<AddQuestEvent>,
+) {
+    match reward {
+        QuestReward::Experience(amount) => {
+            for mut xp in player_xp.iter_mut() {
+                xp.0 = xp.0.saturating_add(*amount);
+            }
+        }
+        QuestReward::Reputation { target, delta } => {
+            rep_ledger.apply_delta(target, *delta);
+            rep_writer.write(ReputationChangeEvent {
+                target: target.clone(),
+                delta: *delta,
+                reason: format!("quest_{quest_id}_reward"),
+            });
+        }
+        QuestReward::Flag(name) => {
+            flags.0.insert(name.clone());
+        }
+        QuestReward::UnlockQuest(next_id) => {
+            add_writer.write(AddQuestEvent { quest_id: *next_id });
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Dialogue watchers — turn dialogue-state transitions into quest events
+// without surgery on the existing dialogue systems.
+// ---------------------------------------------------------------------------
+
+fn watch_dialogue_completion(
+    dialogue_state: Res<Dialogue_State>,
+    mut last_id: Local<Option<String>>,
+    mut writer: MessageWriter<DialogueCompletedEvent>,
+) {
+    let current = dialogue_state.0.current_id.clone();
+    if let (Some(prev), None) = (last_id.as_ref(), current.as_ref()) {
+        writer.write(DialogueCompletedEvent {
+            dialogue_id: prev.clone(),
+        });
+    }
+    *last_id = current;
+}
+
+fn watch_dialogue_choice(
+    selected: Res<Selected_Choice>,
+    mut last_event: Local<u32>,
+    mut writer: MessageWriter<DialogueChoicePickedEvent>,
+) {
+    // Selected_Choice is reset to default (event = 0) after a confirmation
+    // is processed. Fire when the event id transitions from 0 to non-zero —
+    // that's the frame on which the player just locked in a choice.
+    let current = selected.0.event;
+    if current != 0 && *last_event == 0 {
+        writer.write(DialogueChoicePickedEvent { event_id: current });
+    }
+    *last_event = current;
+}
+
+// ---------------------------------------------------------------------------
+// Plugin
+// ---------------------------------------------------------------------------
+
 pub struct QuestPlugin;
 
 impl Plugin for QuestPlugin {
     fn build(&self, app: &mut App) {
-        app.insert_resource(QuestLog::default())
-            .insert_resource(Messages::<AddQuestEvent>::default())
-            .insert_resource(Messages::<AddObjectiveEvent>::default())
-            .insert_resource(Messages::<UpdateObjectiveEvent>::default())
-            .insert_resource(Messages::<QuestStatusChangedEvent>::default())
-            .insert_resource(Messages::<ItemPickupEvent>::default())
+        app.init_resource::<QuestRegistry>()
+            .init_resource::<QuestLog>()
+            .init_resource::<QuestFlags>()
+            .add_message::<AddQuestEvent>()
+            .add_message::<AdvanceObjectiveEvent>()
+            .add_message::<UpdateObjectiveEvent>()
+            .add_message::<QuestStatusChangedEvent>()
+            .add_message::<ItemPickupEvent>()
+            .add_message::<DialogueCompletedEvent>()
+            .add_message::<DialogueChoicePickedEvent>()
+            .add_message::<ManualFlagEvent>()
+            .add_message::<QuestRewardGrantedEvent>()
+            .add_systems(Startup, load_quest_registry)
             .add_systems(
                 Update,
                 (
-                    ingest_new_quests,
-                    ingest_new_objectives,
-                    apply_objective_updates,
+                    auto_offer_eligible_quests,
+                    ingest_add_quest_events,
+                    ingest_advance_events,
+                    ingest_update_events,
+                    dispatch_kill_progress,
+                    dispatch_area_progress,
+                    dispatch_dialogue_progress,
+                    dispatch_reputation_progress,
+                    dispatch_manual_flag_progress,
                     trigger_on_item_pickup,
                     trigger_on_death,
                     trigger_on_reach,
+                    watch_dialogue_completion,
+                    watch_dialogue_choice,
+                    fulfill_quest_rewards,
                 ),
             );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shipped_quests_parse() {
+        let text = std::fs::read_to_string(QUEST_REGISTRY_PATH)
+            .expect("quests.ron exists at the documented path");
+        let catalog: QuestCatalog =
+            ron::de::from_str(&text).expect("quests.ron deserialises into QuestCatalog");
+        assert!(!catalog.quests.is_empty(), "expected at least one quest");
+        for quest in &catalog.quests {
+            assert!(!quest.objectives.is_empty(), "quest {} has no objectives", quest.id);
+        }
     }
 }

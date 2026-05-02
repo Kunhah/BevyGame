@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-bevy = { version = "0.17.3", features = ["dynamic_linking", "bevy_ui"] }
+bevy = { version = "0.17.3", features = ["dynamic_linking", "bevy_ui", "shader_format_glsl"] }
 bevy_camera = "0.17.3"
 bevy_sprite_render = "0.17.3"
 bevy_egui = "0.38.0"
@@ -13,6 +13,8 @@ svg = "0.18.0"
 approx = "0.5.1"
 serde = "1.0.219"
 serde_json = "1.0.145"
+ron = "0.8"
+tiny_http = "0.12"
 bitflags = "2.10.0"
 noise = "0.9.0"
 bytemuck = { version = "1.24.0", features = ["derive"] }

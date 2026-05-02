@@ -3,12 +3,16 @@ use bevy::input::mouse::MouseButton;
 use bevy::prelude::*;
 
 use crate::combat_plugin::{
-    Abilities, AccumulatedAgility, CombatStats, Experience, GrowthAttributes, Health, Level, Magic,
-    PendingPlayerAction, PlayerAction, PlayerActionEvent, PlayerControlled, StatModifiers, Stamina,
-    TurnManager, TurnOrder, TurnStartEvent,
+    Abilities, AccumulatedAgility, ActionPoints, CombatStats, Experience, GrowthAttributes, Health,
+    Level, Magic, PendingPlayerAction, PlayerAction, PlayerActionEvent, PlayerControlled,
+    StatModifiers, TurnManager, TurnOrder, TurnStartEvent,
 };
 use crate::constants::{GRID_HEIGHT, GRID_WIDTH, PLAYER_SPEED};
 use crate::core::{GameState, Game_State, Global_Variables, MainCamera, Player, Position};
+use crate::economy::MerchantNpc;
+use crate::governance::{
+    CastleAssaultStartedEvent, GovernorCombatant, GovernorNpc, SuccessorCombatant, SuccessorNpc,
+};
 use crate::pathfinding::is_walkable_move;
 use crate::quadtree::QuadTree;
 
@@ -63,9 +67,18 @@ pub fn battle_trigger_system(
     mut battle_state: ResMut<BattleState>,
     mut tm: ResMut<TurnManager>,
     mut turn_order: ResMut<TurnOrder>,
+    mut assault_starts: MessageWriter<CastleAssaultStartedEvent>,
     input: Res<ButtonInput<KeyCode>>,
     player_q: Query<(Entity, &Transform), With<Player>>,
-    enemy_q: Query<(Entity, &Transform, &EnemyEncounter)>,
+    enemy_q: Query<
+        (
+            Entity,
+            &Transform,
+            &EnemyEncounter,
+            Option<&GovernorNpc>,
+            Option<&SuccessorNpc>,
+        ),
+    >,
     ally_q: Query<(Entity, &Transform), With<WorldAlly>>,
 ) {
     if game_state.0 != Game_State::Exploring || battle_state.active {
@@ -81,16 +94,23 @@ pub fn battle_trigger_system(
     };
 
     let player_pos = player_tf.translation.truncate();
-    for (enemy_entity, enemy_tf, encounter) in enemy_q.iter() {
+    for (enemy_entity, enemy_tf, encounter, governor_opt, successor_opt) in enemy_q.iter() {
         let enemy_pos = enemy_tf.translation.truncate();
         if player_pos.distance(enemy_pos) <= 32.0 {
             game_state.0 = Game_State::Battle;
+            let governor_city_id = governor_opt.map(|g| g.city_id);
+            let successor_target = successor_opt.map(|s| (s.city_id, s.successor_id));
+            if let Some(city_id) = governor_city_id.or(successor_target.map(|(id, _)| id)) {
+                assault_starts.write(CastleAssaultStartedEvent { city_id });
+            }
             start_battle(
                 &mut commands,
                 &mut battle_state,
                 &mut tm,
                 &mut turn_order,
                 encounter.id,
+                governor_city_id,
+                successor_target,
                 enemy_entity,
                 player_entity,
                 player_tf.translation,
@@ -108,6 +128,8 @@ fn start_battle(
     tm: &mut TurnManager,
     turn_order: &mut TurnOrder,
     enemy_id: u32,
+    governor_city_id: Option<u16>,
+    successor_target: Option<(u16, u32)>,
     enemy_world_entity: Entity,
     player_world_entity: Entity,
     player_world_pos: Vec3,
@@ -123,7 +145,13 @@ fn start_battle(
         let ally = spawn_ally_combat(commands, ally_entity, ally_tf.translation);
         participants.push(ally);
     }
-    let enemy = spawn_enemy_combat(commands, enemy_id, enemy_world_pos);
+    let enemy = spawn_enemy_combat(
+        commands,
+        enemy_id,
+        enemy_world_pos,
+        governor_city_id,
+        successor_target,
+    );
     participants.push(enemy);
 
     battle_state.participants = participants;
@@ -147,16 +175,8 @@ fn spawn_player_combat(commands: &mut Commands, world_entity: Entity, world_pos:
         max: 120,
         regen: 2,
     });
-    e.insert(Magic {
-        current: 60,
-        max: 60,
-        regen: 1,
-    });
-    e.insert(Stamina {
-        current: 90,
-        max: 90,
-        regen: 2,
-    });
+    e.insert(Magic::with_regen(2.0, 2.0, 1.0, 1.0, 0.00035, 0.00035, 0.0002, 0.0002));
+    e.insert(ActionPoints::default());
     e.insert(CombatStats {
         base_lethality: 14,
         base_hit: 80,
@@ -175,6 +195,11 @@ fn spawn_player_combat(commands: &mut Commands, world_entity: Entity, world_pos:
         agility: 10,
         insight: 10,
         resolve: 12,
+        kiho: 2,
+        chiseijutsu: 2,
+        yokaijutsu: 1,
+        kamishin: 1,
+        ..Default::default()
     });
     e.insert(Abilities(vec![]));
     e.insert(Experience(0));
@@ -185,7 +210,13 @@ fn spawn_player_combat(commands: &mut Commands, world_entity: Entity, world_pos:
     e.id()
 }
 
-fn spawn_enemy_combat(commands: &mut Commands, enemy_id: u32, world_pos: Vec3) -> Entity {
+fn spawn_enemy_combat(
+    commands: &mut Commands,
+    enemy_id: u32,
+    world_pos: Vec3,
+    governor_city_id: Option<u16>,
+    successor_target: Option<(u16, u32)>,
+) -> Entity {
     let (hp, lethality, hit, armor, agility) = match enemy_id {
         1 => (80, 10, 70, 6, 8),
         2 => (120, 14, 75, 10, 6),
@@ -202,16 +233,8 @@ fn spawn_enemy_combat(commands: &mut Commands, enemy_id: u32, world_pos: Vec3) -
         max: hp,
         regen: 1,
     });
-    e.insert(Magic {
-        current: 20,
-        max: 20,
-        regen: 0,
-    });
-    e.insert(Stamina {
-        current: 60,
-        max: 60,
-        regen: 1,
-    });
+    e.insert(Magic::with_regen(1.0, 0.5, 0.5, 0.0, 0.00025, 0.0001, 0.0001, 0.0));
+    e.insert(ActionPoints::default());
     e.insert(CombatStats {
         base_lethality: lethality,
         base_hit: hit,
@@ -230,6 +253,11 @@ fn spawn_enemy_combat(commands: &mut Commands, enemy_id: u32, world_pos: Vec3) -
         agility: 8,
         insight: 6,
         resolve: 6,
+        kiho: 2,
+        chiseijutsu: 1,
+        yokaijutsu: 1,
+        kamishin: 0,
+        ..Default::default()
     });
     e.insert(Abilities(vec![]));
     e.insert(Experience(0));
@@ -237,6 +265,15 @@ fn spawn_enemy_combat(commands: &mut Commands, enemy_id: u32, world_pos: Vec3) -
     e.insert(AccumulatedAgility(0));
     e.insert(StatModifiers(Vec::new()));
     e.insert(CombatMovePoints::default());
+    if let Some(city_id) = governor_city_id {
+        e.insert(GovernorCombatant { city_id });
+    }
+    if let Some((city_id, successor_id)) = successor_target {
+        e.insert(SuccessorCombatant {
+            city_id,
+            successor_id,
+        });
+    }
     e.id()
 }
 
@@ -253,16 +290,8 @@ fn spawn_ally_combat(commands: &mut Commands, world_entity: Entity, world_pos: V
         max: 100,
         regen: 2,
     });
-    e.insert(Magic {
-        current: 40,
-        max: 40,
-        regen: 1,
-    });
-    e.insert(Stamina {
-        current: 80,
-        max: 80,
-        regen: 2,
-    });
+    e.insert(Magic::with_regen(1.0, 1.5, 1.0, 0.5, 0.00025, 0.00035, 0.00025, 0.00015));
+    e.insert(ActionPoints::default());
     e.insert(CombatStats {
         base_lethality: 12,
         base_hit: 75,
@@ -281,6 +310,11 @@ fn spawn_ally_combat(commands: &mut Commands, world_entity: Entity, world_pos: V
         agility: 9,
         insight: 8,
         resolve: 10,
+        kiho: 1,
+        chiseijutsu: 3,
+        yokaijutsu: 1,
+        kamishin: 1,
+        ..Default::default()
     });
     e.insert(Abilities(vec![]));
     e.insert(Experience(0));
@@ -647,7 +681,7 @@ pub fn transform_npc_to_enemy(
     input: Res<ButtonInput<KeyCode>>,
     asset_server: Res<AssetServer>,
     player_q: Query<&Transform, With<Player>>,
-    npc_q: Query<(Entity, &Transform, &WorldNpc)>,
+    npc_q: Query<(Entity, &Transform, &WorldNpc), Without<MerchantNpc>>,
 ) {
     if !input.just_pressed(KeyCode::KeyB) {
         return;

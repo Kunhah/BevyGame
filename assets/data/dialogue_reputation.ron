@@ -1,0 +1,40 @@
+(
+    rules: [
+        (
+            event_id: 10,
+            effects: [
+                (target: local_governor, delta: 10, reason: "dialogue_decision_helped_administration"),
+            ],
+        ),
+        (
+            event_id: 11,
+            effects: [
+                (target: local_governor, delta: -10, reason: "dialogue_decision_insulted_administration"),
+            ],
+        ),
+        (
+            event_id: 20,
+            effects: [
+                (target: local_merchant, delta: 8, reason: "dialogue_decision_supported_merchant"),
+            ],
+        ),
+        (
+            event_id: 21,
+            effects: [
+                (target: local_merchant, delta: -8, reason: "dialogue_decision_threatened_merchant"),
+            ],
+        ),
+        (
+            event_id: 30,
+            effects: [
+                (target: local_clan, delta: 12, reason: "dialogue_decision_aided_clan"),
+            ],
+        ),
+        (
+            event_id: 31,
+            effects: [
+                (target: local_clan, delta: -12, reason: "dialogue_decision_offended_clan"),
+            ],
+        ),
+    ],
+)

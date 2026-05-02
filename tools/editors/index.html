@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Seirei Kuni Data Editor</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Local Editor</p>
+          <h1>Seirei Kuni Data Editor</h1>
+        </div>
+        <div class="topbar-actions">
+          <button class="mode-button active" data-editor="abilities">Abilities</button>
+          <button class="mode-button" data-editor="dialogues">Dialogues</button>
+        </div>
+      </header>
+
+      <section class="workspace">
+        <aside class="sidebar">
+          <div class="panel-header">
+            <div>
+              <p class="panel-kicker">Entries</p>
+              <h2 id="list-title">Abilities</h2>
+            </div>
+            <button id="new-entry-button" class="primary-button">New</button>
+          </div>
+
+          <label class="stacked-field">
+            <span>Search</span>
+            <input id="search-input" type="search" placeholder="Filter by id or name" />
+          </label>
+
+          <div class="list-shell">
+            <div id="entry-list" class="entry-list"></div>
+          </div>
+        </aside>
+
+        <main class="main-panel">
+          <section class="action-row card">
+            <div class="action-cluster">
+              <button id="reload-button">Reload from disk</button>
+              <button id="save-button" class="primary-button">Save (RON)</button>
+              <button id="download-button">Download RON</button>
+            </div>
+            <div class="status-block">
+              <div id="file-label">Backed by Rust editor server</div>
+              <div id="dirty-label" class="muted">No unsaved changes</div>
+            </div>
+          </section>
+
+          <section class="summary-grid">
+            <article class="card stat-card">
+              <span class="panel-kicker">Total</span>
+              <strong id="total-count">0</strong>
+            </article>
+            <article class="card stat-card">
+              <span class="panel-kicker">Selected</span>
+              <strong id="selected-label">None</strong>
+            </article>
+            <article class="card stat-card">
+              <span class="panel-kicker">Validation</span>
+              <strong id="validation-count">0 issues</strong>
+            </article>
+          </section>
+
+          <section id="editor-root" class="editor-root"></section>
+
+          <section class="card">
+            <div class="panel-header compact">
+              <div>
+                <p class="panel-kicker">Validation</p>
+                <h2>Messages</h2>
+              </div>
+              <button id="validate-button">Run validation</button>
+            </div>
+            <div id="messages" class="messages"></div>
+          </section>
+        </main>
+      </section>
+    </div>
+
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

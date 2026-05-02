@@ -1,6 +1,5 @@
 use std::collections::HashMap;
-use std::fs::File;
-use std::io::BufReader;
+use std::fs;
 use std::path::Path;
 
 use bevy::ecs::event::Events;
@@ -12,7 +11,13 @@ use serde::Deserialize;
 
 use crate::constants::Flags;
 use crate::core::{GameState, Game_State};
+use crate::city_data::CityCatalog;
+use crate::economy::Merchants;
+use crate::governance::{ReputationChangeEvent, ReputationTarget};
+use crate::map::CurrentArea;
 use crate::quadtree::aabb_collision;
+
+const DIALOGUE_REPUTATION_RULES_PATH: &str = "assets/data/dialogue_reputation.ron";
 
 #[derive(SystemSet, Debug, Hash, PartialEq, Eq, Clone)]
 pub enum DialogueSet {
@@ -76,6 +81,108 @@ pub struct Selected_Choice_Index(pub Option<usize>);
 #[derive(Resource, Default)]
 pub struct Next_Id(pub HashMap<String, String>);
 
+#[derive(Debug, Deserialize, Clone)]
+struct DialogueReputationRuleFile {
+    #[serde(default)]
+    rules: Vec<DialogueReputationRuleEntry>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+struct DialogueReputationRuleEntry {
+    event_id: u32,
+    #[serde(default)]
+    effects: Vec<DialogueReputationEffect>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[serde(rename_all = "snake_case")]
+enum DialogueReputationTargetKind {
+    LocalGovernor,
+    LocalMerchant,
+    LocalClan,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+struct DialogueReputationEffect {
+    target: DialogueReputationTargetKind,
+    delta: i16,
+    reason: String,
+}
+
+#[derive(Resource, Debug, Clone)]
+pub struct DialogueReputationRules(HashMap<u32, Vec<DialogueReputationEffect>>);
+
+impl Default for DialogueReputationRules {
+    fn default() -> Self {
+        if let Some(file_data) = load_dialogue_reputation_rules_file() {
+            let mut out = HashMap::new();
+            for rule in file_data.rules {
+                if !rule.effects.is_empty() {
+                    out.insert(rule.event_id, rule.effects);
+                }
+            }
+            if !out.is_empty() {
+                info!(
+                    "Loaded dialogue reputation rules from {}",
+                    DIALOGUE_REPUTATION_RULES_PATH
+                );
+                return Self(out);
+            }
+        }
+
+        let mut out: HashMap<u32, Vec<DialogueReputationEffect>> = HashMap::new();
+        out.insert(
+            10,
+            vec![DialogueReputationEffect {
+                target: DialogueReputationTargetKind::LocalGovernor,
+                delta: 10,
+                reason: "dialogue_decision".to_string(),
+            }],
+        );
+        out.insert(
+            11,
+            vec![DialogueReputationEffect {
+                target: DialogueReputationTargetKind::LocalGovernor,
+                delta: -10,
+                reason: "dialogue_decision".to_string(),
+            }],
+        );
+        out.insert(
+            20,
+            vec![DialogueReputationEffect {
+                target: DialogueReputationTargetKind::LocalMerchant,
+                delta: 8,
+                reason: "dialogue_decision".to_string(),
+            }],
+        );
+        out.insert(
+            21,
+            vec![DialogueReputationEffect {
+                target: DialogueReputationTargetKind::LocalMerchant,
+                delta: -8,
+                reason: "dialogue_decision".to_string(),
+            }],
+        );
+        out.insert(
+            30,
+            vec![DialogueReputationEffect {
+                target: DialogueReputationTargetKind::LocalClan,
+                delta: 12,
+                reason: "dialogue_decision".to_string(),
+            }],
+        );
+        out.insert(
+            31,
+            vec![DialogueReputationEffect {
+                target: DialogueReputationTargetKind::LocalClan,
+                delta: -12,
+                reason: "dialogue_decision".to_string(),
+            }],
+        );
+        Self(out)
+    }
+}
+
 #[derive(Resource)]
 pub struct Conditionals(pub Flags);
 
@@ -128,11 +235,43 @@ pub struct DialogueUiParams<'w, 's> {
     pub asset_server: Res<'w, AssetServer>,
 }
 
+#[derive(SystemParam)]
+pub struct DialogueReputationParams<'w> {
+    pub current_area: Res<'w, CurrentArea>,
+    pub cities: Res<'w, CityCatalog>,
+    pub merchants: Res<'w, Merchants>,
+    pub reputation_events: ResMut<'w, Messages<ReputationChangeEvent>>,
+    pub reputation_rules: Res<'w, DialogueReputationRules>,
+}
+
 #[derive(Event, Message)]
 pub struct DialogueBoxTriggerEvent {}
 
 #[derive(Event, Message)]
 pub struct DialogueTriggerEvent {}
+
+fn load_dialogue_reputation_rules_file() -> Option<DialogueReputationRuleFile> {
+    let contents = match fs::read_to_string(DIALOGUE_REPUTATION_RULES_PATH) {
+        Ok(s) => s,
+        Err(err) => {
+            warn!(
+                "Failed to open {}: {}",
+                DIALOGUE_REPUTATION_RULES_PATH, err
+            );
+            return None;
+        }
+    };
+    match ron::de::from_str::<DialogueReputationRuleFile>(&contents) {
+        Ok(data) => Some(data),
+        Err(err) => {
+            warn!(
+                "Failed to parse {}: {}",
+                DIALOGUE_REPUTATION_RULES_PATH, err
+            );
+            None
+        }
+    }
+}
 
 pub fn spawn_dialogue_box(
     mut commands: Commands,
@@ -346,6 +485,7 @@ pub fn interact(
     mut next_id_map: ResMut<Next_Id>,
     mut conditionals: ResMut<Conditionals>,
     mut events_dialogue_box: ResMut<Events<DialogueBoxTriggerEvent>>,
+    mut reputation: DialogueReputationParams,
 ) {
     if (param_set.p1().just_pressed(KeyCode::KeyX)) {
         match game_state.0 {
@@ -396,7 +536,16 @@ pub fn interact(
                             }
                             dialogue_state.0.current_id =
                                 handle_next_id(selected_choice.0.next.clone(), &next_id_map);
-                            handle_choice_event(selected_choice.0.event, next_id_map, conditionals);
+                            handle_choice_event(
+                                selected_choice.0.event,
+                                next_id_map,
+                                conditionals,
+                                reputation.current_area.0,
+                                &reputation.cities,
+                                &reputation.merchants,
+                                &mut reputation.reputation_events,
+                                &reputation.reputation_rules,
+                            );
                         } else {
                             dialogue_state.0.current_id =
                                 handle_next_id(line.next.clone(), &next_id_map);
@@ -441,7 +590,16 @@ pub fn interact(
                             }
                             dialogue_state.0.current_id =
                                 handle_next_id(selected_choice.0.next.clone(), &next_id_map);
-                            handle_choice_event(selected_choice.0.event, next_id_map, conditionals);
+                            handle_choice_event(
+                                selected_choice.0.event,
+                                next_id_map,
+                                conditionals,
+                                reputation.current_area.0,
+                                &reputation.cities,
+                                &reputation.merchants,
+                                &mut reputation.reputation_events,
+                                &reputation.reputation_rules,
+                            );
                         } else {
                             dialogue_state.0.current_id =
                                 handle_next_id(line.next.clone(), &next_id_map);
@@ -471,22 +629,19 @@ pub fn interact(
 }
 
 pub fn load_dialogue() -> HashMap<String, DialogueLine> {
-    match File::open("dialogues/example.json") {
-        Ok(file) => {
-            let reader = BufReader::new(file);
-            match serde_json::from_reader::<_, Vec<DialogueLine>>(reader) {
-                Ok(dialogue_lines) => dialogue_lines
-                    .into_iter()
-                    .map(|line| (line.id.clone(), line))
-                    .collect(),
-                Err(err) => {
-                    warn!("Failed to parse dialogues/example.json: {err}");
-                    HashMap::new()
-                }
+    match fs::read_to_string("dialogues/example.ron") {
+        Ok(contents) => match ron::de::from_str::<Vec<DialogueLine>>(&contents) {
+            Ok(dialogue_lines) => dialogue_lines
+                .into_iter()
+                .map(|line| (line.id.clone(), line))
+                .collect(),
+            Err(err) => {
+                warn!("Failed to parse dialogues/example.ron: {err}");
+                HashMap::new()
             }
-        }
+        },
         Err(err) => {
-            warn!("Failed to open dialogues/example.json: {err}");
+            warn!("Failed to open dialogues/example.ron: {err}");
             HashMap::new()
         }
     }
@@ -623,11 +778,60 @@ fn handle_choice_event(
     event: u32,
     mut _next_id_map: ResMut<Next_Id>,
     mut _conditionals: ResMut<Conditionals>,
+    current_region: u16,
+    cities: &Res<CityCatalog>,
+    merchants: &Res<Merchants>,
+    reputation_events: &mut ResMut<Messages<ReputationChangeEvent>>,
+    reputation_rules: &Res<DialogueReputationRules>,
 ) {
-    match event {
-        0 => println!("Choice 1 selected"),
-        1 => println!("Choice 2 selected"),
-        _ => println!("Invalid choice"),
+    let Some(effects) = reputation_rules.0.get(&event) else {
+        return;
+    };
+    let local_city = cities
+        .0
+        .values()
+        .find(|city| city.region_ids.contains(&current_region));
+    let local_merchant_id = merchants
+        .0
+        .iter()
+        .find(|(_, merchant)| merchant.region_id == current_region)
+        .map(|(merchant_id, _)| *merchant_id);
+
+    for effect in effects {
+        match effect.target {
+            DialogueReputationTargetKind::LocalGovernor => {
+                let Some(city) = local_city else {
+                    continue;
+                };
+                reputation_events.write(ReputationChangeEvent {
+                    target: ReputationTarget::Governor { city_id: city.id },
+                    delta: effect.delta,
+                    reason: effect.reason.clone(),
+                });
+            }
+            DialogueReputationTargetKind::LocalMerchant => {
+                let Some(merchant_id) = local_merchant_id else {
+                    continue;
+                };
+                reputation_events.write(ReputationChangeEvent {
+                    target: ReputationTarget::Merchant { merchant_id },
+                    delta: effect.delta,
+                    reason: effect.reason.clone(),
+                });
+            }
+            DialogueReputationTargetKind::LocalClan => {
+                let Some(city) = local_city else {
+                    continue;
+                };
+                reputation_events.write(ReputationChangeEvent {
+                    target: ReputationTarget::Clan {
+                        clan_name: city.clan_name.clone(),
+                    },
+                    delta: effect.delta,
+                    reason: effect.reason.clone(),
+                });
+            }
+        }
     }
 }
 

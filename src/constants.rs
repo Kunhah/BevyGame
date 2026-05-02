@@ -22,8 +22,18 @@ pub const GRID_HEIGHT: u32 = 15000;
 pub const PATH_MARGIN: i32 = 5;
 pub const PATH_DRAW_MARGIN: i32 = 4;
 pub const PATH_MOVEMENT_SPEED: u32 = 20;
+pub const DEFAULT_ACTION_POINTS: i32 = 8;
+pub const BASIC_ATTACK_ACTION_POINT_COST: i32 = 4;
+pub const ITEM_ACTION_POINT_COST: i32 = 4;
 
 pub const WALKING_LIMIT: usize = 600 / PATH_DRAW_MARGIN as usize;
+
+// Canonical world-time conversion for Timestamp.
+pub const TIMESTAMP_SECONDS_PER_TICK: u32 = 9;
+pub const TIMESTAMP_TICKS_PER_MINUTE: u32 = 60 / TIMESTAMP_SECONDS_PER_TICK;
+pub const TIMESTAMP_TICKS_PER_HOUR: u32 = 60 * TIMESTAMP_TICKS_PER_MINUTE;
+pub const DEFAULT_MAGIC_REGEN_PER_TICK: f32 =
+    1.0 / ((4.0 * 60.0 * 60.0) / TIMESTAMP_SECONDS_PER_TICK as f32);
 
 bitflags! {
     pub struct Flags: u128 {

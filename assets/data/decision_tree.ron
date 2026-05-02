@@ -1,0 +1,121 @@
+// Behavior tree profiles consumed by `crate::ai_decision`.
+//
+// Tree node summary:
+//   Composites: Selector, Sequence, Random([(weight, child), ...])
+//   Decorators: Inverter(child), AlwaysSucceed(child)
+//   Conditions: HpBelow/HpAbove, AllyHpBelow, MagicBelow, ActionPointsAtLeast,
+//               AggressivenessAtLeast/BraveryAtLeast/CautionAtLeast, InPanic,
+//               EnemiesAlive/AlliesAlive, HasAbility, Random{ chance_percent }
+//   Actions:    BasicAttack, UseAbility{id}, UseFirstHealingAbility,
+//               UseHighestDamageAbility, Defend, Wait
+//
+// Conditions read AIParameters off the actor (panic_threshold, aggressiveness,
+// bravery, caution, focus_preference, ...). Tweak the component on each NPC
+// to retune behaviour without editing the tree.
+(
+    profiles: {
+        // ----------------------------------------------------------------
+        // Aggressive: spend AP on the biggest hit available, fall back to a
+        // basic attack. No self-preservation.
+        // ----------------------------------------------------------------
+        "aggressive": (
+            logic: Selector([
+                Sequence([
+                    AggressivenessAtLeast(value: 6),
+                    ActionPointsAtLeast(amount: 1),
+                    UseHighestDamageAbility,
+                ]),
+                BasicAttack,
+                Wait,
+            ]),
+        ),
+
+        // ----------------------------------------------------------------
+        // Defensive: heal allies / self when wounded, otherwise attack
+        // safely. Falls back to Defend rather than charging in.
+        // ----------------------------------------------------------------
+        "defensive": (
+            logic: Selector([
+                Sequence([
+                    InPanic,
+                    UseFirstHealingAbility,
+                ]),
+                Sequence([
+                    AllyHpBelow(percent: 50),
+                    UseFirstHealingAbility,
+                ]),
+                Sequence([
+                    HpAbove(percent: 60),
+                    BasicAttack,
+                ]),
+                Defend,
+            ]),
+        ),
+
+        // ----------------------------------------------------------------
+        // Opportunistic: stalls when no juicy targets are around, but
+        // unloads when at least 2 enemies are alive (better expected damage
+        // from AOE-leaning damage abilities).
+        // ----------------------------------------------------------------
+        "opportunistic": (
+            logic: Selector([
+                Sequence([
+                    EnemiesAlive(at_least: 2),
+                    BraveryAtLeast(value: 4),
+                    UseHighestDamageAbility,
+                ]),
+                Sequence([
+                    EnemiesAlive(at_least: 1),
+                    Chance(percent: 60),
+                    BasicAttack,
+                ]),
+                Defend,
+            ]),
+        ),
+
+        // ----------------------------------------------------------------
+        // Mage: gates spending magic on `magic_thrift` and AP. Shows off
+        // composite + condition mixing — Random branches between damage and
+        // utility when in a comfortable position.
+        // ----------------------------------------------------------------
+        "mage": (
+            logic: Selector([
+                Sequence([
+                    InPanic,
+                    UseFirstHealingAbility,
+                ]),
+                Sequence([
+                    MagicBelow(percent: 30),
+                    Defend,
+                ]),
+                Sequence([
+                    HpAbove(percent: 50),
+                    ActionPointsAtLeast(amount: 1),
+                    Random([
+                        (3, UseHighestDamageAbility),
+                        (1, BasicAttack),
+                    ]),
+                ]),
+                BasicAttack,
+                Wait,
+            ]),
+        ),
+
+        // ----------------------------------------------------------------
+        // Coward: exit-stage-left in panic, attack only when feeling brave.
+        // ----------------------------------------------------------------
+        "coward": (
+            logic: Selector([
+                Sequence([
+                    InPanic,
+                    Defend,
+                ]),
+                Sequence([
+                    BraveryAtLeast(value: 6),
+                    BasicAttack,
+                ]),
+                Wait,
+            ]),
+        ),
+    },
+)

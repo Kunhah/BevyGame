@@ -1,21 +1,13 @@
 use bevy::prelude::*;
 use bevy::ecs::message::{MessageIterator, MessageMutIterator};
 use rand::Rng;
-use std::collections::{HashMap, VecDeque};
+use std::collections::VecDeque;
 use std::fmt::Debug;
 use std::f32::consts::PI;
 use serde::{Deserialize, Serialize};
 
 use crate::combat_ability::*;
-use crate::constants::{
-    BASIC_ATTACK_ACTION_POINT_COST, DEFAULT_ACTION_POINTS, DEFAULT_MAGIC_REGEN_PER_TICK,
-    ITEM_ACTION_POINT_COST,
-};
 use crate::core::Timestamp;
-
-/// TO DO: Implement what the AI pointed out bellow
-/// One important note: the current turn flow still allows one committed action per turn. So AP now exists, is configurable per character, and is refilled correctly, but spending multiple actions inside a single turn is not implemented yet. If you want, I can do that next.
-/// One caveat: the combat runtime still does not spend ability magic costs at cast time, because that path was already not implemented before this change. The data model is ready for school-specific costs now, but the actual resource deduction logic is still the next step.
 
 // Compatibility helpers for Bevy Messages (0.17) to keep older `send/iter` style calls compiling.
 trait MessageWriterSendExt<E: Message> {
@@ -77,159 +69,25 @@ pub struct Health {
 #[derive(Debug, Clone, Message)]
 pub struct HealthRegenEvent;
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-pub struct MagicPool {
-    pub current: f32,
-    pub max: f32,
-    pub regen_per_tick: f32,
-}
-
-impl MagicPool {
-    pub fn new(max: f32, regen_per_tick: f32) -> Self {
-        let max = max.max(0.0);
-        Self {
-            current: max,
-            max,
-            regen_per_tick: regen_per_tick.clamp(0.0, 0.999_999),
-        }
-    }
-
-    pub fn apply_regen(&mut self, ticks: u32) {
-        self.current = (self.current + self.regen_per_tick * ticks as f32).min(self.max);
-    }
-
-    pub fn can_spend(&self, amount: f32) -> bool {
-        amount <= 0.0 || self.current + f32::EPSILON >= amount
-    }
-
-    pub fn spend(&mut self, amount: f32) -> bool {
-        if !self.can_spend(amount) {
-            return false;
-        }
-        self.current = (self.current - amount).max(0.0);
-        true
-    }
-}
-
-#[derive(Component, Debug, Clone, Serialize, Deserialize)]
-pub struct Magic {
-    pub kiho: MagicPool,
-    pub chiseijutsu: MagicPool,
-    pub yokaijutsu: MagicPool,
-    pub kamishin: MagicPool,
-}
-
-impl Magic {
-    pub fn new(kiho_max: f32, chiseijutsu_max: f32, yokaijutsu_max: f32, kamishin_max: f32) -> Self {
-        Self::with_regen(
-            kiho_max,
-            chiseijutsu_max,
-            yokaijutsu_max,
-            kamishin_max,
-            DEFAULT_MAGIC_REGEN_PER_TICK,
-            DEFAULT_MAGIC_REGEN_PER_TICK,
-            DEFAULT_MAGIC_REGEN_PER_TICK,
-            DEFAULT_MAGIC_REGEN_PER_TICK,
-        )
-    }
-
-    pub fn with_regen(
-        kiho_max: f32,
-        chiseijutsu_max: f32,
-        yokaijutsu_max: f32,
-        kamishin_max: f32,
-        kiho_regen: f32,
-        chiseijutsu_regen: f32,
-        yokaijutsu_regen: f32,
-        kamishin_regen: f32,
-    ) -> Self {
-        Self {
-            kiho: MagicPool::new(kiho_max, kiho_regen),
-            chiseijutsu: MagicPool::new(chiseijutsu_max, chiseijutsu_regen),
-            yokaijutsu: MagicPool::new(yokaijutsu_max, yokaijutsu_regen),
-            kamishin: MagicPool::new(kamishin_max, kamishin_regen),
-        }
-    }
-
-    pub fn total_current(&self) -> f32 {
-        self.kiho.current + self.chiseijutsu.current + self.yokaijutsu.current + self.kamishin.current
-    }
-
-    pub fn total_max(&self) -> f32 {
-        self.kiho.max + self.chiseijutsu.max + self.yokaijutsu.max + self.kamishin.max
-    }
-
-    pub fn total_regen_per_tick(&self) -> f32 {
-        self.kiho.regen_per_tick
-            + self.chiseijutsu.regen_per_tick
-            + self.yokaijutsu.regen_per_tick
-            + self.kamishin.regen_per_tick
-    }
-
-    pub fn pool(&self, school: MagicSchool) -> &MagicPool {
-        match school {
-            MagicSchool::Kiho => &self.kiho,
-            MagicSchool::Chiseijutsu => &self.chiseijutsu,
-            MagicSchool::Yokaijutsu => &self.yokaijutsu,
-            MagicSchool::Kamishin => &self.kamishin,
-        }
-    }
-
-    pub fn pool_mut(&mut self, school: MagicSchool) -> &mut MagicPool {
-        match school {
-            MagicSchool::Kiho => &mut self.kiho,
-            MagicSchool::Chiseijutsu => &mut self.chiseijutsu,
-            MagicSchool::Yokaijutsu => &mut self.yokaijutsu,
-            MagicSchool::Kamishin => &mut self.kamishin,
-        }
-    }
-
-    pub fn apply_regen(&mut self, ticks: u32) {
-        self.kiho.apply_regen(ticks);
-        self.chiseijutsu.apply_regen(ticks);
-        self.yokaijutsu.apply_regen(ticks);
-        self.kamishin.apply_regen(ticks);
-    }
-
-    pub fn can_spend(&self, school: MagicSchool, amount: f32) -> bool {
-        self.pool(school).can_spend(amount)
-    }
-
-    pub fn spend(&mut self, school: MagicSchool, amount: f32) -> bool {
-        self.pool_mut(school).spend(amount)
-    }
-}
-
 #[derive(Component, Debug)]
-pub struct ActionPoints {
+pub struct Magic {
     pub current: i32,
     pub max: i32,
+    pub regen: i32,
 }
 
-impl Default for ActionPoints {
-    fn default() -> Self {
-        Self::new(DEFAULT_ACTION_POINTS)
-    }
+#[derive(Debug, Clone, Message)]
+pub struct MagicRegenEvent;
+
+#[derive(Component, Debug)]
+pub struct Stamina {
+    pub current: i32,
+    pub max: i32,
+    pub regen: i32,
 }
 
-impl ActionPoints {
-    pub fn new(max: i32) -> Self {
-        let max = max.max(0);
-        Self { current: max, max }
-    }
-
-    pub fn can_spend(&self, cost: i32) -> bool {
-        cost <= 0 || self.current >= cost
-    }
-
-    pub fn spend(&mut self, cost: i32) -> bool {
-        if !self.can_spend(cost) {
-            return false;
-        }
-        self.current -= cost.max(0);
-        true
-    }
-}
+#[derive(Debug, Clone, Message)]
+pub struct StaminaRegenEvent;
 
 /// Base stats that describe the character (unchanged by temporary modifiers)
 #[derive(Component, Debug)]
@@ -243,17 +101,14 @@ pub struct CombatStats {
     pub movement: i32,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum Stat {
     Health,
     HealthRegen,
     Magic,
     MagicRegen,
-    Kiho,
-    Chiseijutsu,
-    Yokaijutsu,
-    Kamishin,
-    ActionPoints,
+    Stamina,
+    StaminaRegen,
     Lethality,
     Hit,
     Agility,
@@ -267,7 +122,7 @@ fn get_stat_value(
     combat_stats: Option<&CombatStats>,
     health: Option<&Health>,
     magic: Option<&Magic>,
-    action_points: Option<&ActionPoints>,
+    stamina: Option<&Stamina>,
 ) -> i32 {
     match stat {
         Stat::Lethality => combat_stats.map(|c| c.base_lethality as i32).unwrap_or(0),
@@ -277,13 +132,8 @@ fn get_stat_value(
         Stat::Mind => combat_stats.map(|c| c.base_mind as i32).unwrap_or(0),
         Stat::Morale => combat_stats.map(|c| c.base_morale as i32).unwrap_or(0),
         Stat::Health => health.map(|h| h.current as i32).unwrap_or(0),
-        Stat::Magic => magic.map(|m| m.total_current().round() as i32).unwrap_or(0),
-        Stat::MagicRegen => magic.map(|m| (m.total_regen_per_tick() * 1000.0).round() as i32).unwrap_or(0),
-        Stat::Kiho => magic.map(|m| m.kiho.current.round() as i32).unwrap_or(0),
-        Stat::Chiseijutsu => magic.map(|m| m.chiseijutsu.current.round() as i32).unwrap_or(0),
-        Stat::Yokaijutsu => magic.map(|m| m.yokaijutsu.current.round() as i32).unwrap_or(0),
-        Stat::Kamishin => magic.map(|m| m.kamishin.current.round() as i32).unwrap_or(0),
-        Stat::ActionPoints => action_points.map(|ap| ap.current as i32).unwrap_or(0),
+        Stat::Magic => magic.map(|m| m.current as i32).unwrap_or(0),
+        Stat::Stamina => stamina.map(|s| s.current as i32).unwrap_or(0),
         // Add other mappings if you have regen or other derived stats
         _ => 0,
     }
@@ -295,19 +145,13 @@ fn get_stat_value(
 #[derive(Component, Debug, Default)]
 pub struct GrowthAttributes {
     pub vitality: u8,   // influences Health curve, little influence on endurance and power
-    pub endurance: u8,  // legacy endurance attribute, currently reserved for future non-AP uses
-    pub spirit: u8,     // influences Magic curve, little influence on insight.
-    // TO DO: Every point in spirit must give three points to distribute between Kiho (arcane magic), Chiseijutsu (nature magic), Yokaijutsu (occult/yokai magic), and Kamishin (divine magic)
+    pub endurance: u8,  // influences Stamina curve, little influence on vitality and power
+    pub spirit: u8,     // influences Magic curve, little influence on insight
     pub power: u8,      // influences lethality
     pub control: u8,    // influences hit, little influence on agility
     pub agility: u8,    // influences agility, little influence on control
     pub insight: u8,    // influences mind, little influence on resolve
     pub resolve: u8,    // influences morale
-
-    pub kiho: u8,
-    pub chiseijutsu: u8,
-    pub yokaijutsu: u8,
-    pub kamishin: u8,
 }
 
 // A character-specific growth curve.
@@ -315,7 +159,9 @@ pub struct GrowthAttributes {
 #[derive(Component, Debug, Clone)]
 pub struct GrowthCurve {
     pub hp_curve: f32,
+    pub stamina_curve: f32,
     pub magic_curve: f32,
+
     pub lethality_curve: f32,
     pub hit_curve: f32,
     pub agility_curve: f32,
@@ -328,6 +174,7 @@ impl Default for GrowthCurve {
     fn default() -> Self {
         Self {
             hp_curve: 1.0,
+            stamina_curve: 1.0,
             magic_curve: 1.0,
             lethality_curve: 1.0,
             hit_curve: 1.0,
@@ -342,6 +189,7 @@ impl GrowthCurve {
     pub fn paladin_curve() -> Self {
         Self {
             hp_curve: 1.2,
+            stamina_curve: 1.1,
             magic_curve: 0.9,
             lethality_curve: 1.0,
             hit_curve: 1.0,
@@ -354,6 +202,7 @@ impl GrowthCurve {
     pub fn rogue_curve() -> Self {
         Self {
             hp_curve: 0.9,
+            stamina_curve: 1.0,
             magic_curve: 0.9,
             lethality_curve: 1.1,
             hit_curve: 1.1,
@@ -366,6 +215,7 @@ impl GrowthCurve {
     pub fn spirit_mage_curve() -> Self {
         Self {
             hp_curve: 0.9,
+            stamina_curve: 0.9,
             magic_curve: 1.3,
             lethality_curve: 0.9,
             hit_curve: 1.0,
@@ -430,170 +280,12 @@ pub struct AttributePointPool {
     pub spent: u32,
 }
 
-#[derive(Component, Debug, Default, Clone)]
-pub struct Inventory {
-    pub item_ids: Vec<u16>,
-}
-
-impl Inventory {
-    pub fn has_item(&self, item_id: u16) -> bool {
-        self.item_ids.contains(&item_id)
-    }
-
-    pub fn add_item(&mut self, item_id: u16) {
-        self.item_ids.push(item_id);
-    }
-
-    pub fn remove_item(&mut self, item_id: u16) -> bool {
-        if let Some(index) = self.item_ids.iter().position(|id| *id == item_id) {
-            self.item_ids.remove(index);
-            return true;
-        }
-        false
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum EquipmentSlotType {
-    Weapon,
-    Armor,
-    Accessory,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum WeaponType {
-    Sword,
-    Dagger,
-    Staff,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum ArmorType {
-    HeavyArmor,
-    LightArmor,
-    Robe,
-    Shield,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum AccessoryType {
-    Charm,
-    Ring,
-    Relic,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum EquipmentType {
-    Weapon(WeaponType),
-    Armor(ArmorType),
-    Accessory(AccessoryType),
-}
-
-impl EquipmentType {
-    pub fn slot_type(self) -> EquipmentSlotType {
-        match self {
-            EquipmentType::Weapon(_) => EquipmentSlotType::Weapon,
-            EquipmentType::Armor(_) => EquipmentSlotType::Armor,
-            EquipmentType::Accessory(_) => EquipmentSlotType::Accessory,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EquipmentSlot {
-    pub slot_type: EquipmentSlotType,
-    pub allowed_types: Vec<EquipmentType>,
-    pub equipped: Option<Entity>,
-}
-
-/// Per-character equipment rules and current state.
-/// The slots present in `slots` define what this character can equip.
-#[derive(Component, Debug, Default, Clone)]
-pub struct EquipmentLoadout {
-    pub slots: Vec<EquipmentSlot>,
-}
-
-impl EquipmentLoadout {
-    pub fn with_slots(slot_types: impl IntoIterator<Item = EquipmentSlotType>) -> Self {
-        Self {
-            slots: slot_types
-                .into_iter()
-                .map(|slot_type| EquipmentSlot {
-                    slot_type,
-                    allowed_types: default_allowed_types_for_slot(slot_type),
-                    equipped: None,
-                })
-                .collect(),
-        }
-    }
-
-    pub fn with_allowed_types(
-        slots: impl IntoIterator<Item = (EquipmentSlotType, Vec<EquipmentType>)>,
-    ) -> Self {
-        Self {
-            slots: slots
-                .into_iter()
-                .map(|(slot_type, allowed_types)| EquipmentSlot {
-                    slot_type,
-                    allowed_types,
-                    equipped: None,
-                })
-                .collect(),
-        }
-    }
-
-    pub fn equip_in_first_matching_slot(
-        &mut self,
-        equipment_type: EquipmentType,
-        item: Entity,
-    ) -> bool {
-        if let Some(slot) = self
-            .slots
-            .iter_mut()
-            .find(|slot| {
-                slot.slot_type == equipment_type.slot_type()
-                    && slot.allowed_types.contains(&equipment_type)
-                    && slot.equipped.is_none()
-            })
-        {
-            slot.equipped = Some(item);
-            return true;
-        }
-
-        if let Some(slot) = self.slots.iter_mut().find(|slot| {
-            slot.slot_type == equipment_type.slot_type()
-                && slot.allowed_types.contains(&equipment_type)
-        }) {
-            slot.equipped = Some(item);
-            return true;
-        }
-
-        false
-    }
-
-    pub fn equipped_in_slot(&self, slot_type: EquipmentSlotType) -> Option<Entity> {
-        self.slots
-            .iter()
-            .find(|slot| slot.slot_type == slot_type)
-            .and_then(|slot| slot.equipped)
-    }
-
-    pub fn equipped_items(&self) -> impl Iterator<Item = Entity> + '_ {
-        self.slots.iter().filter_map(|slot| slot.equipped)
-    }
-
-    pub fn has_equipped_item_id(
-        &self,
-        item_id: u16,
-        equipment_q: &Query<&Equipment>,
-    ) -> bool {
-        self.equipped_items().any(|entity| {
-            equipment_q
-                .get(entity)
-                .map(|equipment| equipment.id == item_id)
-                .unwrap_or(false)
-        })
-    }
+/// Equipment slots hold Entities referencing equipment items
+#[derive(Component, Debug, Default)]
+pub struct EquipmentSlots {
+    pub weapon: Option<Entity>,
+    pub armor: Option<Entity>,
+    pub accessories: Vec<Entity>,
 }
 
 #[derive(Component, Debug, Clone)]
@@ -624,7 +316,6 @@ pub struct SpiritMediumBehavior; // Toshiko
 pub struct Equipment {
     pub id: u16,
     pub name: String,
-    pub equipment_type: EquipmentType,
     pub base_price: u32,
     pub materials: Vec<ItemMaterialCost>,
     pub lethality: i32,
@@ -634,49 +325,6 @@ pub struct Equipment {
     pub mind: i32,
     pub morale: i32,
 }
-
-#[derive(Component, Debug, Clone, Copy, Serialize, Deserialize)]
-pub struct WeaponSharpness {
-    pub current: u8,
-    pub loss_per_attack: u8,
-}
-
-impl WeaponSharpness {
-    pub fn new(current: u8, loss_per_attack: u8) -> Self {
-        Self {
-            current: current.min(100),
-            loss_per_attack,
-        }
-    }
-
-    pub fn damage_multiplier(&self) -> f32 {
-        0.6 + (self.current.min(100) as f32 / 100.0) * 0.4
-    }
-
-    pub fn dull_on_attack(&mut self) {
-        self.current = self.current.saturating_sub(self.loss_per_attack);
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum WeaponBeforeAttackEffect {
-    AddFlatDamage { flat: i32 },
-    MultiplyBaseDamage { multiplier: f32 },
-    AddHit { amount: i32 },
-    OverrideDamageType { damage_type: DamageType },
-    ApplyTemporaryStatModifier {
-        stat: Stat,
-        multiplier: f32,
-        duration_turns: u32,
-    },
-    BonusWhenSharp {
-        minimum_sharpness: u8,
-        flat_damage: i32,
-    },
-}
-
-#[derive(Component, Debug, Clone, Default, Serialize, Deserialize)]
-pub struct WeaponBeforeAttackEffects(pub Vec<WeaponBeforeAttackEffect>);
 
 #[repr(u32)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -747,35 +395,15 @@ impl Default for AccumulatedAgility {
     }
 }
 
-/// AI parameters (kept as component). Cheap to copy so the BT evaluator
-/// can take a snapshot.
-#[derive(Component, Debug, Clone, Copy, Serialize, Deserialize)]
+/// AI parameters (kept as component)
+#[derive(Component, Debug)]
 pub struct AIParameters {
-    /// 0..=10, how eagerly the AI commits to offense.
     pub aggressiveness: u8,
-    /// 0..=10, how strongly the AI prefers safe plays.
     pub caution: u8,
-    /// 0..=10, willingness to investigate / probe (currently unused by BT).
     pub curiosity: u8,
-    /// 0..=10, how reliably the AI can detect and target threats.
     pub perception: u8,
-    /// 0..=10, willingness to stay engaged when wounded.
     pub bravery: u8,
-    /// 0..=10, how long the AI will hold position before pressing attacks.
     pub patience: u8,
-    /// HP percentage at which the AI flips into panic behaviour
-    /// (heal/flee/defend rather than attack). Default 25.
-    pub panic_threshold: u8,
-    /// 0..=10, higher values cause the AI to spend magic more freely.
-    /// Lower values save mana for emergencies.
-    pub magic_thrift: u8,
-    /// 0..=10, weight given to ally protection over self-preservation.
-    pub group_loyalty: u8,
-    /// Which target the AI prefers when picking among living enemies.
-    pub focus_preference: TargetFocus,
-    /// Whether the AI prefers melee, ranged, or any range when picking
-    /// abilities (used by BT conditions; unused for basic attacks).
-    pub preferred_range: PreferredRange,
 }
 
 impl Default for AIParameters {
@@ -787,30 +415,8 @@ impl Default for AIParameters {
             perception: 5,
             bravery: 5,
             patience: 5,
-            panic_threshold: 25,
-            magic_thrift: 5,
-            group_loyalty: 5,
-            focus_preference: TargetFocus::default(),
-            preferred_range: PreferredRange::default(),
         }
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-pub enum TargetFocus {
-    #[default]
-    LowestHp,
-    HighestHp,
-    Closest,
-    Furthest,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-pub enum PreferredRange {
-    #[default]
-    Any,
-    Melee,
-    Ranged,
 }
 
 /// -----------------------------
@@ -825,7 +431,6 @@ pub struct AttackIntentEvent {
     pub context: AttackContext,
 }
 
-#[derive(Debug, Clone, Message)]
 pub struct AbilityIntentEvent {
     pub user: Entity,
     pub ability_id: u16,
@@ -845,7 +450,6 @@ pub struct WaitIntentEvent {
 pub struct BeforeAttackEvent {
     pub attacker: Entity,
     pub target: Entity,
-    pub ability: Option<Ability>,
     pub context: AttackContext,
 }
 
@@ -853,7 +457,6 @@ pub struct BeforeAttackEvent {
 pub struct AttackExecuteEvent {
     pub attacker: Entity,
     pub target: Entity,
-    pub ability: Option<Ability>,
     pub context: AttackContext,
 }
 
@@ -861,7 +464,6 @@ pub struct AttackExecuteEvent {
 pub struct BeforeHitEvent {
     pub attacker: Entity,
     pub target: Entity,
-    pub ability: Option<Ability>,
     pub context: AttackContext,
 }
 
@@ -969,7 +571,6 @@ pub struct AttackContext {
     pub base_hit: i32,
     pub extra_flat_damage: i32,
     pub damage_type: Option<DamageType>,
-    pub weapon: Option<Entity>,
     pub multipliers: Vec<StatModifier>, // trackers for multiplicative modifiers applied during flow
 }
 
@@ -980,7 +581,6 @@ impl Default for AttackContext {
             base_hit: 0,
             extra_flat_damage: 0,
             damage_type: None,
-            weapon: None,
             multipliers: Vec::new(),
         }
     }
@@ -996,126 +596,6 @@ pub struct AwardXpEvent {
 pub struct LootEvent {
     pub loot: Vec<LootItem>,
     pub dropped_by: Entity,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ItemUseTrigger {
-    Manual,
-    PreDeath,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub enum ConsumableEffect {
-    Heal { amount: u32 },
-}
-
-#[derive(Debug, Clone)]
-pub enum InventoryItemKind {
-    Consumable {
-        effect: ConsumableEffect,
-        usable_on_others: bool,
-        usable_pre_death: bool,
-    },
-    Equipment(EquipmentType),
-}
-
-#[derive(Debug, Clone)]
-pub struct InventoryItemDefinition {
-    pub id: u16,
-    pub name: String,
-    pub kind: InventoryItemKind,
-}
-
-#[derive(Resource, Debug, Clone)]
-pub struct InventoryItemCatalog(pub HashMap<u16, InventoryItemDefinition>);
-
-impl Default for InventoryItemCatalog {
-    fn default() -> Self {
-        let mut items = HashMap::new();
-        items.insert(
-            1001,
-            InventoryItemDefinition {
-                id: 1001,
-                name: "Field Medicine".to_string(),
-                kind: InventoryItemKind::Consumable {
-                    effect: ConsumableEffect::Heal { amount: 35 },
-                    usable_on_others: true,
-                    usable_pre_death: false,
-                },
-            },
-        );
-        items.insert(
-            1002,
-            InventoryItemDefinition {
-                id: 1002,
-                name: "Last Chance Tonic".to_string(),
-                kind: InventoryItemKind::Consumable {
-                    effect: ConsumableEffect::Heal { amount: 50 },
-                    usable_on_others: false,
-                    usable_pre_death: true,
-                },
-            },
-        );
-        Self(items)
-    }
-}
-
-#[derive(Debug, Clone, Message)]
-pub struct UseItemIntentEvent {
-    pub user: Entity,
-    pub item_id: u16,
-    pub target: Option<Entity>,
-    pub trigger: ItemUseTrigger,
-}
-
-#[derive(Debug, Clone, Message)]
-pub struct GiveItemIntentEvent {
-    pub giver: Entity,
-    pub receiver: Entity,
-    pub item_id: u16,
-}
-
-#[derive(Debug, Clone, Message)]
-pub struct ItemTransferredEvent {
-    pub giver: Entity,
-    pub receiver: Entity,
-    pub item_id: u16,
-}
-
-#[derive(Debug, Clone, Message)]
-pub struct ItemUsedEvent {
-    pub user: Entity,
-    pub target: Entity,
-    pub item_id: u16,
-    pub trigger: ItemUseTrigger,
-}
-
-pub fn request_use_item(
-    writer: &mut MessageWriter<UseItemIntentEvent>,
-    user: Entity,
-    item_id: u16,
-    target: Option<Entity>,
-    trigger: ItemUseTrigger,
-) {
-    writer.write(UseItemIntentEvent {
-        user,
-        item_id,
-        target,
-        trigger,
-    });
-}
-
-pub fn request_give_item(
-    writer: &mut MessageWriter<GiveItemIntentEvent>,
-    giver: Entity,
-    receiver: Entity,
-    item_id: u16,
-) {
-    writer.write(GiveItemIntentEvent {
-        giver,
-        receiver,
-        item_id,
-    });
 }
 
 #[derive(Debug, Clone)]
@@ -1401,15 +881,16 @@ fn rogue_dodge_system(
 fn equipment_before_attack_listener(
     mut befores: MessageReader<BeforeAttackEvent>,
     equipment_q: Query<(Entity, &Equipment, &EquipmentHooks)>,
-    loadout_q: Query<&EquipmentLoadout>,
+    slots_q: Query<&EquipmentSlots>,
     mut commands: Commands,
-    mut modifiers_q: Query<&mut StatModifiers>,
     timestamp: Res<Timestamp>,
 ) {
     for ev in befores.iter() {
-        if let Ok(loadout) = loadout_q.get(ev.attacker) {
-            for equipped_item in loadout.equipped_items() {
-                if let Ok((equip_entity, _equip, hooks)) = equipment_q.get(equipped_item) {
+        // find equipment in attacker's slots
+        if let Ok(slots) = slots_q.get(ev.attacker) {
+            // weapon
+            if let Some(weapon_entity) = slots.weapon {
+                if let Ok((equip_entity, _equip, hooks)) = equipment_q.get(weapon_entity) {
                     for hook in &hooks.0 {
                         match hook {
                             EquipHook::BeforeAttackMultiplier {
@@ -1417,134 +898,21 @@ fn equipment_before_attack_listener(
                                 multiplier,
                                 duration_turns,
                             } => {
-                                let modifier = StatModifier {
+                                commands.entity(ev.attacker).insert(StatModifiers(vec![StatModifier {
                                     stat: *stat,
                                     multiplier: *multiplier,
                                     expires_at_timestamp: Some(
                                         timestamp.0.saturating_add(*duration_turns),
                                     ),
                                     source: Some(equip_entity),
-                                };
-
-                                if let Ok(mut modifiers) = modifiers_q.get_mut(ev.attacker) {
-                                    modifiers.0.push(modifier);
-                                } else {
-                                    commands.entity(ev.attacker).insert(StatModifiers(vec![modifier]));
-                                }
+                                }]));
                             }
                             _ => {}
                         }
                     }
                 }
             }
-        }
-    }
-}
-
-fn weapon_before_attack_effect_system(
-    mut events: MessageMutator<BeforeAttackEvent>,
-    loadout_q: Query<&EquipmentLoadout>,
-    effects_q: Query<&WeaponBeforeAttackEffects>,
-    sharpness_q: Query<&WeaponSharpness>,
-    mut commands: Commands,
-    mut modifiers_q: Query<&mut StatModifiers>,
-    timestamp: Res<Timestamp>,
-) {
-    for ev in events.read() {
-        let Some(weapon_entity) = loadout_q
-            .get(ev.attacker)
-            .ok()
-            .and_then(|loadout| loadout.equipped_in_slot(EquipmentSlotType::Weapon))
-        else {
-            continue;
-        };
-
-        ev.context.weapon = Some(weapon_entity);
-
-        let sharpness = sharpness_q
-            .get(weapon_entity)
-            .map(|s| s.current.min(100))
-            .unwrap_or(100);
-
-        if let Ok(effects) = effects_q.get(weapon_entity) {
-            for effect in &effects.0 {
-                match effect {
-                    WeaponBeforeAttackEffect::AddFlatDamage { flat } => {
-                        ev.context.extra_flat_damage += *flat;
-                    }
-                    WeaponBeforeAttackEffect::MultiplyBaseDamage { multiplier } => {
-                        ev.context.base_lethality =
-                            ((ev.context.base_lethality as f32) * *multiplier).round() as i32;
-                    }
-                    WeaponBeforeAttackEffect::AddHit { amount } => {
-                        ev.context.base_hit += *amount;
-                    }
-                    WeaponBeforeAttackEffect::OverrideDamageType { damage_type } => {
-                        ev.context.damage_type = Some(*damage_type);
-                    }
-                    WeaponBeforeAttackEffect::ApplyTemporaryStatModifier {
-                        stat,
-                        multiplier,
-                        duration_turns,
-                    } => {
-                        let modifier = StatModifier {
-                            stat: *stat,
-                            multiplier: *multiplier,
-                            expires_at_timestamp: Some(
-                                timestamp.0.saturating_add(*duration_turns),
-                            ),
-                            source: Some(weapon_entity),
-                        };
-
-                        if let Some(existing) = ev
-                            .context
-                            .multipliers
-                            .iter_mut()
-                            .find(|m| m.stat == *stat && m.source == Some(weapon_entity))
-                        {
-                            existing.multiplier *= *multiplier;
-                        } else {
-                            ev.context.multipliers.push(modifier.clone());
-                        }
-
-                        if let Ok(mut modifiers) = modifiers_q.get_mut(ev.attacker) {
-                            modifiers.0.push(modifier);
-                        } else {
-                            commands
-                                .entity(ev.attacker)
-                                .insert(StatModifiers(vec![modifier]));
-                        }
-                    }
-                    WeaponBeforeAttackEffect::BonusWhenSharp {
-                        minimum_sharpness,
-                        flat_damage,
-                    } => {
-                        if sharpness >= *minimum_sharpness {
-                            ev.context.extra_flat_damage += *flat_damage;
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-fn dull_weapon_on_attack_system(
-    mut events: MessageReader<BeforeAttackEvent>,
-    loadout_q: Query<&EquipmentLoadout>,
-    mut sharpness_q: Query<&mut WeaponSharpness>,
-) {
-    for ev in events.iter() {
-        let Some(weapon_entity) = loadout_q
-            .get(ev.attacker)
-            .ok()
-            .and_then(|loadout| loadout.equipped_in_slot(EquipmentSlotType::Weapon))
-        else {
-            continue;
-        };
-
-        if let Ok(mut sharpness) = sharpness_q.get_mut(weapon_entity) {
-            sharpness.dull_on_attack();
+            // TODO: check armor and accessories similarly
         }
     }
 }
@@ -1558,7 +926,6 @@ fn before_to_execute(
         execs.send(AttackExecuteEvent {
             attacker: ev.attacker,
             target: ev.target,
-            ability: ev.ability.clone(),
             context: ev.context.clone(),
         });
     }
@@ -1574,7 +941,6 @@ fn before_hit_listeners(
         before_hits.send(BeforeHitEvent {
             attacker: ev.attacker,
             target: ev.target,
-            ability: ev.ability.clone(),
             context: ev.context.clone(),
         });
     }
@@ -1624,44 +990,26 @@ fn before_hit_listeners(
 
 /// Process AttackIntentEvent -> send BeforeAttackEvent
 fn process_attack_intent(
-    mut intents: MessageReader<AttackIntentEvent>,
-    mut before_attacks: MessageWriter<BeforeAttackEvent>,
-) {
-    for intent in intents.iter() {
-        before_attacks.send(BeforeAttackEvent {
-            attacker: intent.attacker,
-            target: intent.target,
-            ability: intent.ability.clone(),
-            context: intent.context.clone(),
-        });
-    }
-}
-
-fn queue_damage_from_before_attack(
     mut dq: ResMut<DamageQueue>,
-    mut befores: MessageReader<BeforeAttackEvent>,
+    mut intents: MessageReader<AttackIntentEvent>,
     stats_q: Query<&CombatStats>,
     modifiers_q: Query<&StatModifiers>,
-    targets_stats_q: Query<&CombatStats>,
-    loadout_q: Query<&EquipmentLoadout>,
-    equipment_q: Query<&Equipment>,
-    sharpness_q: Query<&WeaponSharpness>,
+    targets_stats_q: Query<&CombatStats>,  // to read target agility for hit roll
+    health_q: Query<&Health>,              // for any stat scaling needing HP
+    magic_q: Query<&Magic>,
+    stamina_q: Query<&Stamina>,
 ) {
-    for ev in befores.iter() {
-        let attacker = ev.attacker;
-        let target = ev.target;
+    for intent in intents.iter() {
+        let attacker = intent.attacker;
+        let target = intent.target;
 
+        // Build base context from attacker's CombatStats (or ability context if present)
         let att_stats = stats_q.get(attacker).ok();
-        let mut base_leth = ev.context.base_lethality;
-        if base_leth == 0 {
-            base_leth = att_stats.map(|s| s.base_lethality).unwrap_or(0);
-        }
-        let mut base_hit = ev.context.base_hit;
-        if base_hit == 0 {
-            base_hit = att_stats.map(|s| s.base_hit).unwrap_or(50);
-        }
-        let mut flat = ev.context.extra_flat_damage;
+        let mut base_leth = att_stats.map(|s| s.base_lethality as i32).unwrap_or(0);
+        let base_hit = att_stats.map(|s| s.base_hit as i32).unwrap_or(50);
+        let mut flat = intent.context.extra_flat_damage as i32; // keep flat
 
+        // Apply attacker's StatModifiers multiplicatively for attacker-side scaling
         if let Ok(mods) = modifiers_q.get(attacker) {
             for m in &mods.0 {
                 match m.stat {
@@ -1669,94 +1017,73 @@ fn queue_damage_from_before_attack(
                         base_leth = ((base_leth as f32) * m.multiplier).round() as i32;
                     }
                     Stat::Hit => {
-                        base_hit = ((base_hit as f32) * m.multiplier).round() as i32;
+                        // we don't change base_leth here, but we might store to adjust accuracy
+                    }
+                    Stat::Agility | Stat::Mind | Stat::Morale => {
+                        // If your modifiers can scale other stats used for scaling,
+                        // handle them here (optional).
                     }
                     _ => {}
                 }
             }
         }
 
+        // If this intent was produced by an Ability, examine ability.effects
+        // and collect scaled_with / defended_with; otherwise use defaults for a basic attack.
         let mut scaled_with: Vec<(Stat, f32)> = Vec::new();
         let mut defended_with: Vec<(Stat, f32)> = Vec::new();
-
-        if let Some(ability) = ev.ability.as_ref() {
+        if let Some(ability) = intent.ability.as_ref() {
+            // gather scaling/defense info from ability.effects
             for eff in &ability.effects {
                 match eff {
-                    AbilityEffect::Damage {
-                        scaled_with: sw,
-                        defended_with: dw,
-                        ..
-                    } => {
+                    AbilityEffect::Damage { scaled_with: sw, defended_with: dw, .. } => {
                         scaled_with.push((*sw, 1.0));
                         defended_with.push((*dw, 1.0));
                     }
-                    AbilityEffect::Heal { .. } | AbilityEffect::Buff { .. } => {}
+                    AbilityEffect::Heal { .. } => { /* skip */ }
+                    AbilityEffect::Buff { .. } => { /* skip */ }
                 }
             }
         }
 
+        // Default for normal attack if none specified
         if scaled_with.is_empty() {
             scaled_with.push((Stat::Lethality, 1.0));
         }
         if defended_with.is_empty() {
+            // physical attacks are typically defended by armor (or base_armor)
             defended_with.push((Stat::Armor, 1.0));
         }
 
-        if let Some(weapon_entity) = ev
-            .context
-            .weapon
-            .or_else(|| {
-                loadout_q
-                    .get(attacker)
-                    .ok()
-                    .and_then(|loadout| loadout.equipped_in_slot(EquipmentSlotType::Weapon))
-            })
-        {
-            if let Ok(weapon) = equipment_q.get(weapon_entity) {
-                base_leth += weapon.lethality;
-                base_hit += weapon.hit;
-                flat += weapon.agility.max(0) / 2;
-            }
-        }
-
+        // APPLY ATTACKER-SIDE SCALING IMMEDIATELY (so amount is pre-defense):
+        // For each (stat, mult) in scaled_with add attacker_stat * mult to base_leth
         if let Some(a_stats) = att_stats {
             for (stat, mult) in &scaled_with {
                 let val = get_stat_value(*stat, Some(a_stats), None, None, None);
+                // apply rounding and scale factor — tweak divisor as needed
                 base_leth += (val as f32 * *mult / 10.0).round() as i32;
+                // NOTE: dividing by 10 here prevents massive values; tune to taste.
             }
         }
 
-        let mut pre_def_damage = (base_leth + flat).max(0);
+        // Calculate final pre-defense damage (base lethality + flat)
+        let pre_def_damage = (base_leth + flat).max(0);
 
-        if let Some(weapon_entity) = ev
-            .context
-            .weapon
-            .or_else(|| {
-                loadout_q
-                    .get(attacker)
-                    .ok()
-                    .and_then(|loadout| loadout.equipped_in_slot(EquipmentSlotType::Weapon))
-            })
-        {
-            if let Ok(sharpness) = sharpness_q.get(weapon_entity) {
-                pre_def_damage =
-                    ((pre_def_damage as f32) * sharpness.damage_multiplier()).round() as i32;
-            }
-        }
-
+        // --- HIT CHANCE (do this now, using target agility) -----------------------
+        // Use attacker hit vs target agility for miss roll
         let attacker_hit_f = base_hit as f32;
-        let target_agi_f = targets_stats_q
-            .get(target)
-            .map(|t| t.base_agility as f32)
-            .unwrap_or(0.0);
+        let target_agi_f = targets_stats_q.get(target).map(|t| t.base_agility as f32).unwrap_or(0.0);
+
+        // chance formula: hit / (hit + agility)
         let chance = attacker_hit_f / (attacker_hit_f + target_agi_f + 0.0001);
 
         if rand::random::<f32>() > chance {
+            // It's a miss — push a MISS special entry or skip pushing damage.
             dq.0.push(QueuedDamage {
                 attacker,
                 target,
                 amount: DamageSignal::Miss as i32,
-                damage_type: ev.context.damage_type.unwrap_or(DamageType::Physical),
+                damage_type: DamageType::Physical,
                 scaled_with: vec![],
                 defended_with: vec![],
                 accuracy_override: None,
@@ -1766,16 +1093,21 @@ fn queue_damage_from_before_attack(
             continue;
         }
 
+        // If hit, push the pre-defense damage into the queue together with the defender-side stats
         dq.0.push(QueuedDamage {
             attacker,
             target,
             amount: pre_def_damage,
-            damage_type: ev.context.damage_type.unwrap_or(DamageType::Physical),
-            scaled_with: vec![],
-            defended_with,
+            damage_type: intent.context.damage_type.unwrap_or(DamageType::Physical),
+            scaled_with,   // we keep this as metadata, though we've already applied them
+            defended_with, // used by the damage processor to subtract defenses
             accuracy_override: None,
             crit_chance: 0.0,
-            tags: vec![],
+            tags: intent
+                .ability
+                .as_ref()
+                .map(|a| vec![DamageTag::FromAbility(a.id)])
+                .unwrap_or_default(),
         });
     }
 }
@@ -1851,95 +1183,12 @@ fn process_damage_queue_system(
     }
 }
 
-fn apply_consumable_effect_to_health(
-    target: Entity,
-    effect: ConsumableEffect,
-    health_q: &mut Query<&mut Health>,
-) -> bool {
-    let Ok(mut hp) = health_q.get_mut(target) else {
-        return false;
-    };
-
-    match effect {
-        ConsumableEffect::Heal { amount } => {
-            hp.current = (hp.current + amount as i32).min(hp.max);
-            true
-        }
-    }
-}
-
-fn find_pre_death_item(inventory: &Inventory, item_catalog: &InventoryItemCatalog) -> Option<u16> {
-    inventory.item_ids.iter().copied().find(|item_id| {
-        matches!(
-            item_catalog.0.get(item_id).map(|item| &item.kind),
-            Some(InventoryItemKind::Consumable {
-                usable_pre_death: true,
-                ..
-            })
-        )
-    })
-}
-
-fn try_use_pre_death_item(
-    target: Entity,
-    killer: Entity,
-    inventory_q: &mut Query<&mut Inventory>,
-    health_q: &mut Query<&mut Health>,
-    item_catalog: &InventoryItemCatalog,
-    item_used_writer: &mut MessageWriter<ItemUsedEvent>,
-) -> bool {
-    let Ok(mut inventory) = inventory_q.get_mut(target) else {
-        return false;
-    };
-
-    let Some(item_id) = find_pre_death_item(&inventory, item_catalog) else {
-        return false;
-    };
-
-    let Some(item_def) = item_catalog.0.get(&item_id) else {
-        return false;
-    };
-
-    let InventoryItemKind::Consumable {
-        effect,
-        usable_pre_death: true,
-        ..
-    } = item_def.kind
-    else {
-        return false;
-    };
-
-    if !inventory.remove_item(item_id) {
-        return false;
-    }
-
-    if apply_consumable_effect_to_health(target, effect, health_q) {
-        item_used_writer.write(ItemUsedEvent {
-            user: target,
-            target,
-            item_id,
-            trigger: ItemUseTrigger::PreDeath,
-        });
-        info!(
-            "Entity {:?} used {} ({}) before death against attacker {:?}",
-            target, item_def.name, item_def.id, killer
-        );
-        return true;
-    }
-
-    inventory.add_item(item_id);
-    false
-}
-
 
 /// Apply damage to target's Health and emit AfterHitEvent
 fn apply_damage_system(
     mut reader: MessageReader<DamageEvent>,
     mut health_q: Query<&mut Health>,
-    mut inventory_q: Query<&mut Inventory>,
-    item_catalog: Res<InventoryItemCatalog>,
     mut after_writer: MessageWriter<AfterHitEvent>,
-    mut item_used_writer: MessageWriter<ItemUsedEvent>,
     mut death_writer: MessageWriter<DeathEvent>,
 ) {
     for ev in reader.iter() {
@@ -1947,19 +1196,6 @@ fn apply_damage_system(
             let before = hp.current;
             hp.current = hp.current.saturating_sub(ev.amount);
             let applied = before - hp.current;
-            let lethal = hp.current == 0;
-            drop(hp);
-
-            if lethal {
-                let _ = try_use_pre_death_item(
-                    ev.target,
-                    ev.attacker,
-                    &mut inventory_q,
-                    &mut health_q,
-                    &item_catalog,
-                    &mut item_used_writer,
-                );
-            }
 
             after_writer.send(AfterHitEvent {
                 attacker: ev.attacker,
@@ -1968,177 +1204,14 @@ fn apply_damage_system(
                 damage_type: ev.damage_type,
             });
 
-            if let Ok(hp) = health_q.get(ev.target) {
-                if hp.current == 0 {
-                    death_writer.send(DeathEvent {
-                        entity: ev.target,
-                        killer: Some(ev.attacker),
-                    });
-                }
-            }
+            if hp.current == 0 {
+            death_writer.send(DeathEvent {
+                entity: ev.target,
+                killer: Some(ev.attacker),
+            });
         }
     }
 }
-
-fn apply_heal_system(
-    mut reader: MessageReader<HealEvent>,
-    mut health_q: Query<&mut Health>,
-) {
-    for ev in reader.iter() {
-        if let Ok(mut hp) = health_q.get_mut(ev.target) {
-            hp.current = (hp.current + ev.amount as i32).min(hp.max);
-        }
-    }
-}
-
-fn resolve_use_item_intent_system(
-    mut intents: MessageReader<UseItemIntentEvent>,
-    item_catalog: Res<InventoryItemCatalog>,
-    mut inventory_q: Query<&mut Inventory>,
-    mut health_q: Query<&mut Health>,
-    mut used_writer: MessageWriter<ItemUsedEvent>,
-) {
-    for intent in intents.iter() {
-        let target = intent.target.unwrap_or(intent.user);
-
-        let Some(item_def) = item_catalog.0.get(&intent.item_id) else {
-            warn!("Unknown item id {} for item use", intent.item_id);
-            continue;
-        };
-
-        let Ok(mut inventory) = inventory_q.get_mut(intent.user) else {
-            warn!("Entity {:?} has no inventory", intent.user);
-            continue;
-        };
-
-        if !inventory.has_item(intent.item_id) {
-            warn!("Entity {:?} does not own item {}", intent.user, intent.item_id);
-            continue;
-        }
-
-        let effect = match item_def.kind {
-            InventoryItemKind::Consumable {
-                effect,
-                usable_on_others,
-                usable_pre_death,
-            } => {
-                if matches!(intent.trigger, ItemUseTrigger::PreDeath) && !usable_pre_death {
-                    warn!("Item {} cannot be used before death", intent.item_id);
-                    continue;
-                }
-                if target != intent.user && !usable_on_others {
-                    warn!("Item {} cannot target other characters", intent.item_id);
-                    continue;
-                }
-                effect
-            }
-            InventoryItemKind::Equipment(_) => {
-                warn!("Equipment item {} is not directly usable", intent.item_id);
-                continue;
-            }
-        };
-
-        if !inventory.remove_item(intent.item_id) {
-            warn!("Failed to consume item {}", intent.item_id);
-            continue;
-        }
-
-        if !apply_consumable_effect_to_health(target, effect, &mut health_q) {
-            inventory.add_item(intent.item_id);
-            warn!("Failed to apply item {} to target {:?}", intent.item_id, target);
-            continue;
-        }
-
-        used_writer.write(ItemUsedEvent {
-            user: intent.user,
-            target,
-            item_id: intent.item_id,
-            trigger: intent.trigger,
-        });
-    }
-}
-
-fn resolve_give_item_intent_system(
-    mut intents: MessageReader<GiveItemIntentEvent>,
-    mut inventory_q: Query<&mut Inventory>,
-    loadout_q: Query<&EquipmentLoadout>,
-    equipment_q: Query<&Equipment>,
-    mut transferred_writer: MessageWriter<ItemTransferredEvent>,
-) {
-    for intent in intents.iter() {
-        if intent.giver == intent.receiver {
-            continue;
-        }
-
-        if let Ok(loadout) = loadout_q.get(intent.giver) {
-            if loadout.has_equipped_item_id(intent.item_id, &equipment_q) {
-                warn!(
-                    "Entity {:?} cannot give equipped item {} without unequipping it first",
-                    intent.giver, intent.item_id
-                );
-                continue;
-            }
-        }
-
-        let Ok(mut giver_inventory) = inventory_q.get_mut(intent.giver) else {
-            warn!("Giver {:?} has no inventory", intent.giver);
-            continue;
-        };
-
-        if !giver_inventory.remove_item(intent.item_id) {
-            warn!(
-                "Giver {:?} does not own item {}",
-                intent.giver, intent.item_id
-            );
-            continue;
-        }
-
-        drop(giver_inventory);
-
-        if let Ok(mut receiver_inventory) = inventory_q.get_mut(intent.receiver) {
-            receiver_inventory.add_item(intent.item_id);
-        } else {
-            warn!("Receiver {:?} has no inventory", intent.receiver);
-            if let Ok(mut giver_inventory) = inventory_q.get_mut(intent.giver) {
-                giver_inventory.add_item(intent.item_id);
-            }
-            continue;
-        }
-
-        transferred_writer.write(ItemTransferredEvent {
-            giver: intent.giver,
-            receiver: intent.receiver,
-            item_id: intent.item_id,
-        });
-    }
-}
-
-fn apply_buff_system(
-    mut commands: Commands,
-    mut reader: MessageReader<ApplyBuffEvent>,
-    mut modifiers_q: Query<&mut StatModifiers>,
-) {
-    for ev in reader.iter() {
-        let modifier = StatModifier {
-            stat: ev.stat,
-            multiplier: ev.multiplier,
-            expires_at_timestamp: Some(ev.applied_at.saturating_add(ev.duration_in_ticks)),
-            source: None,
-        };
-
-        if let Ok(mut modifiers) = modifiers_q.get_mut(ev.target) {
-            modifiers.0.push(modifier.clone());
-        } else {
-            commands.entity(ev.target).insert(StatModifiers(vec![modifier.clone()]));
-        }
-
-        commands.spawn(Buff {
-            stat: ev.stat,
-            multiplier: ev.multiplier,
-            ends_at_timestamp: ev.applied_at.saturating_add(ev.duration_in_ticks),
-            source: Some(ev.applier),
-        });
-    }
 }
 
 
@@ -2196,16 +1269,16 @@ fn buff_tick_system(
     }
 }
 
-/// Simple regeneration system (health/magic/action points) // DEPRECATED
-// fn regen_system(mut qh: Query<&mut Health>, qm: Query<&mut Magic>, qs: Query<&mut ActionPoints>) {
+/// Simple regeneration system (health/magic/stamina) // DEPRECATED
+// fn regen_system(mut qh: Query<&mut Health>, qm: Query<&mut Magic>, qs: Query<&mut Stamina>) {
 //     for mut h in qh.iter_mut() {
 //         h.current = (h.current + h.regen).min(h.max);
 //     }
 //     for mut m in qm.iter_mut() {
-//         m.apply_regen(1);
+//         m.current = (m.current + m.regen).min(m.max);
 //     }
 //     for mut s in qs.iter_mut() {
-//         s.current = s.max;
+//         s.current = (s.current + s.regen).min(s.max);
 //     }
 // }
 
@@ -2226,22 +1299,34 @@ fn health_regen_system(
 }
 
 fn magic_regen_system(
-    timestamp: Res<Timestamp>,
-    mut tracker: ResMut<MagicRegenTracker>,
+    mut ev: MessageReader<MagicRegenEvent>,
     mut q: Query<&mut Magic>,
 ) {
-    if !timestamp.is_changed() {
+    // If no regen tick happened, do nothing
+    if ev.is_empty() {
         return;
     }
 
-    let ticks = timestamp.0.saturating_sub(tracker.last_processed_timestamp);
-    tracker.last_processed_timestamp = timestamp.0;
-    if ticks == 0 {
+    for _ in ev.iter() {
+        for mut mp in q.iter_mut() {
+            mp.current = (mp.current + mp.regen).min(mp.max);
+        }
+    }
+}
+
+fn stamina_regen_system(
+    mut ev: MessageReader<StaminaRegenEvent>,
+    mut q: Query<&mut Stamina>,
+) {
+    // If no regen tick happened, do nothing
+    if ev.is_empty() {
         return;
     }
 
-    for mut magic in q.iter_mut() {
-        magic.apply_regen(ticks);
+    for _ in ev.iter() {
+        for mut st in q.iter_mut() {
+            st.current = (st.current + st.regen).min(st.max);
+        }
     }
 }
 
@@ -2281,11 +1366,6 @@ pub struct TurnOrder {
 
 #[derive(Resource, Default)]
 pub struct TurnInProgress(pub bool);
-
-#[derive(Resource, Default)]
-pub struct MagicRegenTracker {
-    pub last_processed_timestamp: u32,
-}
 /// Resource that knows which entities should participate in turn calc.
 /// For simplicity we store a Vec<Entity> that is maintained at spawn time.
 #[derive(Resource, Default)]
@@ -2331,6 +1411,7 @@ impl TurnManager {
         &mut self,
         mut acc_q: &mut Query<&mut AccumulatedAgility>,
         stats_q: &Query<&CombatStats>,
+        mut regen_writer: MessageWriter<StaminaRegenEvent>,
     ) -> Vec<Entity> {
         let mut rng = rand::rng();
         let mut order: Vec<Entity> = Vec::new();
@@ -2363,6 +1444,9 @@ impl TurnManager {
                 // We skip; spawn-time code should ensure AccumulatedAgility exists for participants.
             }
         }
+
+        regen_writer.send(StaminaRegenEvent);
+
         order
     }
 }
@@ -2444,89 +1528,6 @@ fn curve_growth_i32(attr: u8, base: f32, exponent: f32) -> i32 {
     curve_growth_u32(attr, base, exponent) as i32
 }
 
-fn distribute_integer_growth(total_gain: u32, weights: [u8; 4]) -> [u32; 4] {
-    if total_gain == 0 {
-        return [0; 4];
-    }
-
-    let total_weight: u32 = weights.iter().map(|&w| w as u32).sum();
-    if total_weight == 0 {
-        let base = total_gain / 4;
-        let mut gains = [base; 4];
-        for gain in gains.iter_mut().take((total_gain % 4) as usize) {
-            *gain += 1;
-        }
-        return gains;
-    }
-
-    let mut gains = [0_u32; 4];
-    let mut remainders = [(0usize, 0_u32); 4];
-    let mut assigned = 0_u32;
-
-    for (index, &weight) in weights.iter().enumerate() {
-        let numerator = total_gain.saturating_mul(weight as u32);
-        gains[index] = numerator / total_weight;
-        remainders[index] = (index, numerator % total_weight);
-        assigned = assigned.saturating_add(gains[index]);
-    }
-
-    remainders.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
-    let leftovers = total_gain.saturating_sub(assigned);
-    for (index, _) in remainders.into_iter().take(leftovers as usize) {
-        gains[index] = gains[index].saturating_add(1);
-    }
-
-    gains
-}
-
-fn rescale_magic_regen(magic: &mut Magic, growth_attr: &GrowthAttributes, spirit: u8) {
-    let weights = [
-        growth_attr.kiho.max(1),
-        growth_attr.chiseijutsu.max(1),
-        growth_attr.yokaijutsu.max(1),
-        growth_attr.kamishin.max(1),
-    ];
-    let total_weight: f32 = weights.iter().map(|&w| w as f32).sum();
-    let spirit_factor = 1.0 + (spirit as f32 * 0.04);
-    let total_regen = DEFAULT_MAGIC_REGEN_PER_TICK * spirit_factor;
-
-    magic.kiho.regen_per_tick = (total_regen * (weights[0] as f32 / total_weight)).min(0.999_999);
-    magic.chiseijutsu.regen_per_tick = (total_regen * (weights[1] as f32 / total_weight)).min(0.999_999);
-    magic.yokaijutsu.regen_per_tick = (total_regen * (weights[2] as f32 / total_weight)).min(0.999_999);
-    magic.kamishin.regen_per_tick = (total_regen * (weights[3] as f32 / total_weight)).min(0.999_999);
-}
-
-fn apply_spirit_magic_growth(
-    magic: &mut Magic,
-    growth_attr: &GrowthAttributes,
-    curve_opt: Option<&GrowthCurve>,
-) {
-    let curve_multiplier = curve_opt.map(|curve| curve.magic_curve).unwrap_or(1.0);
-    let total_gain = (((growth_attr.spirit.max(1) as f32) / 8.0) * curve_multiplier)
-        .round()
-        .max(1.0) as u32;
-    let gains = distribute_integer_growth(
-        total_gain,
-        [
-            growth_attr.kiho,
-            growth_attr.chiseijutsu,
-            growth_attr.yokaijutsu,
-            growth_attr.kamishin,
-        ],
-    );
-
-    magic.kiho.max += gains[0] as f32;
-    magic.kiho.current += gains[0] as f32;
-    magic.chiseijutsu.max += gains[1] as f32;
-    magic.chiseijutsu.current += gains[1] as f32;
-    magic.yokaijutsu.max += gains[2] as f32;
-    magic.yokaijutsu.current += gains[2] as f32;
-    magic.kamishin.max += gains[3] as f32;
-    magic.kamishin.current += gains[3] as f32;
-
-    rescale_magic_regen(magic, growth_attr, growth_attr.spirit);
-}
-
 /// --------------- Level up system using your confirmed parameters ---------------
 
 /// Event: LevelUpEvent { who: Entity, old_level: u8, new_level: u8 }
@@ -2536,6 +1537,7 @@ pub fn level_up_system(
     mut q_stats: Query<(
         &mut CombatStats,
         Option<&mut Health>,
+        Option<&mut Stamina>,
         Option<&mut Magic>,
         &GrowthAttributes,
         // Keep GrowthCurve in the signature if you want to keep per-character curves later.
@@ -2554,7 +1556,7 @@ pub fn level_up_system(
     // There is a spreadsheet with all the values for initial value and maximum value
 
     for ev in level_up_events.iter() {
-        if let Ok((mut stats, mut h_opt, mut m_opt, growth_attr, _curve_opt)) =
+        if let Ok((mut stats, mut h_opt, mut s_opt, mut m_opt, growth_attr, _curve_opt)) =
             q_stats.get_mut(ev.who)
         {
             let level_gained = (ev.new_level as i32) - (ev.old_level as i32);
@@ -2590,10 +1592,33 @@ pub fn level_up_system(
                 }
 
                 // -----------------------
-                // SPIRIT-DRIVEN MAGIC GROWTH
+                // STAMINA MAX & REGEN
+                // -----------------------
+                if let Some(ref mut s) = s_opt {
+                    // Use the standardized formula with the chosen base/exponent for stamina
+                    let base_stamina = 200.0_f32; // as you confirmed
+                    let add_stam = curve_growth_u32(growth_attr.endurance, base_stamina, 2.9_f32);
+                    s.max = s.max.saturating_add(add_stam as i32);
+                    s.current = s.current.saturating_add(add_stam as i32);
+
+                    // Stamina regen with base 25 exponent 2.4
+                    let base_stam_reg = 25.0_f32;
+                    let add_stam_reg = curve_growth_u32(growth_attr.endurance, base_stam_reg, 2.4_f32);
+                    s.regen = s.regen.saturating_add(add_stam_reg as i32);
+                }
+
+                // -----------------------
+                // MAGIC MAX & REGEN
                 // -----------------------
                 if let Some(ref mut m) = m_opt {
-                    apply_spirit_magic_growth(m, growth_attr, _curve_opt);
+                    let base_magic = 225.0_f32;
+                    let add_magic = curve_growth_u32(growth_attr.spirit, base_magic, 3.1_f32);
+                    m.max = m.max.saturating_add(add_magic as i32);
+                    m.current = m.current.saturating_add(add_magic as i32);
+
+                    let base_magic_reg = 30.0_f32;
+                    let add_magic_reg = curve_growth_u32(growth_attr.spirit, base_magic_reg, 2.8_f32);
+                    m.regen = m.regen.saturating_add(add_magic_reg as i32);
                 }
 
                 // -----------------------
@@ -2649,11 +1674,7 @@ pub fn respec_system(
                 + attributes.control as u32
                 + attributes.agility as u32
                 + attributes.insight as u32
-                + attributes.resolve as u32
-                + attributes.kiho as u32
-                + attributes.chiseijutsu as u32
-                + attributes.yokaijutsu as u32
-                + attributes.kamishin as u32;
+                + attributes.resolve as u32;
 
             // 2. Reset attributes (full reset)
             if ev.full_reset {
@@ -2764,23 +1785,12 @@ fn on_turn_start_system(
     mut ev_reader: MessageReader<TurnStartEvent>,
     q_participants: Query<Entity, With<CombatStats>>,
     player_controlled: Query<(), With<PlayerControlled>>,
-    bt_driven: Query<(), With<crate::ai_decision::BehaviorTreeProfile>>,
-    mut action_points_q: Query<&mut ActionPoints>,
     mut intent_writer: MessageWriter<AttackIntentEvent>,
     mut turn_end_writer: MessageWriter<TurnEndEvent>,
     mut turn_in_progress: ResMut<TurnInProgress>,
 ) {
     for ev in ev_reader.iter() {
-        let Ok(mut action_points) = action_points_q.get_mut(ev.who) else {
-            continue;
-        };
-        action_points.current = action_points.max;
-
         if player_controlled.get(ev.who).is_ok() {
-            continue;
-        }
-        // BT-driven enemies are handled by `evaluate_behavior_tree_system`.
-        if bt_driven.get(ev.who).is_ok() {
             continue;
         }
         // simple demo: find first entity different from ev.who and issue attack
@@ -2792,53 +1802,22 @@ fn on_turn_start_system(
             }
         }
         if let Some(target) = target_opt {
-            while action_points.spend(BASIC_ATTACK_ACTION_POINT_COST) {
-                intent_writer.send(AttackIntentEvent {
-                    attacker: ev.who,
-                    target,
-                    ability: None,
-                    context: AttackContext::default(),
-                });
-            }
+            intent_writer.send(AttackIntentEvent {
+                attacker: ev.who,
+                target,
+                ability: None,
+                context: AttackContext::default(),
+            });
             turn_end_writer.send(TurnEndEvent { who: ev.who });
             turn_in_progress.0 = false;
         }
     }
 }
 
-fn finish_turn_if_needed(
-    actor: Entity,
-    pending: &mut ResMut<PendingPlayerAction>,
-    turn_end_writer: &mut MessageWriter<TurnEndEvent>,
-    turn_in_progress: &mut ResMut<TurnInProgress>,
-    action_points_q: &mut Query<&mut ActionPoints>,
-    force_end: bool,
-) {
-    let should_end = force_end
-        || action_points_q
-            .get(actor)
-            .map(|action_points| action_points.current <= 0)
-            .unwrap_or(true);
-
-    if should_end {
-        pending.entity = None;
-        turn_end_writer.send(TurnEndEvent { who: actor });
-        turn_in_progress.0 = false;
-    }
-}
-
 fn process_player_action_system(
     mut ev: MessageReader<PlayerActionEvent>,
     mut pending: ResMut<PendingPlayerAction>,
-    ability_tree: Option<Res<Ability_Tree>>,
-    timestamp: Res<Timestamp>,
-    mut dq: ResMut<DamageQueue>,
-    mut action_points_q: Query<&mut ActionPoints>,
-    mut magic_q: Query<&mut Magic>,
     mut intent_writer: MessageWriter<AttackIntentEvent>,
-    mut use_item_writer: MessageWriter<UseItemIntentEvent>,
-    mut heal_writer: MessageWriter<HealEvent>,
-    mut buff_writer: MessageWriter<ApplyBuffEvent>,
     mut defend_writer: MessageWriter<DefendIntentEvent>,
     mut wait_writer: MessageWriter<WaitIntentEvent>,
     mut turn_end_writer: MessageWriter<TurnEndEvent>,
@@ -2854,20 +1833,8 @@ fn process_player_action_system(
     };
 
     for e in ev.iter() {
-        let mut end_turn = false;
         match &e.action {
             PlayerAction::Attack(target) => {
-                let Ok(mut action_points) = action_points_q.get_mut(actor) else {
-                    warn!("Actor {:?} has no action points component", actor);
-                    break;
-                };
-                if !action_points.spend(BASIC_ATTACK_ACTION_POINT_COST) {
-                    info!(
-                        "Actor {:?} needs {} AP for a basic attack but only has {}",
-                        actor, BASIC_ATTACK_ACTION_POINT_COST, action_points.current
-                    );
-                    continue;
-                }
                 intent_writer.send(AttackIntentEvent {
                     attacker: actor,
                     target: *target,
@@ -2877,98 +1844,32 @@ fn process_player_action_system(
             }
 
             PlayerAction::UseAbility(ability_id, target) => {
-                let Some(tree) = ability_tree.as_ref() else {
-                    warn!("Ability tree resource is not available");
-                    continue;
-                };
-                let Some(ability) = tree.0.find(*ability_id as u16) else {
-                    warn!("Ability {} not found", ability_id);
-                    continue;
-                };
-
-                let Ok(mut action_points) = action_points_q.get_mut(actor) else {
-                    warn!("Actor {:?} has no action points component", actor);
-                    continue;
-                };
-                if !action_points.can_spend(ability.action_point_cost) {
-                    info!(
-                        "Actor {:?} needs {} AP for {} but only has {}",
-                        actor, ability.action_point_cost, ability.name, action_points.current
-                    );
-                    continue;
-                }
-
-                let Ok(mut magic) = magic_q.get_mut(actor) else {
-                    warn!("Actor {:?} has no magic component", actor);
-                    continue;
-                };
-                if !magic.can_spend(ability.magic_school, ability.magic_cost) {
-                    info!(
-                        "Actor {:?} lacks {:?} for {}: needs {:.2}",
-                        actor, ability.magic_school, ability.name, ability.magic_cost
-                    );
-                    continue;
-                }
-
-                action_points.spend(ability.action_point_cost);
-                magic.spend(ability.magic_school, ability.magic_cost);
-                drop(action_points);
-                drop(magic);
-
-                handle_ability(
-                    actor,
-                    &ability,
-                    &[*target],
-                    timestamp.0,
-                    &mut dq,
-                    &mut intent_writer,
-                    &mut heal_writer,
-                    &mut buff_writer,
-                );
+                intent_writer.send(AttackIntentEvent {
+                    attacker: actor,
+                    target: *target,
+                    ability: None,
+                    context: AttackContext::default(),
+                });
             }
 
-            PlayerAction::UseItem(_item_id, _target) => {
-                let item_id = *_item_id;
-                let target = *_target;
-                let Ok(mut action_points) = action_points_q.get_mut(actor) else {
-                    warn!("Actor {:?} has no action points component", actor);
-                    continue;
-                };
-                if !action_points.spend(ITEM_ACTION_POINT_COST) {
-                    info!(
-                        "Actor {:?} needs {} AP to use an item but only has {}",
-                        actor, ITEM_ACTION_POINT_COST, action_points.current
-                    );
-                    continue;
-                }
-                use_item_writer.write(UseItemIntentEvent {
-                    user: actor,
-                    item_id,
-                    target,
-                    trigger: ItemUseTrigger::Manual,
-                });
+            PlayerAction::UseItem(item_id, target) => {
+                // TODO: call your item system
             }
 
             PlayerAction::Defend => {
                 defend_writer.send(DefendIntentEvent { defender: actor });
-                end_turn = true;
             }
 
             PlayerAction::Wait => {
                 wait_writer.send(WaitIntentEvent { waiter: actor });
-                end_turn = true;
             }
         }
 
-        finish_turn_if_needed(
-            actor,
-            &mut pending,
-            &mut turn_end_writer,
-            &mut turn_in_progress,
-            &mut action_points_q,
-            end_turn,
-        );
-        break;
+        // Player decision consumed → clear pending
+        pending.entity = None;
+        turn_end_writer.send(TurnEndEvent { who: actor });
+        turn_in_progress.0 = false;
+        break; // only one action per turn
     }
 }
 
@@ -3051,7 +1952,7 @@ fn debug_print_system(
         &Health,
         &CombatStats,
         Option<&StatModifiers>,
-        Option<&EquipmentLoadout>,
+        Option<&EquipmentSlots>,
         Option<&Level>,
         Option<&Experience>,
         Option<&AccumulatedAgility>,
@@ -3070,8 +1971,8 @@ fn debug_print_system(
                 s.push_str(&format!(" Mods: {:?}", mods.0));
             }
         }
-        if let Some(loadout) = slots {
-            if loadout.equipped_in_slot(EquipmentSlotType::Weapon).is_some() {
+        if let Some(slots) = slots {
+            if slots.weapon.is_some() {
                 s.push_str(" WeaponEquipped");
             }
         }
@@ -3194,27 +2095,6 @@ fn dot(a: (f32, f32), b: (f32, f32)) -> f32 {
     a.0 * b.0 + a.1 * b.1
 }
 
-fn default_allowed_types_for_slot(slot_type: EquipmentSlotType) -> Vec<EquipmentType> {
-    match slot_type {
-        EquipmentSlotType::Weapon => vec![
-            EquipmentType::Weapon(WeaponType::Sword),
-            EquipmentType::Weapon(WeaponType::Dagger),
-            EquipmentType::Weapon(WeaponType::Staff),
-        ],
-        EquipmentSlotType::Armor => vec![
-            EquipmentType::Armor(ArmorType::HeavyArmor),
-            EquipmentType::Armor(ArmorType::LightArmor),
-            EquipmentType::Armor(ArmorType::Robe),
-            EquipmentType::Armor(ArmorType::Shield),
-        ],
-        EquipmentSlotType::Accessory => vec![
-            EquipmentType::Accessory(AccessoryType::Charm),
-            EquipmentType::Accessory(AccessoryType::Ring),
-            EquipmentType::Accessory(AccessoryType::Relic),
-        ],
-    }
-}
-
 /// -----------------------------
 /// Startup spawn examples (with XP, Level, AccumulatedAgility)
 /// -----------------------------
@@ -3225,7 +2105,6 @@ fn spawn_examples(mut commands: Commands, mut tm: ResMut<TurnManager>, timestamp
         .insert(Equipment {
             id: 5001,
             name: "Silversteel Blade".to_string(),
-            equipment_type: EquipmentType::Weapon(WeaponType::Sword),
             base_price: 32000,
             // Material total with enum unit costs:
             // 20*1000 + 4*400 + 3*500 + 2*800 = 24700 (below base_price)
@@ -3259,14 +2138,6 @@ fn spawn_examples(mut commands: Commands, mut tm: ResMut<TurnManager>, timestamp
             multiplier: 1.15,
             duration_turns: 1,
         }]))
-        .insert(WeaponSharpness::new(100, 4))
-        .insert(WeaponBeforeAttackEffects(vec![
-            WeaponBeforeAttackEffect::AddFlatDamage { flat: 6 },
-            WeaponBeforeAttackEffect::BonusWhenSharp {
-                minimum_sharpness: 80,
-                flat_damage: 4,
-            },
-        ]))
         .id();
 
     // --------------------------------------
@@ -3282,10 +2153,15 @@ fn spawn_examples(mut commands: Commands, mut tm: ResMut<TurnManager>, timestamp
             max: 180,
             regen: 2,
         })
-        .insert(Magic::with_regen(1.0, 1.0, 0.5, 5.0, 0.0002, 0.0002, 0.0001, 0.0008))
-        .insert(ActionPoints::default())
-        .insert(Inventory {
-            item_ids: vec![5001, 1001, 1002],
+        .insert(Magic {
+            current: 60,
+            max: 60,
+            regen: 1,
+        })
+        .insert(Stamina {
+            current: 100,
+            max: 100,
+            regen: 3,
         })
         .insert(CombatStats {
             base_lethality: 18,
@@ -3305,37 +2181,11 @@ fn spawn_examples(mut commands: Commands, mut tm: ResMut<TurnManager>, timestamp
             agility: 8,
             insight: 8,
             resolve: 18,
-            kiho: 1,
-            chiseijutsu: 1,
-            yokaijutsu: 1,
-            kamishin: 8,
-            ..Default::default()
         })
         .insert(GrowthCurve::paladin_curve())
-        .insert({
-            let mut loadout = EquipmentLoadout::with_allowed_types([
-                (
-                    EquipmentSlotType::Weapon,
-                    vec![EquipmentType::Weapon(WeaponType::Sword)],
-                ),
-                (
-                    EquipmentSlotType::Armor,
-                    vec![
-                        EquipmentType::Armor(ArmorType::HeavyArmor),
-                        EquipmentType::Armor(ArmorType::Shield),
-                    ],
-                ),
-                (
-                    EquipmentSlotType::Accessory,
-                    vec![EquipmentType::Accessory(AccessoryType::Charm)],
-                ),
-                (
-                    EquipmentSlotType::Accessory,
-                    vec![EquipmentType::Accessory(AccessoryType::Relic)],
-                ),
-            ]);
-            loadout.equip_in_first_matching_slot(EquipmentType::Weapon(WeaponType::Sword), sword);
-            loadout
+        .insert(EquipmentSlots {
+            weapon: Some(sword),
+            ..Default::default()
         })
         .insert(Abilities(vec![]))
         .insert(Experience(0))
@@ -3358,10 +2208,15 @@ fn spawn_examples(mut commands: Commands, mut tm: ResMut<TurnManager>, timestamp
             max: 90,
             regen: 1,
         })
-        .insert(Magic::with_regen(0.5, 1.0, 1.5, 0.5, 0.00015, 0.0002, 0.0003, 0.00015))
-        .insert(ActionPoints::default())
-        .insert(Inventory {
-            item_ids: vec![1001],
+        .insert(Magic {
+            current: 40,
+            max: 40,
+            regen: 1,
+        })
+        .insert(Stamina {
+            current: 80,
+            max: 80,
+            regen: 2,
         })
         .insert(CombatStats {
             base_lethality: 14,
@@ -3381,31 +2236,9 @@ fn spawn_examples(mut commands: Commands, mut tm: ResMut<TurnManager>, timestamp
             agility: 22,
             insight: 12,
             resolve: 11,
-            kiho: 1,
-            chiseijutsu: 1,
-            yokaijutsu: 4,
-            kamishin: 1,
-            ..Default::default()
         })
         .insert(GrowthCurve::rogue_curve())
-        .insert(EquipmentLoadout::with_allowed_types([
-            (
-                EquipmentSlotType::Weapon,
-                vec![EquipmentType::Weapon(WeaponType::Dagger)],
-            ),
-            (
-                EquipmentSlotType::Armor,
-                vec![EquipmentType::Armor(ArmorType::LightArmor)],
-            ),
-            (
-                EquipmentSlotType::Accessory,
-                vec![EquipmentType::Accessory(AccessoryType::Ring)],
-            ),
-            (
-                EquipmentSlotType::Accessory,
-                vec![EquipmentType::Accessory(AccessoryType::Charm)],
-            ),
-        ]))
+        .insert(EquipmentSlots::default())
         .insert(Abilities(vec![]))
         .insert(Experience(0))
         .insert(Level(1))
@@ -3427,10 +2260,15 @@ fn spawn_examples(mut commands: Commands, mut tm: ResMut<TurnManager>, timestamp
             max: 70,
             regen: 1,
         })
-        .insert(Magic::with_regen(2.0, 3.0, 8.0, 2.0, 0.00035, 0.00045, 0.0012, 0.00035))
-        .insert(ActionPoints::default())
-        .insert(Inventory {
-            item_ids: vec![1002],
+        .insert(Magic {
+            current: 120,
+            max: 120,
+            regen: 4,
+        })
+        .insert(Stamina {
+            current: 60,
+            max: 60,
+            regen: 1,
         })
         .insert(CombatStats {
             base_lethality: 8,
@@ -3450,31 +2288,10 @@ fn spawn_examples(mut commands: Commands, mut tm: ResMut<TurnManager>, timestamp
             agility: 10,
             insight: 20,
             resolve: 16,
-            kiho: 2,
-            chiseijutsu: 3,
-            yokaijutsu: 9,
-            kamishin: 2,
-            ..Default::default()
         })
         .insert(GrowthCurve::spirit_mage_curve())
         .insert(ExtraHp { current: 40, max: 40 })
-        .insert(EquipmentLoadout::with_allowed_types([
-            (
-                EquipmentSlotType::Weapon,
-                vec![EquipmentType::Weapon(WeaponType::Staff)],
-            ),
-            (
-                EquipmentSlotType::Armor,
-                vec![EquipmentType::Armor(ArmorType::Robe)],
-            ),
-            (
-                EquipmentSlotType::Accessory,
-                vec![
-                    EquipmentType::Accessory(AccessoryType::Charm),
-                    EquipmentType::Accessory(AccessoryType::Relic),
-                ],
-            ),
-        ]))
+        .insert(EquipmentSlots::default())
         .insert(Abilities(vec![]))
         .insert(Experience(0))
         .insert(Level(1))
@@ -3521,35 +2338,17 @@ fn init_messages(mut commands: Commands) {
     commands.init_resource::<Messages<DeathEvent>>();
 }
 
-fn load_ability_tree_system(mut ability_tree: ResMut<Ability_Tree>) {
-    let Ok(contents) = std::fs::read_to_string("src/abilities/AbilitiesExample.ron") else {
-        warn!("Unable to load abilities from src/abilities/AbilitiesExample.ron");
-        return;
-    };
-
-    match ron::de::from_str::<Vec<Ability>>(&contents) {
-        Ok(abilities) => {
-            ability_tree.0 = AbilityTree::new();
-            for ability in abilities {
-                ability_tree.0.insert(ability);
-            }
-        }
-        Err(err) => warn!("Failed to parse abilities file: {err}"),
-    }
-}
-
 impl Plugin for CombatPlugin {
     fn build(&self, app: &mut App) {
         // TO DO: insert all systems correctly
         app.insert_resource(TurnOrder::default())
             .insert_resource(TurnManager::default())
             .insert_resource(TurnInProgress::default())
-            .insert_resource(MagicRegenTracker::default())
-            .insert_resource(InventoryItemCatalog::default())
-            .insert_resource(Ability_Tree(AbilityTree::new()))
             .insert_resource(PendingPlayerAction::default())
             // events
             .add_message::<HealthRegenEvent>()
+            .add_message::<MagicRegenEvent>()
+            .add_message::<StaminaRegenEvent>()
             .add_message::<AwardXpEvent>()
             .add_message::<AttackIntentEvent>()
             .add_message::<DefendIntentEvent>()
@@ -3558,13 +2357,7 @@ impl Plugin for CombatPlugin {
             .add_message::<BeforeAttackEvent>()
             .add_message::<AttackExecuteEvent>()
             .add_message::<BeforeHitEvent>()
-            .add_message::<HealEvent>()
-            .add_message::<ApplyBuffEvent>()
             .add_message::<DamageEvent>()
-            .add_message::<UseItemIntentEvent>()
-            .add_message::<GiveItemIntentEvent>()
-            .add_message::<ItemTransferredEvent>()
-            .add_message::<ItemUsedEvent>()
             .add_message::<AfterHitEvent>()
             .add_message::<AfterAttackEvent>()
             .add_message::<DeathEvent>()
@@ -3576,7 +2369,6 @@ impl Plugin for CombatPlugin {
             // startup
             // Disable the demo auto-battle spawns so the game starts in exploration without combat noise.
             .add_systems(Startup, init_messages)
-            .add_systems(Startup, load_ability_tree_system.after(init_messages))
             // xp / leveling systems
             .add_systems(Update, award_xp_system)
             .add_systems(Update, level_up_system.after(award_xp_system))
@@ -3591,35 +2383,15 @@ impl Plugin for CombatPlugin {
             .add_systems(Update, process_player_action_system)
             // combat pipeline (core)
             .add_systems(Update, process_attack_intent)
-            .add_systems(Update, resolve_give_item_intent_system)
-            .add_systems(
-                Update,
-                resolve_use_item_intent_system.after(process_player_action_system),
-            )
-            .add_systems(
-                Update,
-                (
-                    paladin_before_attack_system,
-                    rogue_backstab_system,
-                    equipment_before_attack_listener,
-                    weapon_before_attack_effect_system,
-                    queue_damage_from_before_attack,
-                    before_to_execute,
-                    dull_weapon_on_attack_system,
-                )
-                    .chain()
-                    .after(process_attack_intent),
-            )
+            .add_systems(Update, before_to_execute.after(process_attack_intent))
             .add_systems(Update, before_hit_listeners.after(before_to_execute))
-            .add_systems(Update, apply_heal_system)
-            .add_systems(Update, apply_buff_system)
-            .add_systems(Update, process_damage_queue_system.after(queue_damage_from_before_attack))
-            .add_systems(Update, apply_damage_system.after(process_damage_queue_system))
+            .add_systems(Update, apply_damage_system.after(process_attack_intent))
             .add_systems(Update, after_hit_listeners.after(apply_damage_system))
             .add_systems(Update, after_attack_finalizers.after(after_hit_listeners))
             // supporting
             .add_systems(Update, health_regen_system)
-            .add_systems(Update, magic_regen_system)
+            // .add_systems(Update, magic_regen_system) /// I DECIDED THAT ACTION POINTS AND SPECIFIC MAGIC POINTS PER MAGIC SOURCE WILL BE USED
+            // .add_systems(Update, stamina_regen_system)
             .add_systems(Update, debug_print_system);
     }
 }

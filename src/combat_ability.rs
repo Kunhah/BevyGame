@@ -36,14 +36,26 @@ pub enum AbilityShape {
     Select,
 }
 
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, Default)]
+pub enum MagicSchool {
+    #[default]
+    Kiho,
+    Chiseijutsu,
+    Yokaijutsu,
+    Kamishin,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Ability {
     pub id: u16,
     pub next_id: Option<u16>,
     pub name: String,
     pub health_cost: i32,
-    pub magic_cost: i32,
-    pub stamina_cost: i32,
+    pub magic_cost: f32,
+    #[serde(default)]
+    pub magic_school: MagicSchool,
+    #[serde(alias = "stamina_cost")]
+    pub action_point_cost: i32,
     pub cooldown: u8,
     pub description: String,
     pub effects: Vec<AbilityEffect>,
@@ -233,10 +245,10 @@ pub fn handle_ability(
     ability: &Ability,
     affected: &[Entity],
     now: u32,
-    mut dq: ResMut<DamageQueue>,
-    mut attack_intent_events: MessageWriter<AttackIntentEvent>,
-    mut heal_events: MessageWriter<HealEvent>,
-    mut buff_events: MessageWriter<ApplyBuffEvent>,
+    dq: &mut DamageQueue,
+    attack_intent_events: &mut MessageWriter<AttackIntentEvent>,
+    heal_events: &mut MessageWriter<HealEvent>,
+    buff_events: &mut MessageWriter<ApplyBuffEvent>,
 ) {
     for &target in affected {
         for effect in &ability.effects {

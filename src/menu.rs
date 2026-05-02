@@ -5,6 +5,7 @@ use bevy::prelude::*;
 
 use crate::core::{GameState, Game_State};
 use crate::save::{AutoSaveSettings, SaveAction, SaveRequest, SaveSlot};
+use crate::settings::{GraphicsSettings, GraphicsToggle, GRAPHICS_TOGGLES};
 
 pub struct MenuPlugin;
 
@@ -16,7 +17,8 @@ impl Plugin for MenuPlugin {
             .add_systems(Update, toggle_pause_state)
             .add_systems(Update, update_button_interaction_visuals)
             .add_systems(Update, handle_menu_actions)
-            .add_systems(Update, update_autosave_status_text);
+            .add_systems(Update, update_autosave_status_text)
+            .add_systems(Update, update_graphics_toggle_text);
     }
 }
 
@@ -48,10 +50,56 @@ enum MenuButtonAction {
     LoadSlot2,
     LoadSlot3,
     ToggleAutosave,
+    ToggleGraphics(GraphicsToggle),
 }
 
 #[derive(Component)]
 struct AutosaveStatusText;
+
+#[derive(Component)]
+struct GraphicsToggleText(GraphicsToggle);
+
+fn spawn_graphics_settings_section(parent: &mut ChildSpawnerCommands) {
+    parent.spawn((
+        Text::new("Performance"),
+        TextFont {
+            font_size: 18.0,
+            ..default()
+        },
+        TextColor(Color::srgb(0.75, 0.8, 0.88)),
+    ));
+
+    for toggle in GRAPHICS_TOGGLES {
+        parent
+            .spawn((
+                Button::default(),
+                Node {
+                    height: Val::Px(40.0),
+                    display: Display::Flex,
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    padding: UiRect::all(Val::Px(6.0)),
+                    border: UiRect::all(Val::Px(1.5)),
+                    ..default()
+                },
+                BackgroundColor(Color::srgba(0.12, 0.17, 0.25, 0.95)),
+                BorderRadius::all(Val::Px(8.0)),
+                BorderColor::all(Color::srgba(0.24, 0.32, 0.46, 1.0)),
+                MenuButtonAction::ToggleGraphics(toggle),
+            ))
+            .with_children(|btn| {
+                btn.spawn((
+                    Text::new("..."),
+                    TextFont {
+                        font_size: 16.0,
+                        ..default()
+                    },
+                    TextColor(Color::srgb(0.88, 0.9, 0.95)),
+                    GraphicsToggleText(toggle),
+                ));
+            });
+    }
+}
 
 fn spawn_main_menu_ui(
     mut commands: Commands,
@@ -257,6 +305,8 @@ fn spawn_main_menu_ui(
                     ));
                 });
 
+                spawn_graphics_settings_section(col);
+
                 col
                     .spawn((
                         Button::default(),
@@ -397,6 +447,8 @@ fn spawn_pause_menu_ui(
                         ));
                     });
 
+                spawn_graphics_settings_section(col);
+
                 col
                     .spawn((
                         Button::default(),
@@ -490,6 +542,7 @@ fn handle_menu_actions(
     mut game_state: ResMut<GameState>,
     mut resume_state: ResMut<ResumeState>,
     mut autosave: ResMut<AutoSaveSettings>,
+    mut graphics: ResMut<GraphicsSettings>,
     mut save_requests: ResMut<Messages<SaveRequest>>,
     main_menu: Query<Entity, With<MainMenuRoot>>,
     pause_menu: Query<Entity, With<PauseMenuRoot>>,
@@ -566,6 +619,21 @@ fn handle_menu_actions(
                 autosave.enabled = !autosave.enabled;
                 autosave.timer.reset();
             }
+            MenuButtonAction::ToggleGraphics(toggle) => {
+                graphics.toggle(*toggle);
+            }
+        }
+    }
+}
+
+fn update_graphics_toggle_text(
+    graphics: Res<GraphicsSettings>,
+    mut labels: Query<(&mut Text, &GraphicsToggleText)>,
+) {
+    for (mut text, marker) in &mut labels {
+        let desired = graphics.label(marker.0);
+        if text.0 != desired {
+            text.0 = desired.to_string();
         }
     }
 }

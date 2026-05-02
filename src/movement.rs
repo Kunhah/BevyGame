@@ -6,11 +6,10 @@ use crate::constants::{
     GRID_HEIGHT, GRID_WIDTH, PATH_DRAW_MARGIN, PATH_MOVEMENT_SPEED, PLAYER_SPEED, WALKING_LIMIT,
 };
 use crate::battle::{CombatMovePoints, CombatMoveTarget};
-use crate::core::{GameState, Game_State, Global_Variables, MainCamera, Player, Position, Timestamp};
+use crate::core::{GameState, Game_State, Global_Variables, MainCamera, Player, Position};
 use crate::map::{
     movement_speed_multiplier_at_world, movement_speed_multiplier_with_effects_at_world,
-    total_time_cost_for_tile, MapTiles,
-    TerrainSlowEffectList, TILE_WORLD_SIZE,
+    MapTiles, TerrainSlowEffectIndex, TILE_WORLD_SIZE,
 };
 use crate::pathfinding::{is_walkable_move, pathfinding};
 use crate::quadtree::QuadTree;
@@ -45,12 +44,10 @@ pub fn fade_out_system(mut commands: Commands, time: Res<Time>, mut query: Query
         if timer.0.just_finished() {
             commands.entity(entity).despawn();
         } else {
-            let r = sprite.color.to_srgba().red;
-            let g = sprite.color.to_srgba().green;
-            let b = sprite.color.to_srgba().blue;
-            let a = sprite.color.alpha();
-            let new_alpha = (a - 0.01).max(0.0);
-            sprite.color = Color::srgba(r, g, b, new_alpha);
+            // One srgba conversion instead of three.
+            let srgba = sprite.color.to_srgba();
+            let new_alpha = (srgba.alpha - 0.01).max(0.0);
+            sprite.color = Color::srgba(srgba.red, srgba.green, srgba.blue, new_alpha);
         }
     }
 }
@@ -93,7 +90,7 @@ pub fn player_movement(
     input: Res<ButtonInput<KeyCode>>,
     time: Res<Time>,
     map_tiles: Option<Res<MapTiles>>,
-    slow_effects: Option<Res<TerrainSlowEffectList>>,
+    slow_effects: Option<Res<TerrainSlowEffectIndex>>,
     mut commands: Commands,
 ) {
     // Allow exploration and battle movement; other modes are blocked.
@@ -142,12 +139,11 @@ pub fn player_movement(
         if width == 0.0 || height == 0.0 {
             None
         } else {
-            let half = TILE_WORLD_SIZE * 0.5;
             Some((
-                -half,
-                -half,
-                (width - 1.0) * TILE_WORLD_SIZE + half,
-                (height - 1.0) * TILE_WORLD_SIZE + half,
+                0.0,
+                0.0,
+                width * TILE_WORLD_SIZE,
+                height * TILE_WORLD_SIZE,
             ))
         }
     });
@@ -363,17 +359,19 @@ pub fn follow_path_system(
         {
             if movement.current_index < movement.path.len() {
                 let next_tile = movement.path[movement.current_index];
-                let target_x = next_tile.x as f32;
-                let target_y = next_tile.y as f32;
+                let target = Vec3::new(
+                    next_tile.x as f32,
+                    next_tile.y as f32,
+                    transform.translation.z,
+                );
 
                 transform.rotation = Quat::from_rotation_z(rotate_to_direction(
                     transform.translation.x,
                     transform.translation.y,
-                    target_x,
-                    target_y,
+                    target.x,
+                    target.y,
                 ));
-                transform.translation.x = target_x;
-                transform.translation.y = target_y;
+                transform.translation = target;
 
                 movement.current_index += 1;
             } else {
@@ -387,10 +385,7 @@ pub fn follow_path_system(
 /// Advance in-world time when the player manually walks (not along an auto path).
 pub fn accumulate_manual_travel_time(
     mut tracker: ResMut<TravelTimeAccumulator>,
-    mut timestamp: ResMut<Timestamp>,
     game_state: Res<GameState>,
-    map: Res<MapTiles>,
-    slow_effects: Res<TerrainSlowEffectList>,
     player_q: Query<(&Transform, Option<&MoveAlongPath>), With<Player>>,
 ) {
     if game_state.0 != Game_State::Exploring {
@@ -412,36 +407,10 @@ pub fn accumulate_manual_travel_time(
         return;
     }
 
-    let tile_coords = IVec2::new(
+    tracker.last_tile = Some(IVec2::new(
         (current.x / TILE_WORLD_SIZE).floor() as i32,
         (current.y / TILE_WORLD_SIZE).floor() as i32,
-    );
-
-    // Only increment time when entering a new tile.
-    if tracker.last_tile.map_or(true, |prev| prev != tile_coords) {
-        let height = map.tiles.len() as i32;
-        let width = map.tiles.get(0).map(|r| r.len()).unwrap_or(0) as i32;
-        if tile_coords.x >= 0
-            && tile_coords.y >= 0
-            && tile_coords.x < width
-            && tile_coords.y < height
-        {
-                if let Some(row) = map.tiles.get(tile_coords.y as usize) {
-                if let Some(tile) = row.get(tile_coords.x as usize) {
-                    timestamp.0 = timestamp.0.saturating_add(total_time_cost_for_tile(
-                        tile,
-                        Position {
-                            x: tile_coords.x,
-                            y: tile_coords.y,
-                        },
-                        &slow_effects,
-                    ));
-                }
-            }
-        }
-    }
-
-    tracker.last_tile = Some(tile_coords);
+    ));
 }
 
 pub fn toggle_camera_lock(

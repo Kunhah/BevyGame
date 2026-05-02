@@ -3,9 +3,11 @@ use std::collections::VecDeque;
 use bevy::input::keyboard::KeyCode;
 use bevy::prelude::*;
 
+use crate::combat_ability::MagicSchool;
 use crate::combat_plugin::{
-    CharacterId, CombatStats, Equipment, EquipmentSlots, Experience, Health, ItemMaterial,
-    ItemMaterialCost, Level, Magic, Name as CombatName, Stamina,
+    AccessoryType, ActionPoints, ArmorType, CharacterId, CombatStats, Equipment, EquipmentLoadout,
+    EquipmentType, Experience, Health, Inventory, ItemMaterial, ItemMaterialCost, Level, Magic,
+    Name as CombatName, WeaponType,
 };
 use crate::core::Player;
 
@@ -115,7 +117,6 @@ fn handle_console_input(
     mut commands: Commands,
     mut state: ResMut<DebugConsoleState>,
     key_input: Res<ButtonInput<KeyCode>>,
-    asset_server: Res<AssetServer>,
     mut counter: ResMut<DebugEntityCounter>,
     player_q: Query<Entity, With<Player>>,
     name_q: Query<(Entity, &CombatName)>,
@@ -123,11 +124,12 @@ fn handle_console_input(
     mut transforms: Query<&mut Transform>,
     mut health_q: Query<&mut Health>,
     mut magic_q: Query<&mut Magic>,
-    mut stamina_q: Query<&mut Stamina>,
+    mut action_points_q: Query<&mut ActionPoints>,
     mut stats_q: Query<&mut CombatStats>,
     mut xp_q: Query<&mut Experience>,
     mut level_q: Query<&mut Level>,
-    mut slots_q: Query<&mut EquipmentSlots>,
+    mut inventory_q: Query<&mut Inventory>,
+    mut loadout_q: Query<&mut EquipmentLoadout>,
 ) {
     if !state.open {
         return;
@@ -161,7 +163,6 @@ fn handle_console_input(
             let outputs = execute_command(
                 &line,
                 &mut commands,
-                &asset_server,
                 &mut counter,
                 &player_q,
                 &name_q,
@@ -169,11 +170,12 @@ fn handle_console_input(
                 &mut transforms,
                 &mut health_q,
                 &mut magic_q,
-                &mut stamina_q,
+                &mut action_points_q,
                 &mut stats_q,
                 &mut xp_q,
                 &mut level_q,
-                &mut slots_q,
+                &mut inventory_q,
+                &mut loadout_q,
             );
             for out in outputs {
                 push_history(&mut state, out);
@@ -270,7 +272,6 @@ fn push_history(state: &mut DebugConsoleState, line: String) {
 fn execute_command(
     line: &str,
     commands: &mut Commands,
-    asset_server: &AssetServer,
     counter: &mut DebugEntityCounter,
     player_q: &Query<Entity, With<Player>>,
     name_q: &Query<(Entity, &CombatName)>,
@@ -278,11 +279,12 @@ fn execute_command(
     transforms: &mut Query<&mut Transform>,
     health_q: &mut Query<&mut Health>,
     magic_q: &mut Query<&mut Magic>,
-    stamina_q: &mut Query<&mut Stamina>,
+    action_points_q: &mut Query<&mut ActionPoints>,
     stats_q: &mut Query<&mut CombatStats>,
     xp_q: &mut Query<&mut Experience>,
     level_q: &mut Query<&mut Level>,
-    slots_q: &mut Query<&mut EquipmentSlots>,
+    inventory_q: &mut Query<&mut Inventory>,
+    loadout_q: &mut Query<&mut EquipmentLoadout>,
 ) -> Vec<String> {
     let mut parts = line.split_whitespace();
     let Some(cmd) = parts.next() else {
@@ -296,7 +298,7 @@ fn execute_command(
             let target = parts.next();
             match resolve_target(target, player_q, name_q, id_q) {
                 Ok(entity) => vec![format_status(
-                    entity, name_q, health_q, magic_q, stamina_q, stats_q, xp_q, level_q,
+                    entity, name_q, health_q, magic_q, action_points_q, stats_q, xp_q, level_q,
                 )],
                 Err(err) => vec![err],
             }
@@ -337,7 +339,7 @@ fn execute_command(
                                 commands,
                                 health_q,
                                 magic_q,
-                                stamina_q,
+                                action_points_q,
                                 stats_q,
                                 xp_q,
                                 level_q,
@@ -366,7 +368,7 @@ fn execute_command(
                                 commands,
                                 health_q,
                                 magic_q,
-                                stamina_q,
+                                action_points_q,
                                 stats_q,
                                 xp_q,
                                 level_q,
@@ -384,7 +386,7 @@ fn execute_command(
             let item_id = parts.next();
             let maybe_slot = parts.next();
             let maybe_target = parts.next();
-            match item_id.and_then(|id| id.parse::<u32>().ok()) {
+            match item_id.and_then(|id| id.parse::<u16>().ok()) {
                 Some(item_id) => {
                     let (slot, target) = match maybe_slot {
                         Some(slot) if is_slot_name(slot) => (Some(slot), maybe_target),
@@ -397,6 +399,9 @@ fn execute_command(
                                 .spawn(Equipment {
                                     id: item_id,
                                     name: format!("DebugItem{}", item_id),
+                                    equipment_type: equipment_type_from_name(
+                                        slot.unwrap_or("weapon"),
+                                    ),
                                     base_price: 1000,
                                     materials: vec![ItemMaterialCost {
                                         material: ItemMaterial::IronIngot,
@@ -410,7 +415,15 @@ fn execute_command(
                                     morale: 0,
                                 })
                                 .id();
-                            equip_item(slot, entity, equip_entity, commands, slots_q)
+                            give_item_to_character(
+                                item_id,
+                                slot,
+                                entity,
+                                equip_entity,
+                                commands,
+                                inventory_q,
+                                loadout_q,
+                            )
                         }
                         Err(err) => vec![err],
                     }
@@ -424,7 +437,6 @@ fn execute_command(
                 (Some(x), Some(y)) => {
                     let entity = spawn_debug_entity(
                         commands,
-                        asset_server,
                         counter,
                         name.unwrap_or_else(|| "DebugEntity".to_string()),
                         x,
@@ -455,7 +467,7 @@ fn help_text() -> String {
         "  spawn_entity|spawn [name] <x> <y>",
         "",
         "Targets: `player`, `name:<Name>`, `id:<Number>` (default is player).",
-        "Stats: hp, hpmax, mp, mpmax, stam, stammax, lethality, hit, armor, agility, mind, morale, xp, level.",
+        "Stats: hp, hpmax, kiho, kihomax, kihoregen, chiseijutsu, chiseimax, chiseiregen, yokaijutsu, yokaimax, yokairegen, kamishin, kamishinmax, kamishinregen, ap, apmax, lethality, hit, armor, agility, mind, morale, xp, level.",
         "Slots: weapon, armor, accessory.",
     ]
     .join("\n")
@@ -521,7 +533,6 @@ fn parse_spawn_args(args: Vec<&str>) -> (Option<String>, Option<i32>, Option<i32
 
 fn spawn_debug_entity(
     commands: &mut Commands,
-    asset_server: &AssetServer,
     counter: &mut DebugEntityCounter,
     name: String,
     x: i32,
@@ -531,7 +542,6 @@ fn spawn_debug_entity(
     commands
         .spawn((
             Sprite {
-                image: asset_server.load("character.png"),
                 color: Color::srgb(0.2, 0.6, 0.9),
                 custom_size: Some(Vec2::new(32.0, 32.0)),
                 ..default()
@@ -544,16 +554,8 @@ fn spawn_debug_entity(
                 max: 100,
                 regen: 0,
             },
-            Magic {
-                current: 50,
-                max: 50,
-                regen: 0,
-            },
-            Stamina {
-                current: 50,
-                max: 50,
-                regen: 0,
-            },
+            Magic::new(2.0, 1.0, 1.0, 1.0),
+            ActionPoints::default(),
             CombatStats {
                 base_lethality: 10,
                 base_hit: 50,
@@ -572,7 +574,7 @@ fn format_status(
     name_q: &Query<(Entity, &CombatName)>,
     health_q: &mut Query<&mut Health>,
     magic_q: &mut Query<&mut Magic>,
-    stamina_q: &mut Query<&mut Stamina>,
+    action_points_q: &mut Query<&mut ActionPoints>,
     stats_q: &mut Query<&mut CombatStats>,
     xp_q: &mut Query<&mut Experience>,
     level_q: &mut Query<&mut Level>,
@@ -590,12 +592,24 @@ fn format_status(
     let mp = magic_q
         .get_mut(entity)
         .ok()
-        .map(|m| format!("{}/{}", m.current, m.max))
+        .map(|m| {
+            format!(
+                "kiho {:.2}/{:.2} chisei {:.2}/{:.2} yokai {:.2}/{:.2} kamishin {:.2}/{:.2}",
+                m.kiho.current,
+                m.kiho.max,
+                m.chiseijutsu.current,
+                m.chiseijutsu.max,
+                m.yokaijutsu.current,
+                m.yokaijutsu.max,
+                m.kamishin.current,
+                m.kamishin.max
+            )
+        })
         .unwrap_or_else(|| "N/A".to_string());
-    let st = stamina_q
+    let ap = action_points_q
         .get_mut(entity)
         .ok()
-        .map(|s| format!("{}/{}", s.current, s.max))
+        .map(|ap| format!("{}/{}", ap.current, ap.max))
         .unwrap_or_else(|| "N/A".to_string());
     let stats = stats_q.get_mut(entity).ok().map(|s| {
         format!(
@@ -614,7 +628,7 @@ fn format_status(
         .map(|l| l.0.to_string())
         .unwrap_or_else(|| "N/A".to_string());
 
-    let mut line = format!("status {}: hp {} mp {} stam {} xp {} lvl {}", name, hp, mp, st, xp, level);
+    let mut line = format!("status {}: hp {} magic [{}] ap {} xp {} lvl {}", name, hp, mp, ap, xp, level);
     if let Some(stats) = stats {
         line.push_str(" | ");
         line.push_str(&stats);
@@ -628,6 +642,111 @@ enum StatOp {
     Add(i32),
 }
 
+#[derive(Clone, Copy)]
+enum MagicField {
+    Current,
+    Max,
+    Regen,
+}
+
+fn school_label(school: MagicSchool) -> &'static str {
+    match school {
+        MagicSchool::Kiho => "kiho",
+        MagicSchool::Chiseijutsu => "chiseijutsu",
+        MagicSchool::Yokaijutsu => "yokaijutsu",
+        MagicSchool::Kamishin => "kamishin",
+    }
+}
+
+fn apply_magic_school_stat(
+    op: StatOp,
+    entity: Entity,
+    commands: &mut Commands,
+    magic_q: &mut Query<&mut Magic>,
+    school: MagicSchool,
+    field: MagicField,
+) -> String {
+    let label = school_label(school);
+
+    if let Ok(mut magic) = magic_q.get_mut(entity) {
+        let pool = magic.pool_mut(school);
+        match field {
+            MagicField::Current => {
+                match op {
+                    StatOp::Set(v) => pool.current = v as f32,
+                    StatOp::Add(v) => pool.current += v as f32,
+                }
+                if pool.max < 0.0 {
+                    pool.max = 0.0;
+                }
+                pool.current = pool.current.clamp(0.0, pool.max);
+                format!("set {} = {:.2} (max {:.2})", label, pool.current, pool.max)
+            }
+            MagicField::Max => {
+                match op {
+                    StatOp::Set(v) => pool.max = v as f32,
+                    StatOp::Add(v) => pool.max += v as f32,
+                }
+                if pool.max < 0.0 {
+                    pool.max = 0.0;
+                }
+                if pool.current > pool.max {
+                    pool.current = pool.max;
+                }
+                format!("set {} max = {:.2}", label, pool.max)
+            }
+            MagicField::Regen => {
+                match op {
+                    StatOp::Set(v) => pool.regen_per_tick = v as f32,
+                    StatOp::Add(v) => pool.regen_per_tick += v as f32,
+                }
+                pool.regen_per_tick = pool.regen_per_tick.clamp(0.0, 0.999_999);
+                format!("set {} regen = {:.6}", label, pool.regen_per_tick)
+            }
+        }
+    } else {
+        let mut magic = Magic::new(0.0, 0.0, 0.0, 0.0);
+        match field {
+            MagicField::Current => {
+                let value = match op {
+                    StatOp::Set(value) => value.max(0) as f32,
+                    StatOp::Add(delta) => delta.max(0) as f32,
+                };
+                {
+                    let pool = magic.pool_mut(school);
+                    pool.current = value;
+                    pool.max = value;
+                }
+                commands.entity(entity).insert(magic);
+                format!("set {} = {:.2} (max {:.2})", label, value, value)
+            }
+            MagicField::Max => {
+                let value = match op {
+                    StatOp::Set(value) => value.max(0) as f32,
+                    StatOp::Add(delta) => delta.max(0) as f32,
+                };
+                {
+                    let pool = magic.pool_mut(school);
+                    pool.max = value;
+                    pool.current = value;
+                }
+                commands.entity(entity).insert(magic);
+                format!("set {} max = {:.2}", label, value)
+            }
+            MagicField::Regen => {
+                let value = match op {
+                    StatOp::Set(value) => (value as f32).max(0.0),
+                    StatOp::Add(delta) => (delta as f32).max(0.0),
+                }
+                .clamp(0.0, 0.999_999);
+                magic.pool_mut(school).regen_per_tick = value;
+                commands.entity(entity).insert(magic);
+                format!("set {} regen = {:.6}", label, value)
+            }
+        }
+    }
+}
+
 fn apply_stat(
     op: StatOp,
     stat: &str,
@@ -635,7 +754,7 @@ fn apply_stat(
     commands: &mut Commands,
     health_q: &mut Query<&mut Health>,
     magic_q: &mut Query<&mut Magic>,
-    stamina_q: &mut Query<&mut Stamina>,
+    action_points_q: &mut Query<&mut ActionPoints>,
     stats_q: &mut Query<&mut CombatStats>,
     xp_q: &mut Query<&mut Experience>,
     level_q: &mut Query<&mut Level>,
@@ -697,18 +816,33 @@ fn apply_stat(
             });
             format!("set hpmax = {}", value)
         }
-        "mp" | "mana" | "magic" => {
-            let (current, max, regen) = match magic_q.get_mut(entity) {
-                Ok(mut m) => {
-                    if m.max < 0 {
-                        m.max = 0;
+        "mp" | "mana" | "magic" | "mpmax" | "magicmax" | "maxmp" => {
+            "use kiho/chiseijutsu/yokaijutsu/kamishin fields directly".to_string()
+        }
+        "kiho" => apply_magic_school_stat(op, entity, commands, magic_q, MagicSchool::Kiho, MagicField::Current),
+        "kihomax" | "maxkiho" => apply_magic_school_stat(op, entity, commands, magic_q, MagicSchool::Kiho, MagicField::Max),
+        "kihoregen" => apply_magic_school_stat(op, entity, commands, magic_q, MagicSchool::Kiho, MagicField::Regen),
+        "chiseijutsu" | "chisei" => apply_magic_school_stat(op, entity, commands, magic_q, MagicSchool::Chiseijutsu, MagicField::Current),
+        "chiseijutsumax" | "chiseimax" | "maxchisei" => apply_magic_school_stat(op, entity, commands, magic_q, MagicSchool::Chiseijutsu, MagicField::Max),
+        "chiseijutsuregen" | "chiseiregen" => apply_magic_school_stat(op, entity, commands, magic_q, MagicSchool::Chiseijutsu, MagicField::Regen),
+        "yokaijutsu" | "yokai" => apply_magic_school_stat(op, entity, commands, magic_q, MagicSchool::Yokaijutsu, MagicField::Current),
+        "yokaijutsumax" | "yokaimax" | "maxyokai" => apply_magic_school_stat(op, entity, commands, magic_q, MagicSchool::Yokaijutsu, MagicField::Max),
+        "yokaijutsuregen" | "yokairegen" => apply_magic_school_stat(op, entity, commands, magic_q, MagicSchool::Yokaijutsu, MagicField::Regen),
+        "kamishin" => apply_magic_school_stat(op, entity, commands, magic_q, MagicSchool::Kamishin, MagicField::Current),
+        "kamishinmax" | "maxkamishin" => apply_magic_school_stat(op, entity, commands, magic_q, MagicSchool::Kamishin, MagicField::Max),
+        "kamishinregen" => apply_magic_school_stat(op, entity, commands, magic_q, MagicSchool::Kamishin, MagicField::Regen),
+        "ap" | "actionpoints" | "action_points" | "stam" | "stamina" => {
+            let (current, max) = match action_points_q.get_mut(entity) {
+                Ok(mut ap) => {
+                    if ap.max < 0 {
+                        ap.max = 0;
                     }
                     match op {
-                        StatOp::Set(value) => m.current = value,
-                        StatOp::Add(delta) => m.current += delta,
+                        StatOp::Set(value) => ap.current = value,
+                        StatOp::Add(delta) => ap.current += delta,
                     }
-                    m.current = m.current.clamp(0, m.max);
-                    return format!("set mp = {} (max {})", m.current, m.max);
+                    ap.current = ap.current.clamp(0, ap.max);
+                    return format!("set action points = {} (max {})", ap.current, ap.max);
                 }
                 Err(_) => {
                     let value = match op {
@@ -716,96 +850,36 @@ fn apply_stat(
                         StatOp::Add(delta) => delta,
                     };
                     let value = value.max(0);
-                    (value, value, 0)
+                    (value, value)
                 }
             };
-            commands.entity(entity).insert(Magic {
-                current,
-                max,
-                regen,
-            });
-            format!("set mp = {} (max {})", current, max)
+            commands.entity(entity).insert(ActionPoints { current, max });
+            format!("set action points = {} (max {})", current, max)
         }
-        "mpmax" | "magicmax" | "maxmp" => {
-            if let Ok(mut m) = magic_q.get_mut(entity) {
+        "apmax" | "actionpointsmax" | "action_points_max" | "stammax" | "staminamax" | "maxstam" => {
+            if let Ok(mut ap) = action_points_q.get_mut(entity) {
                 match op {
-                    StatOp::Set(value) => m.max = value,
-                    StatOp::Add(delta) => m.max += delta,
+                    StatOp::Set(value) => ap.max = value,
+                    StatOp::Add(delta) => ap.max += delta,
                 }
-                if m.max < 0 {
-                    m.max = 0;
+                if ap.max < 0 {
+                    ap.max = 0;
                 }
-                if m.current > m.max {
-                    m.current = m.max;
+                if ap.current > ap.max {
+                    ap.current = ap.max;
                 }
-                return format!("set mpmax = {}", m.max);
+                return format!("set action points max = {}", ap.max);
             }
             let value = match op {
                 StatOp::Set(value) => value,
                 StatOp::Add(delta) => delta,
             };
             let value = value.max(0);
-            commands.entity(entity).insert(Magic {
+            commands.entity(entity).insert(ActionPoints {
                 current: value,
                 max: value,
-                regen: 0,
             });
-            format!("set mpmax = {}", value)
-        }
-        "stam" | "stamina" => {
-            let (current, max, regen) = match stamina_q.get_mut(entity) {
-                Ok(mut s) => {
-                    if s.max < 0 {
-                        s.max = 0;
-                    }
-                    match op {
-                        StatOp::Set(value) => s.current = value,
-                        StatOp::Add(delta) => s.current += delta,
-                    }
-                    s.current = s.current.clamp(0, s.max);
-                    return format!("set stamina = {} (max {})", s.current, s.max);
-                }
-                Err(_) => {
-                    let value = match op {
-                        StatOp::Set(value) => value,
-                        StatOp::Add(delta) => delta,
-                    };
-                    let value = value.max(0);
-                    (value, value, 0)
-                }
-            };
-            commands.entity(entity).insert(Stamina {
-                current,
-                max,
-                regen,
-            });
-            format!("set stamina = {} (max {})", current, max)
-        }
-        "stammax" | "staminamax" | "maxstam" => {
-            if let Ok(mut s) = stamina_q.get_mut(entity) {
-                match op {
-                    StatOp::Set(value) => s.max = value,
-                    StatOp::Add(delta) => s.max += delta,
-                }
-                if s.max < 0 {
-                    s.max = 0;
-                }
-                if s.current > s.max {
-                    s.current = s.max;
-                }
-                return format!("set stamina max = {}", s.max);
-            }
-            let value = match op {
-                StatOp::Set(value) => value,
-                StatOp::Add(delta) => delta,
-            };
-            let value = value.max(0);
-            commands.entity(entity).insert(Stamina {
-                current: value,
-                max: value,
-                regen: 0,
-            });
-            format!("set stamina max = {}", value)
+            format!("set action points max = {}", value)
         }
         "lethality" | "hit" | "armor" | "agility" | "mind" | "morale" => {
             if let Ok(mut stats) = stats_q.get_mut(entity) {
@@ -894,40 +968,53 @@ fn is_slot_name(slot: &str) -> bool {
     matches!(slot, "weapon" | "armor" | "accessory")
 }
 
-fn equip_item(
+fn equipment_type_from_name(slot: &str) -> EquipmentType {
+    match slot {
+        "armor" => EquipmentType::Armor(ArmorType::LightArmor),
+        "accessory" => EquipmentType::Accessory(AccessoryType::Charm),
+        _ => EquipmentType::Weapon(WeaponType::Sword),
+    }
+}
+
+fn give_item_to_character(
+    item_id: u16,
     slot: Option<&str>,
     entity: Entity,
     equip_entity: Entity,
     commands: &mut Commands,
-    slots_q: &mut Query<&mut EquipmentSlots>,
+    inventory_q: &mut Query<&mut Inventory>,
+    loadout_q: &mut Query<&mut EquipmentLoadout>,
 ) -> Vec<String> {
-    let slot = slot.unwrap_or("weapon");
-    let mut slots = match slots_q.get_mut(entity) {
-        Ok(slots) => slots,
-        Err(_) => {
-            commands.entity(entity).insert(EquipmentSlots::default());
-            match slots_q.get_mut(entity) {
-                Ok(slots) => slots,
-                Err(_) => {
-                    return vec!["give_item: failed to attach equipment slots".to_string()];
-                }
-            }
-        }
-    };
+    let slot_name = slot.unwrap_or("weapon");
+    let equipment_type = equipment_type_from_name(slot_name);
+    let slot_type = equipment_type.slot_type();
 
-    match slot {
-        "weapon" => {
-            slots.weapon = Some(equip_entity);
-            vec![format!("give_item: equipped weapon {:?}", equip_entity)]
-        }
-        "armor" => {
-            slots.armor = Some(equip_entity);
-            vec![format!("give_item: equipped armor {:?}", equip_entity)]
-        }
-        "accessory" => {
-            slots.accessories.push(equip_entity);
-            vec![format!("give_item: added accessory {:?}", equip_entity)]
-        }
-        _ => vec![format!("give_item: unknown slot `{}`", slot)],
+    if let Ok(mut inventory) = inventory_q.get_mut(entity) {
+        inventory.item_ids.push(item_id);
+    } else {
+        commands.entity(entity).insert(Inventory {
+            item_ids: vec![item_id],
+        });
     }
+
+    if let Ok(mut loadout) = loadout_q.get_mut(entity) {
+        if loadout.equip_in_first_matching_slot(equipment_type, equip_entity) {
+            return vec![format!(
+                "give_item: added item {} and equipped {:?} as {:?}",
+                item_id, equip_entity, equipment_type
+            )];
+        }
+        return vec![format!(
+            "give_item: added item {} but target cannot equip {:?}",
+            item_id, equipment_type
+        )];
+    }
+
+    let mut loadout = EquipmentLoadout::with_slots([slot_type]);
+    loadout.equip_in_first_matching_slot(equipment_type, equip_entity);
+    commands.entity(entity).insert(loadout);
+    vec![format!(
+        "give_item: added item {} and created {:?} slot for {:?}",
+        item_id, equipment_type, equip_entity
+    )]
 }
