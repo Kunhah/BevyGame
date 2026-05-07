@@ -1,4 +1,19 @@
+// All ability data lives in this single file. IDs are packed (level << 8 | sub),
+// so I keep one "level" byte per character to make it obvious who owns what:
+//
+//   0x00 — generic / placeholder demo abilities
+//   0x0A — Rina        (ids 2560..)
+//   0x0B — Sayaka      (ids 2816..)
+//   0x0C — Houjou Utaka (ids 3072..)
+//   0x0D — Toshiko     (ids 3328..)
+//   0x0F — Yokai       (ids 3840..)
+//
+// Effects use the new `ApplyStatus { kind, tier }` / `RemoveStatus { kind }`
+// variants for non-damage actions (Cleanse, Bind spirit, Whisper, etc.).
 [
+    // -----------------------------------------------------------------------
+    // Demo / placeholder abilities (kept for the existing AI-tree examples).
+    // -----------------------------------------------------------------------
     (
         id: 0,
         next_id: None,
@@ -89,5 +104,534 @@
         shape: Select,
         duration: 2,
         targets: 1,
+    ),
+
+    // -----------------------------------------------------------------------
+    // Rina — Rogue (Kiho)
+    // -----------------------------------------------------------------------
+    (
+        id: 2560, // 0x0A00 Quick slash
+        next_id: None,
+        name: "Quick slash",
+        health_cost: 0,
+        magic_cost: 0.0,
+        magic_school: Kiho,
+        action_point_cost: 2,
+        cooldown: 0,
+        description: "A short blade strike. Spend an extra AP to also nick the adjacent enemy for half damage.",
+        effects: [
+            Damage(floor: 10, ceiling: 18, damage_type: Physical, scaled_with: Lethality, defended_with: Armor),
+        ],
+        shape: Select,
+        duration: 0,
+        targets: 1,
+    ),
+    (
+        id: 2561, // 0x0A01 Throw knife
+        next_id: None,
+        name: "Throw knife",
+        health_cost: 0,
+        magic_cost: 0.0,
+        magic_school: Kiho,
+        action_point_cost: 1,
+        cooldown: 0,
+        description: "Toss a knife at a target up to 10m away.",
+        effects: [
+            Damage(floor: 8, ceiling: 14, damage_type: Physical, scaled_with: Lethality, defended_with: Armor),
+        ],
+        shape: Select,
+        duration: 0,
+        targets: 1,
+    ),
+    (
+        id: 2562, // 0x0A02 Shoot
+        next_id: None,
+        name: "Shoot",
+        health_cost: 0,
+        magic_cost: 0.0,
+        magic_school: Kiho,
+        action_point_cost: 1,
+        cooldown: 0,
+        description: "Discharge the flintlock or crossbow at a distant target. Must reload before firing again (free at end of battle).",
+        effects: [
+            Damage(floor: 22, ceiling: 38, damage_type: Physical, scaled_with: Hit, defended_with: Armor),
+        ],
+        shape: Select,
+        duration: 0,
+        targets: 1,
+    ),
+    (
+        id: 2563, // 0x0A03 Reload
+        next_id: None,
+        name: "Reload",
+        health_cost: 0,
+        magic_cost: 0.0,
+        magic_school: Kiho,
+        action_point_cost: 2,
+        cooldown: 0,
+        description: "Reload the firearm or crossbow.",
+        effects: [],
+        shape: Select,
+        duration: 0,
+        targets: 1,
+    ),
+    (
+        id: 2564, // 0x0A04 Dodge
+        next_id: None,
+        name: "Dodge",
+        health_cost: 0,
+        magic_cost: 0.0,
+        magic_school: Kiho,
+        action_point_cost: 3,
+        cooldown: 0,
+        description: "Light-foot stance; speed doubles until the start of next turn.",
+        effects: [
+            Buff(stat: Speed, multiplier: 2.0, effects: None, scaled_with: Speed),
+        ],
+        shape: Select,
+        duration: 1,
+        targets: 1,
+    ),
+    (
+        id: 2565, // 0x0A05 Get knife back
+        next_id: None,
+        name: "Get the knife back",
+        health_cost: 0,
+        magic_cost: 0.0,
+        magic_school: Kiho,
+        action_point_cost: 1,
+        cooldown: 0,
+        description: "Recover a thrown knife within range.",
+        effects: [],
+        shape: Select,
+        duration: 0,
+        targets: 1,
+    ),
+    (
+        id: 2566, // 0x0A06 Invisibility
+        next_id: None,
+        name: "Invisibility",
+        health_cost: 0,
+        magic_cost: 25.0,
+        magic_school: Kiho,
+        action_point_cost: 4,
+        cooldown: 6,
+        description: "Step out of sight; enables Surprise attack on next turn.",
+        effects: [
+            // Modeled as Sharpened Focus T3 — enemies have a hard time hitting an invisible target.
+            ApplyStatus(kind: Buff(SharpenedFocus), tier: 3),
+        ],
+        shape: Select,
+        duration: 1,
+        targets: 1,
+    ),
+    (
+        id: 2567, // 0x0A07 Surprise attack
+        next_id: None,
+        name: "Surprise attack",
+        health_cost: 0,
+        magic_cost: 0.0,
+        magic_school: Kiho,
+        action_point_cost: 3,
+        cooldown: 0,
+        description: "Burst from concealment for a massive strike.",
+        effects: [
+            Damage(floor: 60, ceiling: 100, damage_type: Physical, scaled_with: Lethality, defended_with: Armor),
+        ],
+        shape: Select,
+        duration: 0,
+        targets: 1,
+    ),
+
+    // -----------------------------------------------------------------------
+    // Sayaka — Cleric / Kitsune (Kamishin, Chiseijutsu)
+    // -----------------------------------------------------------------------
+    (
+        id: 2816, // 0x0B00 Purifying strike
+        next_id: None,
+        name: "Purifying strike",
+        health_cost: 0,
+        magic_cost: 4.0,
+        magic_school: Kamishin,
+        action_point_cost: 2,
+        cooldown: 0,
+        description: "A consecrated blow that weakens yokai and chips at their afflictions.",
+        effects: [
+            Damage(floor: 6, ceiling: 12, damage_type: True, scaled_with: Kamishin, defended_with: Mind),
+            // Stagger to interrupt yokai mid-channel.
+            ApplyStatus(kind: BadCondition(Staggered), tier: 1),
+        ],
+        shape: Select,
+        duration: 0,
+        targets: 1,
+    ),
+    (
+        id: 2817, // 0x0B01 Sacred prayer
+        next_id: None,
+        name: "Sacred prayer",
+        health_cost: 0,
+        magic_cost: 6.0,
+        magic_school: Kamishin,
+        action_point_cost: 2,
+        cooldown: 0,
+        description: "Heal a single ally.",
+        effects: [
+            Heal(floor: 14, ceiling: 22, scaled_with: Kamishin),
+        ],
+        shape: Select,
+        duration: 0,
+        targets: 1,
+    ),
+    (
+        id: 2818, // 0x0B02 Barrier of faith
+        next_id: None,
+        name: "Barrier of faith",
+        health_cost: 0,
+        magic_cost: 8.0,
+        magic_school: Kamishin,
+        action_point_cost: 3,
+        cooldown: 4,
+        description: "Surround an ally with a divine ward, reducing damage they take for several turns.",
+        effects: [
+            ApplyStatus(kind: Buff(Fortified), tier: 2),
+        ],
+        shape: Select,
+        duration: 5,
+        targets: 1,
+    ),
+    (
+        id: 2819, // 0x0B03 Cleanse
+        next_id: None,
+        name: "Cleanse",
+        health_cost: 0,
+        magic_cost: 10.0,
+        magic_school: Kamishin,
+        action_point_cost: 3,
+        cooldown: 2,
+        description: "Strip a single Bad Condition or Minor Debuff from an ally.",
+        effects: [
+            // The exact kind to remove is selected by the player UI; this
+            // entry covers the most common nuisance (Bleeding) — duplicate
+            // entries with different `kind` give Sayaka a small menu.
+            RemoveStatus(kind: BadCondition(Bleeding)),
+        ],
+        shape: Select,
+        duration: 0,
+        targets: 1,
+    ),
+    (
+        id: 2820, // 0x0B04 Ritual of stillness
+        next_id: None,
+        name: "Ritual of stillness",
+        health_cost: 0,
+        magic_cost: 14.0,
+        magic_school: Chiseijutsu,
+        action_point_cost: 4,
+        cooldown: 6,
+        description: "Earth-bound chant that slows enemies and saps their action economy.",
+        effects: [
+            ApplyStatus(kind: BadCondition(Slowed), tier: 2),
+            ApplyStatus(kind: Debuff(Sluggish), tier: 1),
+        ],
+        shape: Radius(4.0),
+        duration: 4,
+        targets: 4,
+    ),
+
+    // -----------------------------------------------------------------------
+    // Houjou Utaka — Samurai (Kiho, Yokaijutsu)
+    // -----------------------------------------------------------------------
+    (
+        id: 3072, // 0x0C00 Heavy strike
+        next_id: None,
+        name: "Heavy strike",
+        health_cost: 0,
+        magic_cost: 0.0,
+        magic_school: Kiho,
+        action_point_cost: 2,
+        cooldown: 0,
+        description: "Two-handed swing dealing high physical damage.",
+        effects: [
+            Damage(floor: 26, ceiling: 40, damage_type: Physical, scaled_with: Lethality, defended_with: Armor),
+        ],
+        shape: Select,
+        duration: 0,
+        targets: 1,
+    ),
+    (
+        id: 3073, // 0x0C01 Wide slash
+        next_id: None,
+        name: "Wide slash",
+        health_cost: 0,
+        magic_cost: 0.0,
+        magic_school: Kiho,
+        action_point_cost: 3,
+        cooldown: 1,
+        description: "Sweep that catches every enemy in a 3m arc.",
+        effects: [
+            Damage(floor: 18, ceiling: 28, damage_type: Physical, scaled_with: Lethality, defended_with: Armor),
+        ],
+        shape: Cone(angle: 100.0, radius: 3.0),
+        duration: 0,
+        targets: 4,
+    ),
+    (
+        id: 3074, // 0x0C02 Counter stance
+        next_id: None,
+        name: "Counter stance",
+        health_cost: 0,
+        magic_cost: 0.0,
+        magic_school: Kiho,
+        action_point_cost: 2,
+        cooldown: 3,
+        description: "Brace; the next attack against you triggers a heavy retaliatory strike.",
+        effects: [
+            // Modeled as a Fortified buff for the same turn — the proper
+            // counter-reaction lives in `Reactions` (configured at spawn).
+            ApplyStatus(kind: Buff(Fortified), tier: 1),
+        ],
+        shape: Select,
+        duration: 1,
+        targets: 1,
+    ),
+    (
+        id: 3075, // 0x0C03 Blood draw
+        next_id: None,
+        name: "Blood draw",
+        health_cost: 6,
+        magic_cost: 0.0,
+        magic_school: Kiho,
+        action_point_cost: 1,
+        cooldown: 0,
+        description: "Cut yourself; the pain sharpens lethality and hit for the next turns.",
+        effects: [
+            Buff(stat: Lethality, multiplier: 1.30, effects: None, scaled_with: Lethality),
+            Buff(stat: Hit, multiplier: 1.20, effects: None, scaled_with: Hit),
+        ],
+        shape: Select,
+        duration: 3,
+        targets: 1,
+    ),
+    (
+        id: 3076, // 0x0C04 Forbidden cut
+        next_id: None,
+        name: "Forbidden cut",
+        health_cost: 0,
+        magic_cost: 0.0,
+        magic_school: Yokaijutsu,
+        action_point_cost: 3,
+        cooldown: 2,
+        description: "An unspeakable kata that scars the wielder's spirit.",
+        effects: [
+            Damage(floor: 50, ceiling: 80, damage_type: True, scaled_with: Lethality, defended_with: Mind),
+            // Self-applied morale damage is approximated by Drained T1 on the caster.
+            // (Self-targeting requires UI plumbing; for now the player picks themselves.)
+            ApplyStatus(kind: Debuff(Drained), tier: 1),
+        ],
+        shape: Select,
+        duration: 0,
+        targets: 1,
+    ),
+    (
+        id: 3077, // 0x0C05 Sake drink
+        next_id: None,
+        name: "Sake drink",
+        health_cost: 0,
+        magic_cost: 0.0,
+        magic_school: Kiho,
+        action_point_cost: 2,
+        cooldown: 4,
+        description: "A long pull from the gourd. Steadies morale at the cost of accuracy.",
+        effects: [
+            ApplyStatus(kind: Buff(BolsteredMorale), tier: 1),
+            Buff(stat: Hit, multiplier: 0.80, effects: None, scaled_with: Hit),
+        ],
+        shape: Select,
+        duration: 4,
+        targets: 1,
+    ),
+    (
+        id: 3078, // 0x0C06 Bind spirit
+        next_id: None,
+        name: "Bind spirit",
+        health_cost: 0,
+        magic_cost: 12.0,
+        magic_school: Yokaijutsu,
+        action_point_cost: 3,
+        cooldown: 4,
+        description: "Yokaijutsu binding that locks an enemy in place.",
+        effects: [
+            ApplyStatus(kind: BadCondition(Slowed), tier: 3),
+        ],
+        shape: Select,
+        duration: 2,
+        targets: 1,
+    ),
+
+    // -----------------------------------------------------------------------
+    // Toshiko — Vessel (Yokaijutsu)
+    // -----------------------------------------------------------------------
+    (
+        id: 3328, // 0x0D00 Shadow touch
+        next_id: None,
+        name: "Shadow touch",
+        health_cost: 0,
+        magic_cost: 5.0,
+        magic_school: Yokaijutsu,
+        action_point_cost: 2,
+        cooldown: 0,
+        description: "Brush the target with Kuro's shadow; mental damage that ignores part of armor.",
+        effects: [
+            Damage(floor: 10, ceiling: 18, damage_type: True, scaled_with: Mind, defended_with: Mind),
+        ],
+        shape: Select,
+        duration: 0,
+        targets: 1,
+    ),
+    (
+        id: 3329, // 0x0D01 Whisper
+        next_id: None,
+        name: "Whisper",
+        health_cost: 0,
+        magic_cost: 6.0,
+        magic_school: Yokaijutsu,
+        action_point_cost: 2,
+        cooldown: 1,
+        description: "An unseen voice unsettles the target — morale and accuracy suffer.",
+        effects: [
+            ApplyStatus(kind: Debuff(Unfocused), tier: 1),
+            // Direct morale tap modeled as Drained T1.
+            ApplyStatus(kind: Debuff(Drained), tier: 1),
+        ],
+        shape: Select,
+        duration: 0,
+        targets: 1,
+    ),
+    (
+        id: 3330, // 0x0D02 See unseen
+        next_id: None,
+        name: "See unseen",
+        health_cost: 0,
+        magic_cost: 4.0,
+        magic_school: Yokaijutsu,
+        action_point_cost: 2,
+        cooldown: 0,
+        description: "Reveal hidden enemies and weaknesses for a few turns.",
+        effects: [
+            ApplyStatus(kind: Buff(Lucky), tier: 1),
+        ],
+        shape: Select,
+        duration: 4,
+        targets: 1,
+    ),
+    (
+        id: 3331, // 0x0D03 Kuro's grasp
+        next_id: None,
+        name: "Kuro's grasp",
+        health_cost: 0,
+        magic_cost: 10.0,
+        magic_school: Yokaijutsu,
+        action_point_cost: 3,
+        cooldown: 3,
+        description: "Shadow tendrils pin the target.",
+        effects: [
+            ApplyStatus(kind: BadCondition(Slowed), tier: 2),
+        ],
+        shape: Select,
+        duration: 2,
+        targets: 1,
+    ),
+    (
+        id: 3332, // 0x0D04 Night veil
+        next_id: None,
+        name: "Night veil",
+        health_cost: 0,
+        magic_cost: 14.0,
+        magic_school: Yokaijutsu,
+        action_point_cost: 4,
+        cooldown: 5,
+        description: "Drape an area in twilight; enemies inside lose accuracy.",
+        effects: [
+            ApplyStatus(kind: Debuff(Unlucky), tier: 1),
+        ],
+        shape: Radius(5.0),
+        duration: 4,
+        targets: 6,
+    ),
+    (
+        id: 3333, // 0x0D05 Shared pain
+        next_id: None,
+        name: "Shared pain",
+        health_cost: 0,
+        magic_cost: 8.0,
+        magic_school: Yokaijutsu,
+        action_point_cost: 3,
+        cooldown: 4,
+        description: "Bind your wound to the target's; both of you bleed.",
+        effects: [
+            ApplyStatus(kind: BadCondition(Bleeding), tier: 2),
+        ],
+        shape: Select,
+        duration: 0,
+        targets: 1,
+    ),
+
+    // -----------------------------------------------------------------------
+    // Yokai abilities (id 0x0F00..)
+    // -----------------------------------------------------------------------
+    (
+        id: 3840, // 0x0F00 Onibi — Will-o'-wisp burn
+        next_id: None,
+        name: "Will-o'-wisp burn",
+        health_cost: 0,
+        magic_cost: 0.0,
+        magic_school: Yokaijutsu,
+        action_point_cost: 2,
+        cooldown: 0,
+        description: "A trailing flame that lights the target on fire.",
+        effects: [
+            Damage(floor: 8, ceiling: 14, damage_type: Fire, scaled_with: Mind, defended_with: Mind),
+            ApplyStatus(kind: BadCondition(Bleeding), tier: 1),
+        ],
+        shape: Select,
+        duration: 0,
+        targets: 1,
+    ),
+    (
+        id: 3841, // 0x0F01 Kappa — River grasp
+        next_id: None,
+        name: "River grasp",
+        health_cost: 0,
+        magic_cost: 0.0,
+        magic_school: Chiseijutsu,
+        action_point_cost: 2,
+        cooldown: 1,
+        description: "A webbed-hand pull that trips and slows.",
+        effects: [
+            Damage(floor: 12, ceiling: 20, damage_type: Physical, scaled_with: Lethality, defended_with: Armor),
+            ApplyStatus(kind: BadCondition(Slowed), tier: 1),
+        ],
+        shape: Select,
+        duration: 0,
+        targets: 1,
+    ),
+    (
+        id: 3842, // 0x0F02 Kasha — Final cry
+        next_id: None,
+        name: "Final cry",
+        health_cost: 0,
+        magic_cost: 0.0,
+        magic_school: Yokaijutsu,
+        action_point_cost: 3,
+        cooldown: 4,
+        description: "A wail that haunts the soul.",
+        effects: [
+            Damage(floor: 6, ceiling: 12, damage_type: True, scaled_with: Mind, defended_with: Mind),
+            ApplyStatus(kind: BadCondition(Haunted), tier: 1),
+            ApplyStatus(kind: BadCondition(Terrified), tier: 1),
+        ],
+        shape: Radius(3.0),
+        duration: 0,
+        targets: 4,
     ),
 ]

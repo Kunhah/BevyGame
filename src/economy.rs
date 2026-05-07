@@ -18,6 +18,7 @@ use crate::governance::{
     ReputationIncidentKind, ReputationLedger, ReputationTarget, PlayerCrimeStatus, WantedTier,
 };
 use crate::map::{tile_center_world, CurrentArea, MapTiles, TILE_WORLD_SIZE};
+use crate::ui_style::{font_size, palette, radius, spacing};
 
 const BUY_MARKUP_BPS: u32 = 12000; // 120% of dynamic base
 const SELL_MARKDOWN_BPS: u32 = 7000; // 70% of dynamic base
@@ -318,6 +319,73 @@ pub struct InventoryStack {
     pub quantity: StackQty,
 }
 
+/// What currency a merchant trades in. Regular merchants accept the world's
+/// gold (the player's `PlayerWallet.coins`); the Merchant from the Contract
+/// accepts only Merchant Coins, the spiritual "favor" currency
+/// ([`crate::quests::MerchantCoins`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum Currency {
+    #[default]
+    Gold,
+    MerchantCoin,
+}
+
+/// Read the player's balance in the merchant's currency.
+fn player_balance(
+    currency: Currency,
+    player_wallet: &PlayerWallet,
+    merchant_coins: &crate::quests::MerchantCoins,
+) -> u32 {
+    match currency {
+        Currency::Gold => player_wallet.coins,
+        Currency::MerchantCoin => merchant_coins.0,
+    }
+}
+
+/// Subtract `amount` from the player's wallet of `currency`. Returns `false`
+/// if the player can't afford it (caller is expected to bail without state
+/// changes when this returns false).
+fn pay_player(
+    currency: Currency,
+    amount: u32,
+    player_wallet: &mut PlayerWallet,
+    merchant_coins: &mut crate::quests::MerchantCoins,
+) -> bool {
+    match currency {
+        Currency::Gold => {
+            if player_wallet.coins < amount {
+                return false;
+            }
+            player_wallet.coins -= amount;
+            true
+        }
+        Currency::MerchantCoin => {
+            if merchant_coins.0 < amount {
+                return false;
+            }
+            merchant_coins.0 -= amount;
+            true
+        }
+    }
+}
+
+/// Add `amount` to the player's wallet of `currency` (sale proceeds, refund).
+fn refund_player(
+    currency: Currency,
+    amount: u32,
+    player_wallet: &mut PlayerWallet,
+    merchant_coins: &mut crate::quests::MerchantCoins,
+) {
+    match currency {
+        Currency::Gold => {
+            player_wallet.coins = player_wallet.coins.saturating_add(amount)
+        }
+        Currency::MerchantCoin => {
+            merchant_coins.0 = merchant_coins.0.saturating_add(amount)
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Merchant {
     pub id: MerchantId,
@@ -325,6 +393,11 @@ pub struct Merchant {
     pub region_id: RegionId,
     pub coins: u32,
     pub inventory: Vec<InventoryStack>,
+    /// Defaults to `Currency::Gold` — only the contract Merchant uses
+    /// `MerchantCoin`. `#[serde(default)]` keeps existing RON files
+    /// (which don't carry this field) loadable.
+    #[serde(default)]
+    pub currency: Currency,
 }
 
 #[derive(Component, Debug, Clone, Copy)]
@@ -346,27 +419,13 @@ impl Default for Merchants {
                 region_id: 0,
                 coins: 220_000,
                 inventory: vec![
-                    InventoryStack {
-                        item_id: 5001,
-                        quantity: 5,
-                    },
-                    InventoryStack {
-                        item_id: 5002,
-                        quantity: 7,
-                    },
-                    InventoryStack {
-                        item_id: 5003,
-                        quantity: 10,
-                    },
-                    InventoryStack {
-                        item_id: 5004,
-                        quantity: 4,
-                    },
-                    InventoryStack {
-                        item_id: 5005,
-                        quantity: 12,
-                    },
+                    InventoryStack { item_id: 5001, quantity: 5 },
+                    InventoryStack { item_id: 5002, quantity: 7 },
+                    InventoryStack { item_id: 5003, quantity: 10 },
+                    InventoryStack { item_id: 5004, quantity: 4 },
+                    InventoryStack { item_id: 5005, quantity: 12 },
                 ],
+                currency: Currency::Gold,
             },
         );
         map.insert(
@@ -377,27 +436,39 @@ impl Default for Merchants {
                 region_id: 1,
                 coins: 280_000,
                 inventory: vec![
-                    InventoryStack {
-                        item_id: 5001,
-                        quantity: 8,
-                    },
-                    InventoryStack {
-                        item_id: 5002,
-                        quantity: 3,
-                    },
-                    InventoryStack {
-                        item_id: 5003,
-                        quantity: 14,
-                    },
-                    InventoryStack {
-                        item_id: 5004,
-                        quantity: 9,
-                    },
-                    InventoryStack {
-                        item_id: 5005,
-                        quantity: 16,
-                    },
+                    InventoryStack { item_id: 5001, quantity: 8 },
+                    InventoryStack { item_id: 5002, quantity: 3 },
+                    InventoryStack { item_id: 5003, quantity: 14 },
+                    InventoryStack { item_id: 5004, quantity: 9 },
+                    InventoryStack { item_id: 5005, quantity: 16 },
                 ],
+                currency: Currency::Gold,
+            },
+        );
+        // The Merchant from the Contract — referred to only as "the Merchant"
+        // in narrative; older drafts used the placeholder name "Gustav".
+        // Trans-regional (id 999, anchored at region 0 for the market lookup
+        // until a "no-region" code path is added) and trades exclusively in
+        // Merchant Coins. Inventory is a curated list of spiritually
+        // significant items rather than mundane gear.
+        map.insert(
+            999,
+            Merchant {
+                id: 999,
+                name: "The Merchant".to_string(),
+                region_id: 0,
+                // Stash is in Merchant Coins; the magnitude is the Merchant's
+                // willingness to pay for player-sold curios.
+                coins: 10_000,
+                inventory: vec![
+                    // Placeholder stock — populate with spiritual items
+                    // (talismans, charms, rare reagents) once their item ids
+                    // exist.
+                    InventoryStack { item_id: 5001, quantity: 2 },
+                    InventoryStack { item_id: 5002, quantity: 2 },
+                    InventoryStack { item_id: 5003, quantity: 2 },
+                ],
+                currency: Currency::MerchantCoin,
             },
         );
         Self(map)
@@ -1853,6 +1924,7 @@ fn process_buy_item_events(
     mut merchants: ResMut<Merchants>,
     mut player_inventory: ResMut<PlayerInventory>,
     mut player_wallet: ResMut<PlayerWallet>,
+    mut merchant_coins: ResMut<crate::quests::MerchantCoins>,
     mut rep_events: MessageWriter<ReputationChangeEvent>,
     mut logs: MessageWriter<TradeLogEvent>,
 ) {
@@ -1941,18 +2013,26 @@ fn process_buy_item_events(
         let pricing = buy_price_breakdown(dynamic_base, modifiers);
         let unit_price = pricing.unit_price;
         let total_price = unit_price.saturating_mul(u32::from(evt.quantity));
-        if player_wallet.coins < total_price {
+        let merchant_currency = merchant.currency;
+        let player_funds = player_balance(merchant_currency, &player_wallet, &merchant_coins);
+        if player_funds < total_price {
             add_to_inventory(&mut merchant.inventory, evt.item_id, evt.quantity);
             logs.write(TradeLogEvent {
                 message: format!(
-                    "buy_item failed: need {}, player has {}",
-                    total_price, player_wallet.coins
+                    "buy_item failed: need {} ({:?}), player has {}",
+                    total_price, merchant_currency, player_funds
                 ),
             });
             continue;
         }
 
-        player_wallet.coins -= total_price;
+        // pay_player guarantees true here because we just checked the balance.
+        let _ = pay_player(
+            merchant_currency,
+            total_price,
+            &mut player_wallet,
+            &mut merchant_coins,
+        );
         merchant.coins = merchant.coins.saturating_add(total_price);
         add_to_inventory(&mut player_inventory.0, evt.item_id, evt.quantity);
         rep_events.write(ReputationChangeEvent {
@@ -2004,6 +2084,7 @@ fn process_sell_item_events(
     mut merchants: ResMut<Merchants>,
     mut player_inventory: ResMut<PlayerInventory>,
     mut player_wallet: ResMut<PlayerWallet>,
+    mut merchant_coins: ResMut<crate::quests::MerchantCoins>,
     mut rep_events: MessageWriter<ReputationChangeEvent>,
     mut logs: MessageWriter<TradeLogEvent>,
 ) {
@@ -2104,7 +2185,13 @@ fn process_sell_item_events(
         }
 
         merchant.coins -= total_price;
-        player_wallet.coins = player_wallet.coins.saturating_add(total_price);
+        let merchant_currency = merchant.currency;
+        refund_player(
+            merchant_currency,
+            total_price,
+            &mut player_wallet,
+            &mut merchant_coins,
+        );
         add_to_inventory(&mut merchant.inventory, evt.item_id, evt.quantity);
         rep_events.write(ReputationChangeEvent {
             target: ReputationTarget::Merchant { merchant_id },
@@ -2251,18 +2338,19 @@ fn ensure_shop_ui_root(
                 right: Val::Percent(8.0),
                 top: Val::Percent(8.0),
                 bottom: Val::Percent(8.0),
-                padding: UiRect::all(Val::Px(18.0)),
-                border: UiRect::all(Val::Px(3.0)),
+                padding: UiRect::all(Val::Px(spacing::LG)),
+                border: UiRect::all(Val::Px(1.5)),
                 ..default()
             },
-            BackgroundColor(Color::srgba(0.05, 0.08, 0.12, 0.95)),
-            BorderColor::all(Color::srgb(0.4, 0.6, 0.8)),
+            BackgroundColor(palette::BG_PANEL),
+            BorderRadius::all(Val::Px(radius::LG)),
+            BorderColor::all(palette::BORDER_ACCENT),
             Text::new("Shop UI"),
             TextFont {
-                font_size: 20.0,
+                font_size: font_size::BODY_LG,
                 ..default()
             },
-            TextColor(Color::srgb(0.92, 0.96, 1.0)),
+            TextColor(palette::TEXT_PRIMARY),
             ShopUiRoot,
         ))
         .id();

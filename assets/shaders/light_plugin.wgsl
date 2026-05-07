@@ -18,8 +18,14 @@ struct Params {
 @group(2) @binding(2) var<uniform> params: Params;
 
 // === INPUT ===
+//
+// Bevy's default Mesh2d vertex output declares `uv` at @location(2) with
+// `@interpolate(perspective, center)`. Newer wgpu pipeline validation
+// requires the fragment side's interpolation to match exactly — without
+// `center`, it errors:
+//   "Location[2] ... Input sampling doesn't match provided Some(Center)".
 struct FsIn {
-    @location(2) uv: vec2<f32>,
+    @location(2) @interpolate(perspective, center) uv: vec2<f32>,
     @builtin(position) pos: vec4<f32>,
 };
 

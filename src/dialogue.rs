@@ -16,6 +16,7 @@ use crate::economy::Merchants;
 use crate::governance::{ReputationChangeEvent, ReputationTarget};
 use crate::map::CurrentArea;
 use crate::quadtree::aabb_collision;
+use crate::ui_style::{palette, radius, spacing};
 
 const DIALOGUE_REPUTATION_RULES_PATH: &str = "assets/data/dialogue_reputation.ron";
 
@@ -288,7 +289,7 @@ pub fn spawn_dialogue_box(
                     flex_direction: FlexDirection::Column,
                     justify_content: JustifyContent::End,
                     align_items: AlignItems::Center,
-                    padding: UiRect::all(Val::Px(0.0)),
+                    padding: UiRect::all(Val::Px(spacing::LG)),
                     ..default()
                 },
                 BackgroundColor(Color::NONE),
@@ -303,10 +304,14 @@ pub fn spawn_dialogue_box(
                             flex_direction: FlexDirection::Column,
                             justify_content: JustifyContent::Start,
                             align_items: AlignItems::Start,
-                            padding: UiRect::all(Val::Px(12.0)),
+                            padding: UiRect::all(Val::Px(spacing::LG)),
+                            border: UiRect::all(Val::Px(1.5)),
+                            row_gap: Val::Px(spacing::SM),
                             ..default()
                         },
-                        BackgroundColor(Color::srgb(0.15, 0.15, 0.15)),
+                        BackgroundColor(palette::BG_PANEL),
+                        BorderRadius::all(Val::Px(radius::LG)),
+                        BorderColor::all(palette::BORDER_ACCENT),
                         DialogueBox,
                     ))
                     .with_children(|box_node| {
@@ -318,6 +323,7 @@ pub fn spawn_dialogue_box(
                                     display: Display::Flex,
                                     flex_direction: FlexDirection::Row,
                                     align_items: AlignItems::Center,
+                                    column_gap: Val::Px(spacing::MD),
                                     ..default()
                                 },
                                 BackgroundColor(Color::NONE),
@@ -327,22 +333,24 @@ pub fn spawn_dialogue_box(
                                     Node {
                                         width: Val::Px(96.0),
                                         height: Val::Px(96.0),
-                                        margin: UiRect::right(Val::Px(12.0)),
+                                        border: UiRect::all(Val::Px(1.0)),
                                         ..default()
                                     },
                                     ImageNode {
                                         image_mode: NodeImageMode::Stretch,
                                         ..default()
                                     },
+                                    BorderRadius::all(Val::Px(radius::SM)),
+                                    BorderColor::all(palette::BORDER_SUBTLE),
                                     Visibility::Hidden,
                                     DialoguePortrait,
                                 ));
                                 row.spawn((
                                     TextFont {
-                                        font_size: 16.0,
+                                        font_size: 18.0,
                                         ..Default::default()
                                     },
-                                    TextColor(Color::WHITE),
+                                    TextColor(palette::TEXT_PRIMARY),
                                     Text::new(""),
                                     DialogueText,
                                 ));
@@ -675,7 +683,7 @@ pub fn display_dialogue(
                             font_size: 20.0,
                             ..Default::default()
                         },
-                        TextColor(Color::srgb(0.9, 0.9, 0.9)),
+                        TextColor(palette::TEXT_PRIMARY),
                         Transform::from_translation(Vec3::new(0.0, 0.0, 0.0)),
                         GlobalTransform::default(),
                     ));
@@ -716,18 +724,20 @@ pub fn display_dialogue(
                                         .spawn((
                                             Button { ..default() },
                                             Node {
-                                                width: Val::Px(240.0),
-                                                height: Val::Px(45.0),
-                                                margin: UiRect::vertical(Val::Px(4.0)),
+                                                width: Val::Px(280.0),
+                                                height: Val::Px(40.0),
+                                                margin: UiRect::vertical(Val::Px(spacing::XS)),
+                                                padding: UiRect::horizontal(Val::Px(spacing::MD)),
                                                 justify_content: JustifyContent::Center,
                                                 align_items: AlignItems::Center,
                                                 ..default()
                                             },
                                             BackgroundColor(if is_selected {
-                                                Color::srgb(0.25, 0.45, 0.25)
+                                                palette::BG_BUTTON_PRESSED
                                             } else {
-                                                Color::srgb(0.15, 0.25, 0.15)
+                                                palette::BG_BUTTON
                                             }),
+                                            BorderRadius::all(Val::Px(radius::MD)),
                                             ChoiceButton {
                                                 next_id: next_id.clone(),
                                             },
@@ -740,9 +750,9 @@ pub fn display_dialogue(
                                                     ..Default::default()
                                                 },
                                                 TextColor(if is_selected {
-                                                    Color::WHITE
+                                                    palette::TEXT_HEADING
                                                 } else {
-                                                    Color::srgb(0.7, 0.7, 0.7)
+                                                    palette::TEXT_SECONDARY
                                                 }),
                                                 Transform::from_translation(Vec3::new(0.0, 0.0, 0.0)),
                                                 GlobalTransform::default(),

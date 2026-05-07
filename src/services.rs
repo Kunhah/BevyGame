@@ -11,6 +11,7 @@ use crate::governance::{
 };
 use crate::constants::TIMESTAMP_TICKS_PER_HOUR;
 use crate::map::{tile_center_world, CurrentArea, MapTiles, TILE_WORLD_SIZE};
+use crate::ui_style::{font_size, palette, radius, spacing};
 
 const SERVICE_INTERACT_DISTANCE: f32 = 96.0;
 const INN_REST_COST: u32 = 280;
@@ -520,18 +521,19 @@ fn ensure_transport_ui_root(
                 right: Val::Percent(8.0),
                 top: Val::Percent(10.0),
                 bottom: Val::Percent(10.0),
-                padding: UiRect::all(Val::Px(16.0)),
-                border: UiRect::all(Val::Px(3.0)),
+                padding: UiRect::all(Val::Px(spacing::LG)),
+                border: UiRect::all(Val::Px(1.5)),
                 ..default()
             },
-            BackgroundColor(Color::srgba(0.08, 0.10, 0.14, 0.94)),
-            BorderColor::all(Color::srgb(0.68, 0.83, 0.95)),
+            BackgroundColor(palette::BG_PANEL),
+            BorderRadius::all(Val::Px(radius::LG)),
+            BorderColor::all(palette::BORDER_ACCENT),
             Text::new("Transport UI"),
             TextFont {
-                font_size: 20.0,
+                font_size: font_size::BODY_LG,
                 ..default()
             },
-            TextColor(Color::srgb(0.95, 0.98, 1.0)),
+            TextColor(palette::TEXT_PRIMARY),
             TransportUiRoot,
         ))
         .id();

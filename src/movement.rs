@@ -5,7 +5,7 @@ use bevy::prelude::*;
 use crate::constants::{
     GRID_HEIGHT, GRID_WIDTH, PATH_DRAW_MARGIN, PATH_MOVEMENT_SPEED, PLAYER_SPEED, WALKING_LIMIT,
 };
-use crate::battle::{CombatMovePoints, CombatMoveTarget};
+use crate::battle::{CombatMovePoints, CombatMoveTarget, WorldAlly};
 use crate::core::{GameState, Game_State, Global_Variables, MainCamera, Player, Position};
 use crate::map::{
     movement_speed_multiplier_at_world, movement_speed_multiplier_with_effects_at_world,
@@ -663,4 +663,50 @@ fn rotate_to_direction(start_x: f32, start_y: f32, destination_x: f32, destinati
     let dy = destination_y - start_y;
     let angle = (dy as f32).atan2(dx as f32);
     angle
+}
+
+/// Per-frame leash that pulls every `WorldAlly` toward the player when the
+/// gap exceeds `LEASH_DISTANCE`, holding off once they're within
+/// `STOP_DISTANCE` so the party doesn't pile on the player's tile. Only runs
+/// while exploring (battle has its own movement, and travel/menus shouldn't
+/// drag allies around).
+///
+/// Movement is straight-line for now — pathfinding through obstacles is a
+/// future polish pass; the existing followers occupy walkable space near the
+/// player so this works in practice.
+pub fn ally_follow_player_system(
+    time: Res<Time>,
+    game_state: Res<GameState>,
+    player_q: Query<&Transform, With<Player>>,
+    mut ally_q: Query<&mut Transform, (With<WorldAlly>, Without<Player>)>,
+) {
+    if game_state.0 != Game_State::Exploring {
+        return;
+    }
+    let Ok(player_tf) = player_q.single() else {
+        return;
+    };
+    let player_pos = player_tf.translation.truncate();
+
+    // Tunables — kept as locals so they're easy to tweak without restructuring.
+    const LEASH_DISTANCE: f32 = 96.0;
+    const STOP_DISTANCE: f32 = 48.0;
+    const FOLLOW_SPEED: f32 = PLAYER_SPEED;
+
+    for mut ally_tf in ally_q.iter_mut() {
+        let ally_pos = ally_tf.translation.truncate();
+        let to_player = player_pos - ally_pos;
+        let distance = to_player.length();
+        if distance <= STOP_DISTANCE {
+            continue;
+        }
+        let dir = to_player / distance.max(0.0001);
+        // Slow down as the ally approaches `STOP_DISTANCE` so they don't
+        // overshoot and oscillate around the player.
+        let approach_factor = ((distance - STOP_DISTANCE) / LEASH_DISTANCE).clamp(0.0, 1.0);
+        let step = FOLLOW_SPEED * time.delta_secs() * approach_factor.max(0.25);
+        let move_vec = dir * step.min(distance - STOP_DISTANCE);
+        ally_tf.translation.x += move_vec.x;
+        ally_tf.translation.y += move_vec.y;
+    }
 }

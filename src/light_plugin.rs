@@ -17,16 +17,32 @@ const LIGHT_FRAGMENT_SHADER_HANDLE: Handle<Shader> =
     uuid_handle!("f6a1f60b-4d9d-45d1-9a36-18a93f36f81d");
 
 fn load_light_fragment_shader(source: &str, path: impl Into<String>) -> Shader {
-    Shader::from_glsl(
-        format!("#define LIGHT_PASS\n{source}"),
-        ShaderStage::Fragment,
-        path.into(),
-    )
+    // WGSL — see `shaders/light_plugin.wgsl` header for why we moved off GLSL
+    // (newer wgpu pipeline validation requires explicit `Center` sampling
+    // decorations that GLSL can't emit).
+    Shader::from_wgsl(source.to_string(), path.into())
 }
 
-/// Marker for occluders
-#[derive(Component)]
-pub struct Occluder;
+/// Occluder for the lighting / shadow system.
+///
+/// `size` is the rectangular footprint that blocks light, in world units.
+/// `offset` is added to the entity's translation to position that footprint —
+/// useful for sprites with `Anchor::BOTTOM_CENTER` whose visual is offset from
+/// their transform origin (e.g. a tower whose origin is at its base).
+#[derive(Component, Debug, Clone, Copy)]
+pub struct Occluder {
+    pub size: Vec2,
+    pub offset: Vec2,
+}
+
+impl Occluder {
+    pub fn new(size: Vec2) -> Self {
+        Self { size, offset: Vec2::ZERO }
+    }
+    pub fn with_offset(size: Vec2, offset: Vec2) -> Self {
+        Self { size, offset }
+    }
+}
 
 /// Marker for a parent entity that already spawned an occlusion mask child.
 #[derive(Component)]
@@ -115,7 +131,7 @@ pub struct LightUniform {
     pub _pad2: f32,
 }
 
-const OCCLUSION_SCALE: f32 = 0.5;
+const OCCLUSION_SCALE: f32 = 1.0;
 
 impl Default for LightUniform {
     fn default() -> Self {
@@ -254,7 +270,11 @@ fn make_quad_mesh(size: Vec2) -> Mesh {
         [-hw, hh, 0.0],
     ];
     let normals = vec![[0.0, 0.0, 1.0]; 4];
-    let uvs = vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]];
+    // UVs are flipped in Y to match wgpu's texture sampling convention
+    // (image origin at top-left). The mesh's bottom-left vertex (-hw, -hh)
+    // corresponds to world bottom, which sits at the bottom row of the
+    // occlusion render target — so it must sample at uv.y = 1.0.
+    let uvs = vec![[0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0]];
     let indices = vec![0u32, 2, 1, 0, 3, 2];
 
     let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default());
@@ -441,21 +461,26 @@ pub fn sync_light_quad(
 }
 
 /// Ensure every occluder has a white mask sprite visible only to the occlusion camera.
+/// The mask is sized to match the occluder's `size` and shifted by its `offset`
+/// so the GPU shadow footprint lines up with the in-world rectangle that
+/// `apply_light_visibility` consults for raycast occlusion.
 pub fn ensure_occlusion_masks(
     mut commands: Commands,
     mask: Res<OcclusionMaskImage>,
-    q_occluders: Query<Entity, (With<Occluder>, Without<OcclusionMaskParent>)>,
+    q_occluders: Query<(Entity, &Occluder), Without<OcclusionMaskParent>>,
 ) {
     let mut spawned = 0usize;
-    for entity in &q_occluders {
+    for (entity, occ) in &q_occluders {
+        let size = occ.size;
+        let offset = occ.offset;
         commands.entity(entity).insert(OcclusionMaskParent).with_children(|parent| {
             parent.spawn((
                 Sprite {
                     image: mask.image.clone(),
-                    custom_size: Some(Vec2::splat(32.0)),
+                    custom_size: Some(size),
                     ..default()
                 },
-                Transform::IDENTITY,
+                Transform::from_translation(offset.extend(0.0)),
                 RenderLayers::layer(1),
                 OcclusionMask,
                 Name::new("OcclusionMask"),
@@ -605,9 +630,9 @@ pub fn update_light_params(
             let viewport_res = cam.world_to_viewport(cam_xform, player_pos.extend(0.0));
             viewport_ok = viewport_res.is_ok();
             let viewport_pos = viewport_res.unwrap_or(viewport_size * 0.5);
-            let mut uv = (viewport_pos / viewport_size).clamp(Vec2::ZERO, Vec2::ONE);
-            // Bevy's mesh UVs are Y-up; flip to match screen-space viewport Y.
-            uv.y = 1.0 - uv.y;
+            // Top-left origin UV space — matches the occlusion texture
+            // sampling convention and the Y-flipped mesh UVs above.
+            let uv = (viewport_pos / viewport_size).clamp(Vec2::ZERO, Vec2::ONE);
             params.light_uv = uv;
         }
 
@@ -629,14 +654,14 @@ pub fn update_light_params(
         let max_visible_distance = params.radius;
         if dist > max_visible_distance {
             params.visibility = 0.0;
-            params.raymarch_steps = if graphics.light_raymarch { 8.0 } else { 0.0 };
+            params.raymarch_steps = if graphics.light_raymarch { 32.0 } else { 0.0 };
             mat.params = params;
             continue;
         }
 
         params.visibility = 1.0;
         params.debug_mode = debug.mode as f32;
-        params.raymarch_steps = if graphics.light_raymarch { 8.0 } else { 0.0 };
+        params.raymarch_steps = if graphics.light_raymarch { 32.0 } else { 0.0 };
         mat.params = params;
 
         light_state.world_pos = light_world_pos;
@@ -690,7 +715,7 @@ pub fn update_light_params(
 /// Hide light-sensitive entities when they are in shadow or out of range.
 pub fn apply_light_visibility(
     light: Res<LightState>,
-    q_occluders: Query<&Transform, With<Occluder>>,
+    q_occluders: Query<(&GlobalTransform, &Occluder)>,
     mut q_entities: Query<(&Transform, &LightSensitive, &mut Visibility)>,
 ) {
     let light_pos = light.world_pos;
@@ -710,10 +735,9 @@ pub fn apply_light_visibility(
         }
 
         let mut blocked = false;
-        for occ_tf in &q_occluders {
-            let o_pos = occ_tf.translation.truncate();
-            let size = Vec2::splat(32.0);
-            let rect = Rect::from_center_size(o_pos, size);
+        for (occ_tf, occ) in &q_occluders {
+            let center = occ_tf.translation().truncate() + occ.offset;
+            let rect = Rect::from_center_size(center, occ.size);
             if line_intersects_rect(pos, light_pos, rect) {
                 blocked = true;
                 break;
@@ -812,7 +836,7 @@ impl Plugin for LightPlugin {
         load_internal_asset!(
             app,
             LIGHT_FRAGMENT_SHADER_HANDLE,
-            "../shaders/light_plugin.glsl",
+            "../shaders/light_plugin.wgsl",
             load_light_fragment_shader
         );
 

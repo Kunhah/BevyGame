@@ -6,9 +6,10 @@ use rand::Rng;
 use serde::{Deserialize, Serialize};
 
 use crate::combat_plugin::{
-    AttackIntentEvent, ApplyBuffEvent, DamageQueue, DamageTag, DamageType, HealEvent, QueuedDamage,
-    Stat,
+    ActionCause, AttackIntentEvent, ApplyBuffEvent, DamageQueue, DamageTag, DamageType, HealEvent,
+    QueuedDamage, Stat,
 };
+use crate::status_effects::{ApplyStatusEvent, RemoveStatusEvent, ResourceKind, StatusKind};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum AbilityEffect {
@@ -26,6 +27,19 @@ pub enum AbilityEffect {
         effects: Option<Vec<u16>>,
         scaled_with: Stat,
     },
+    /// Apply a Bad Condition / Debuff / Buff / Contract Debuff to each
+    /// target. Default GDD duration is used (the apply system reads it from
+    /// `default_expiry`); per-school resource focus is required for
+    /// single-resource debuffs (Crippled Spirit, Starved, Focused Spirit,
+    /// Overflowing Renewal).
+    ApplyStatus {
+        kind: StatusKind,
+        tier: u8,
+        #[serde(default)]
+        resource_focus: Option<ResourceKind>,
+    },
+    /// Strip a specific status off each target (Sayaka's Cleanse, etc.).
+    RemoveStatus { kind: StatusKind },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -249,8 +263,11 @@ pub fn handle_ability(
     attack_intent_events: &mut MessageWriter<AttackIntentEvent>,
     heal_events: &mut MessageWriter<HealEvent>,
     buff_events: &mut MessageWriter<ApplyBuffEvent>,
+    apply_status_events: &mut MessageWriter<ApplyStatusEvent>,
+    remove_status_events: &mut MessageWriter<RemoveStatusEvent>,
 ) {
     for &target in affected {
+        let cause = ActionCause::Ability { id: ability.id };
         for effect in &ability.effects {
             match effect {
                 AbilityEffect::Heal { floor, ceiling, .. } => {
@@ -259,6 +276,7 @@ pub fn handle_ability(
                         healer: caster,
                         target,
                         amount,
+                        cause: cause.clone(),
                     });
                 }
                 AbilityEffect::Damage {
@@ -280,6 +298,7 @@ pub fn handle_ability(
                         accuracy_override: None,
                         crit_chance: 0.0,
                         tags: vec![DamageTag::FromAbility(ability.id)],
+                        cause: cause.clone(),
                     });
 
                     attack_intent_events.write(AttackIntentEvent {
@@ -290,6 +309,7 @@ pub fn handle_ability(
                             damage_type: Some(*damage_type),
                             ..Default::default()
                         },
+                        cause: cause.clone(),
                     });
                 }
                 AbilityEffect::Buff {
@@ -306,6 +326,27 @@ pub fn handle_ability(
                         duration_in_ticks: ability.duration as u32,
                         additional_effects: effects.clone(),
                         applied_at: now,
+                        cause: cause.clone(),
+                    });
+                }
+                AbilityEffect::ApplyStatus {
+                    kind,
+                    tier,
+                    resource_focus,
+                } => {
+                    apply_status_events.write(ApplyStatusEvent {
+                        target,
+                        kind: *kind,
+                        tier: *tier,
+                        source: Some(caster),
+                        expiry_override: None,
+                        resource_focus: *resource_focus,
+                    });
+                }
+                AbilityEffect::RemoveStatus { kind } => {
+                    remove_status_events.write(RemoveStatusEvent {
+                        target,
+                        kind: *kind,
                     });
                 }
             }

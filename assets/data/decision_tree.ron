@@ -117,5 +117,64 @@
                 Wait,
             ]),
         ),
+
+        // ----------------------------------------------------------------
+        // Yokai profiles. Three flavors that match the yokai authored in
+        // `src/abilities/AbilitiesExample.ron` (ids 0x0F00..) and spawned by
+        // `crate::battle::spawn_yokai_combatant`.
+        // ----------------------------------------------------------------
+
+        // Onibi (will-o'-wisp): fast, fragile, prefers Will-o'-wisp burn
+        // (id 3840). Falls back to a basic attack if it can't pay the AP.
+        "yokai_onibi": (
+            logic: Selector([
+                Sequence([
+                    InPanic,
+                    Defend,
+                ]),
+                Sequence([
+                    HasAbility(id: 3840),
+                    ActionPointsAtLeast(amount: 2),
+                    UseAbility(id: 3840),
+                ]),
+                BasicAttack,
+                Wait,
+            ]),
+        ),
+
+        // Kappa (river demon): balanced grappler. Picks River grasp (3841)
+        // when there's enough AP, otherwise basic-attacks the closest target.
+        "yokai_kappa": (
+            logic: Selector([
+                Sequence([
+                    AggressivenessAtLeast(value: 5),
+                    HasAbility(id: 3841),
+                    ActionPointsAtLeast(amount: 2),
+                    UseAbility(id: 3841),
+                ]),
+                BasicAttack,
+                Wait,
+            ]),
+        ),
+
+        // Kasha (cat-cart yokai): mental caster. Saves Final cry (3842) for
+        // crowded fights, otherwise pokes with basic attacks. Defends when
+        // panicked rather than fleeing — Kasha doesn't run.
+        "yokai_kasha": (
+            logic: Selector([
+                Sequence([
+                    InPanic,
+                    Defend,
+                ]),
+                Sequence([
+                    EnemiesAlive(at_least: 2),
+                    HasAbility(id: 3842),
+                    ActionPointsAtLeast(amount: 3),
+                    UseAbility(id: 3842),
+                ]),
+                BasicAttack,
+                Wait,
+            ]),
+        ),
     },
 )

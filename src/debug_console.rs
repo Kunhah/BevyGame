@@ -3,13 +3,16 @@ use std::collections::VecDeque;
 use bevy::input::keyboard::KeyCode;
 use bevy::prelude::*;
 
+use crate::activities::{ActivityKind, PerformActivityEvent};
 use crate::combat_ability::MagicSchool;
 use crate::combat_plugin::{
-    AccessoryType, ActionPoints, ArmorType, CharacterId, CombatStats, Equipment, EquipmentLoadout,
-    EquipmentType, Experience, Health, Inventory, ItemMaterial, ItemMaterialCost, Level, Magic,
-    Name as CombatName, WeaponType,
+    AccessoryType, ArmorType, CharacterId, CombatStats, Equipment, EquipmentLoadout,
+    EquipmentType, Experience, Inventory, ItemMaterial, ItemMaterialCost, Level,
+    Name as CombatName, StatPool, WeaponType,
 };
+use crate::contract::{ConfessAtShrineEvent, DrinkTeaWithBoundEvent};
 use crate::core::Player;
+use crate::ui_style::{font_size, palette, radius, spacing};
 
 pub struct DebugConsolePlugin;
 
@@ -65,17 +68,17 @@ fn setup_console_ui(mut commands: Commands) {
                 flex_direction: FlexDirection::Column,
                 justify_content: JustifyContent::FlexStart,
                 align_items: AlignItems::Stretch,
-                row_gap: Val::Px(6.0),
-                padding: UiRect::all(Val::Px(10.0)),
+                row_gap: Val::Px(spacing::SM),
+                padding: UiRect::all(Val::Px(spacing::MD)),
                 border: UiRect::all(Val::Px(1.0)),
                 position_type: PositionType::Absolute,
-                left: Val::Px(12.0),
-                bottom: Val::Px(12.0),
+                left: Val::Px(spacing::MD),
+                bottom: Val::Px(spacing::MD),
                 ..default()
             },
-            BackgroundColor(Color::srgba(0.02, 0.03, 0.04, 0.88)),
-            BorderRadius::all(Val::Px(10.0)),
-            BorderColor::all(Color::srgba(0.1, 0.14, 0.2, 0.9)),
+            BackgroundColor(palette::BG_PANEL_SUNK),
+            BorderRadius::all(Val::Px(radius::MD)),
+            BorderColor::all(palette::BORDER_SUBTLE),
             DebugConsoleRoot,
             Visibility::Hidden,
         ))
@@ -85,20 +88,20 @@ fn setup_console_ui(mut commands: Commands) {
         parent.spawn((
             Text::new(""),
             TextFont {
-                font_size: 16.0,
+                font_size: font_size::LABEL,
                 ..default()
             },
-            TextColor(Color::srgb(0.85, 0.9, 0.96)),
+            TextColor(palette::TEXT_SECONDARY),
             DebugConsoleOutput,
         ));
 
         parent.spawn((
             Text::new("> "),
             TextFont {
-                font_size: 18.0,
+                font_size: font_size::BODY,
                 ..default()
             },
-            TextColor(Color::srgb(0.96, 0.96, 0.96)),
+            TextColor(palette::TEXT_HEADING),
             DebugConsoleInput,
         ));
     });
@@ -122,14 +125,14 @@ fn handle_console_input(
     name_q: Query<(Entity, &CombatName)>,
     id_q: Query<(Entity, &CharacterId)>,
     mut transforms: Query<&mut Transform>,
-    mut health_q: Query<&mut Health>,
-    mut magic_q: Query<&mut Magic>,
-    mut action_points_q: Query<&mut ActionPoints>,
     mut stats_q: Query<&mut CombatStats>,
     mut xp_q: Query<&mut Experience>,
     mut level_q: Query<&mut Level>,
     mut inventory_q: Query<&mut Inventory>,
     mut loadout_q: Query<&mut EquipmentLoadout>,
+    mut activity_writer: MessageWriter<PerformActivityEvent>,
+    mut confess_writer: MessageWriter<ConfessAtShrineEvent>,
+    mut tea_writer: MessageWriter<DrinkTeaWithBoundEvent>,
 ) {
     if !state.open {
         return;
@@ -168,14 +171,14 @@ fn handle_console_input(
                 &name_q,
                 &id_q,
                 &mut transforms,
-                &mut health_q,
-                &mut magic_q,
-                &mut action_points_q,
                 &mut stats_q,
                 &mut xp_q,
                 &mut level_q,
                 &mut inventory_q,
                 &mut loadout_q,
+                &mut activity_writer,
+                &mut confess_writer,
+                &mut tea_writer,
             );
             for out in outputs {
                 push_history(&mut state, out);
@@ -277,14 +280,14 @@ fn execute_command(
     name_q: &Query<(Entity, &CombatName)>,
     id_q: &Query<(Entity, &CharacterId)>,
     transforms: &mut Query<&mut Transform>,
-    health_q: &mut Query<&mut Health>,
-    magic_q: &mut Query<&mut Magic>,
-    action_points_q: &mut Query<&mut ActionPoints>,
     stats_q: &mut Query<&mut CombatStats>,
     xp_q: &mut Query<&mut Experience>,
     level_q: &mut Query<&mut Level>,
     inventory_q: &mut Query<&mut Inventory>,
     loadout_q: &mut Query<&mut EquipmentLoadout>,
+    activity_writer: &mut MessageWriter<PerformActivityEvent>,
+    confess_writer: &mut MessageWriter<ConfessAtShrineEvent>,
+    tea_writer: &mut MessageWriter<DrinkTeaWithBoundEvent>,
 ) -> Vec<String> {
     let mut parts = line.split_whitespace();
     let Some(cmd) = parts.next() else {
@@ -298,7 +301,7 @@ fn execute_command(
             let target = parts.next();
             match resolve_target(target, player_q, name_q, id_q) {
                 Ok(entity) => vec![format_status(
-                    entity, name_q, health_q, magic_q, action_points_q, stats_q, xp_q, level_q,
+                    entity, name_q, stats_q, xp_q, level_q,
                 )],
                 Err(err) => vec![err],
             }
@@ -337,9 +340,6 @@ fn execute_command(
                                 stat,
                                 entity,
                                 commands,
-                                health_q,
-                                magic_q,
-                                action_points_q,
                                 stats_q,
                                 xp_q,
                                 level_q,
@@ -366,9 +366,6 @@ fn execute_command(
                                 stat,
                                 entity,
                                 commands,
-                                health_q,
-                                magic_q,
-                                action_points_q,
                                 stats_q,
                                 xp_q,
                                 level_q,
@@ -447,11 +444,118 @@ fn execute_command(
                 _ => vec!["spawn: usage `spawn_entity [name] <x> <y>`".to_string()],
             }
         }
+        "activity" => {
+            let activity_name = parts.next();
+            let hours_str = parts.next();
+            let target = parts.next();
+            let Some(activity_name) = activity_name else {
+                return vec!["activity: usage `activity <kind> [hours] [target]`".to_string()];
+            };
+            let Some(activity) = parse_activity_kind(activity_name) else {
+                return vec![format!(
+                    "activity: unknown kind `{}` (see `help` for the list)",
+                    activity_name
+                )];
+            };
+            let hours = match hours_str {
+                Some(s) => match s.parse::<u32>() {
+                    Ok(h) => h,
+                    Err(_) => return vec!["activity: hours must be a non-negative integer".to_string()],
+                },
+                None => 1,
+            };
+            match resolve_target(target, player_q, name_q, id_q) {
+                Ok(entity) => {
+                    activity_writer.write(PerformActivityEvent {
+                        performer: entity,
+                        activity,
+                        hours,
+                    });
+                    vec![format!(
+                        "activity: queued {:?} for {:?} ({} h, school {:?})",
+                        activity,
+                        entity,
+                        hours,
+                        activity.school()
+                    )]
+                }
+                Err(err) => vec![err],
+            }
+        }
+        "confess" => {
+            let target = parts.next();
+            match resolve_target(target, player_q, name_q, id_q) {
+                Ok(entity) => {
+                    confess_writer.write(ConfessAtShrineEvent { who: entity });
+                    vec![format!("confess: shrine confession fired for {:?}", entity)]
+                }
+                Err(err) => vec![err],
+            }
+        }
+        "tea" | "drink_tea" => {
+            // Two targets: who is drinking, and the bound they share with.
+            // The first arg (the bound) is required; the second (the drinker)
+            // defaults to the player.
+            let with = parts.next();
+            let drinker = parts.next();
+            let Some(with) = with else {
+                return vec!["tea: usage `tea <with_target> [drinker]`".to_string()];
+            };
+            let with_entity = match resolve_target(Some(with), player_q, name_q, id_q) {
+                Ok(e) => e,
+                Err(err) => return vec![err],
+            };
+            let drinker_entity = match resolve_target(drinker, player_q, name_q, id_q) {
+                Ok(e) => e,
+                Err(err) => return vec![err],
+            };
+            tea_writer.write(DrinkTeaWithBoundEvent {
+                who: drinker_entity,
+                with_bound: with_entity,
+            });
+            vec![format!(
+                "tea: drank with {:?} (drinker={:?})",
+                with_entity, drinker_entity
+            )]
+        }
         _ => vec![format!(
             "unknown command `{}` (try `help`)",
             cmd
         )],
     }
+}
+
+/// Maps a CLI keyword to an `ActivityKind`. Accepts both short and long
+/// names (e.g. both `meditation` and `meditate`).
+fn parse_activity_kind(name: &str) -> Option<ActivityKind> {
+    let normalized = name.to_ascii_lowercase();
+    Some(match normalized.as_str() {
+        // Kiho
+        "meditation" | "meditate" => ActivityKind::Meditation,
+        "breath" | "breath_exercises" => ActivityKind::BreathExercises,
+        "kata" | "kata_practice" => ActivityKind::KataPractice,
+        "sparring" | "sparring_drills" => ActivityKind::SparringDrills,
+        "shrine_focus" => ActivityKind::ShrineFocus,
+        // Chiseijutsu
+        "nature" | "nature_spirit" => ActivityKind::NatureSpiritInteraction,
+        "grove" | "tend_grove" => ActivityKind::TendSacredGrove,
+        "forage" => ActivityKind::Forage,
+        "talisman" | "craft_talisman" => ActivityKind::CraftTalisman,
+        "fertile" | "rest_fertile" => ActivityKind::RestFertileTerrain,
+        // Yokaijutsu
+        "night_ritual" | "ritual" => ActivityKind::NightRitual,
+        "spirit_offering" => ActivityKind::SpiritOffering,
+        "blood_pact" | "blood" => ActivityKind::BloodPact,
+        "binding" | "binding_circle" => ActivityKind::BindingCircle,
+        "haunted" | "haunted_location" => ActivityKind::HauntedLocation,
+        // Kamishin
+        "prayer" | "pray" => ActivityKind::Prayer,
+        "shrine_offering" => ActivityKind::ShrineOffering,
+        "rite" | "formal_rite" => ActivityKind::FormalRite,
+        "pilgrimage" => ActivityKind::Pilgrimage,
+        "blessing" | "temple_blessing" => ActivityKind::TempleBlessing,
+        _ => return None,
+    })
 }
 
 fn help_text() -> String {
@@ -465,10 +569,18 @@ fn help_text() -> String {
         "  add_stat|add <stat> <value> [target]",
         "  give_item|give <item_id> [slot] [target]",
         "  spawn_entity|spawn [name] <x> <y>",
+        "  activity <kind> [hours] [target]",
+        "  confess [target]",
+        "  tea|drink_tea <with_target> [drinker]",
         "",
         "Targets: `player`, `name:<Name>`, `id:<Number>` (default is player).",
-        "Stats: hp, hpmax, kiho, kihomax, kihoregen, chiseijutsu, chiseimax, chiseiregen, yokaijutsu, yokaimax, yokairegen, kamishin, kamishinmax, kamishinregen, ap, apmax, lethality, hit, armor, agility, mind, morale, xp, level.",
+        "Stats: hp, hpmax, morale, moralemax, ap, apmax, movement, movementmax, kiho, kihomax, kihoregen, chiseijutsu, chiseimax, chiseiregen, yokaijutsu, yokaimax, yokairegen, kamishin, kamishinmax, kamishinregen, lethality, lethalitymax, hit, hitmax, armor, armormax, speed, speedmax, evasion, evasionmax, mind, mindmax, xp, level.",
         "Slots: weapon, armor, accessory.",
+        "Activity kinds:",
+        "  Kiho: meditation, breath, kata, sparring, shrine_focus",
+        "  Chiseijutsu: nature, grove, forage, talisman, fertile",
+        "  Yokaijutsu: night_ritual, spirit_offering, blood_pact, binding, haunted",
+        "  Kamishin: prayer, shrine_offering, rite, pilgrimage, blessing",
     ]
     .join("\n")
 }
@@ -539,6 +651,19 @@ fn spawn_debug_entity(
     y: i32,
 ) -> Entity {
     counter.0 = counter.0.saturating_add(1);
+    let mut stats = CombatStats::default();
+    stats.health = <StatPool<i32>>::new(100);
+    stats.morale = <StatPool<i32>>::new(50);
+    stats.movement = <StatPool<i32>>::new(5);
+    stats.kiho = <StatPool<f32>>::new(2.0);
+    stats.chiseijutsu = <StatPool<f32>>::new(1.0);
+    stats.yokaijutsu = <StatPool<f32>>::new(1.0);
+    stats.kamishin = <StatPool<f32>>::new(1.0);
+    stats.lethality = <StatPool<i32>>::new(10);
+    stats.hit = <StatPool<i32>>::new(50);
+    stats.speed = <StatPool<i32>>::new(5);
+    stats.evasion = <StatPool<i32>>::new(5);
+    stats.mind = <StatPool<i32>>::new(5);
     commands
         .spawn((
             Sprite {
@@ -549,22 +674,7 @@ fn spawn_debug_entity(
             Transform::from_xyz(x as f32, y as f32, 0.0),
             CombatName(name),
             CharacterId(counter.0),
-            Health {
-                current: 100,
-                max: 100,
-                regen: 0,
-            },
-            Magic::new(2.0, 1.0, 1.0, 1.0),
-            ActionPoints::default(),
-            CombatStats {
-                base_lethality: 10,
-                base_hit: 50,
-                base_armor: 0,
-                base_agility: 5,
-                base_mind: 5,
-                base_morale: 50,
-                movement: 5,
-            },
+            stats,
         ))
         .id()
 }
@@ -572,9 +682,6 @@ fn spawn_debug_entity(
 fn format_status(
     entity: Entity,
     name_q: &Query<(Entity, &CombatName)>,
-    health_q: &mut Query<&mut Health>,
-    magic_q: &mut Query<&mut Magic>,
-    action_points_q: &mut Query<&mut ActionPoints>,
     stats_q: &mut Query<&mut CombatStats>,
     xp_q: &mut Query<&mut Experience>,
     level_q: &mut Query<&mut Level>,
@@ -584,37 +691,19 @@ fn format_status(
         .find(|(e, _)| *e == entity)
         .map(|(_, n)| n.0.clone())
         .unwrap_or_else(|| "Unknown".to_string());
-    let hp = health_q
-        .get_mut(entity)
-        .ok()
-        .map(|h| format!("{}/{}", h.current, h.max))
-        .unwrap_or_else(|| "N/A".to_string());
-    let mp = magic_q
-        .get_mut(entity)
-        .ok()
-        .map(|m| {
-            format!(
-                "kiho {:.2}/{:.2} chisei {:.2}/{:.2} yokai {:.2}/{:.2} kamishin {:.2}/{:.2}",
-                m.kiho.current,
-                m.kiho.max,
-                m.chiseijutsu.current,
-                m.chiseijutsu.max,
-                m.yokaijutsu.current,
-                m.yokaijutsu.max,
-                m.kamishin.current,
-                m.kamishin.max
-            )
-        })
-        .unwrap_or_else(|| "N/A".to_string());
-    let ap = action_points_q
-        .get_mut(entity)
-        .ok()
-        .map(|ap| format!("{}/{}", ap.current, ap.max))
-        .unwrap_or_else(|| "N/A".to_string());
-    let stats = stats_q.get_mut(entity).ok().map(|s| {
+    let body = stats_q.get_mut(entity).ok().map(|s| {
         format!(
-            "lethality {} hit {} armor {} agility {} mind {} morale {}",
-            s.base_lethality, s.base_hit, s.base_armor, s.base_agility, s.base_mind, s.base_morale
+            "hp {}/{} morale {}/{} ap {}/{} | kiho {:.2}/{:.2} chisei {:.2}/{:.2} yokai {:.2}/{:.2} kamishin {:.2}/{:.2} \
+             | lethality {} hit {} armor {} speed {} evasion {} mind {}",
+            s.health.current, s.health.base,
+            s.morale.current, s.morale.base,
+            s.action_points.current, s.action_points.base,
+            s.kiho.current, s.kiho.base,
+            s.chiseijutsu.current, s.chiseijutsu.base,
+            s.yokaijutsu.current, s.yokaijutsu.base,
+            s.kamishin.current, s.kamishin.base,
+            s.lethality.current, s.hit.current, s.armor.current,
+            s.speed.current, s.evasion.current, s.mind.current,
         )
     });
     let xp = xp_q
@@ -628,12 +717,10 @@ fn format_status(
         .map(|l| l.0.to_string())
         .unwrap_or_else(|| "N/A".to_string());
 
-    let mut line = format!("status {}: hp {} magic [{}] ap {} xp {} lvl {}", name, hp, mp, ap, xp, level);
-    if let Some(stats) = stats {
-        line.push_str(" | ");
-        line.push_str(&stats);
+    match body {
+        Some(b) => format!("status {} (xp {} lvl {}): {}", name, xp, level, b),
+        None => format!("status {} (xp {} lvl {}): no CombatStats", name, xp, level),
     }
-    line
 }
 
 #[derive(Clone, Copy)]
@@ -661,88 +748,57 @@ fn school_label(school: MagicSchool) -> &'static str {
 fn apply_magic_school_stat(
     op: StatOp,
     entity: Entity,
-    commands: &mut Commands,
-    magic_q: &mut Query<&mut Magic>,
+    _commands: &mut Commands,
+    stats_q: &mut Query<&mut CombatStats>,
     school: MagicSchool,
     field: MagicField,
 ) -> String {
     let label = school_label(school);
 
-    if let Ok(mut magic) = magic_q.get_mut(entity) {
-        let pool = magic.pool_mut(school);
-        match field {
-            MagicField::Current => {
-                match op {
-                    StatOp::Set(v) => pool.current = v as f32,
-                    StatOp::Add(v) => pool.current += v as f32,
-                }
-                if pool.max < 0.0 {
-                    pool.max = 0.0;
-                }
-                pool.current = pool.current.clamp(0.0, pool.max);
-                format!("set {} = {:.2} (max {:.2})", label, pool.current, pool.max)
+    let Ok(mut stats) = stats_q.get_mut(entity) else {
+        return format!("debug: target has no CombatStats; cannot edit {}", label);
+    };
+
+    match field {
+        MagicField::Current => {
+            let pool = stats.pool_mut(school);
+            match op {
+                StatOp::Set(v) => pool.current = v as f32,
+                StatOp::Add(v) => pool.current += v as f32,
             }
-            MagicField::Max => {
-                match op {
-                    StatOp::Set(v) => pool.max = v as f32,
-                    StatOp::Add(v) => pool.max += v as f32,
-                }
-                if pool.max < 0.0 {
-                    pool.max = 0.0;
-                }
-                if pool.current > pool.max {
-                    pool.current = pool.max;
-                }
-                format!("set {} max = {:.2}", label, pool.max)
+            if pool.base < 0.0 {
+                pool.base = 0.0;
             }
-            MagicField::Regen => {
-                match op {
-                    StatOp::Set(v) => pool.regen_per_tick = v as f32,
-                    StatOp::Add(v) => pool.regen_per_tick += v as f32,
-                }
-                pool.regen_per_tick = pool.regen_per_tick.clamp(0.0, 0.999_999);
-                format!("set {} regen = {:.6}", label, pool.regen_per_tick)
-            }
+            pool.current = pool.current.clamp(0.0, pool.base);
+            format!("set {} = {:.2} (base {:.2})", label, pool.current, pool.base)
         }
-    } else {
-        let mut magic = Magic::new(0.0, 0.0, 0.0, 0.0);
-        match field {
-            MagicField::Current => {
-                let value = match op {
-                    StatOp::Set(value) => value.max(0) as f32,
-                    StatOp::Add(delta) => delta.max(0) as f32,
-                };
-                {
-                    let pool = magic.pool_mut(school);
-                    pool.current = value;
-                    pool.max = value;
-                }
-                commands.entity(entity).insert(magic);
-                format!("set {} = {:.2} (max {:.2})", label, value, value)
+        MagicField::Max => {
+            let pool = stats.pool_mut(school);
+            match op {
+                StatOp::Set(v) => pool.base = v as f32,
+                StatOp::Add(v) => pool.base += v as f32,
             }
-            MagicField::Max => {
-                let value = match op {
-                    StatOp::Set(value) => value.max(0) as f32,
-                    StatOp::Add(delta) => delta.max(0) as f32,
-                };
-                {
-                    let pool = magic.pool_mut(school);
-                    pool.max = value;
-                    pool.current = value;
-                }
-                commands.entity(entity).insert(magic);
-                format!("set {} max = {:.2}", label, value)
+            if pool.base < 0.0 {
+                pool.base = 0.0;
             }
-            MagicField::Regen => {
-                let value = match op {
-                    StatOp::Set(value) => (value as f32).max(0.0),
-                    StatOp::Add(delta) => (delta as f32).max(0.0),
-                }
-                .clamp(0.0, 0.999_999);
-                magic.pool_mut(school).regen_per_tick = value;
-                commands.entity(entity).insert(magic);
-                format!("set {} regen = {:.6}", label, value)
+            if pool.current > pool.base {
+                pool.current = pool.base;
             }
+            format!("set {} base = {:.2}", label, pool.base)
+        }
+        MagicField::Regen => {
+            let target_rate = match school {
+                MagicSchool::Kiho => &mut stats.kiho_per_rest_hour,
+                MagicSchool::Chiseijutsu => &mut stats.chiseijutsu_per_rest_hour,
+                MagicSchool::Yokaijutsu => &mut stats.yokaijutsu_per_rest_hour,
+                MagicSchool::Kamishin => &mut stats.kamishin_per_rest_hour,
+            };
+            match op {
+                StatOp::Set(v) => *target_rate = v as f32,
+                StatOp::Add(v) => *target_rate += v as f32,
+            }
+            *target_rate = target_rate.max(0.0);
+            format!("set {} per-rest-hour = {:.4}", label, *target_rate)
         }
     }
 }
@@ -752,154 +808,76 @@ fn apply_stat(
     stat: &str,
     entity: Entity,
     commands: &mut Commands,
-    health_q: &mut Query<&mut Health>,
-    magic_q: &mut Query<&mut Magic>,
-    action_points_q: &mut Query<&mut ActionPoints>,
     stats_q: &mut Query<&mut CombatStats>,
     xp_q: &mut Query<&mut Experience>,
     level_q: &mut Query<&mut Level>,
 ) -> String {
     let stat = stat.to_ascii_lowercase();
+    let pool_field: Option<&str> = match stat.as_str() {
+        "hp" | "health" | "hpmax" | "healthmax" | "maxhp" => Some("health"),
+        "morale" | "moralemax" | "maxmorale" => Some("morale"),
+        "ap" | "actionpoints" | "action_points" | "stam" | "stamina"
+        | "apmax" | "actionpointsmax" | "action_points_max" | "stammax" | "staminamax" | "maxstam" => Some("action_points"),
+        "movement" | "movementmax" | "maxmovement" => Some("movement"),
+        "lethality" | "lethalitymax" | "maxlethality" => Some("lethality"),
+        "hit" | "hitmax" | "maxhit" => Some("hit"),
+        "armor" | "armormax" | "maxarmor" => Some("armor"),
+        "speed" | "speedmax" | "maxspeed" => Some("speed"),
+        "evasion" | "evasionmax" | "maxevasion" => Some("evasion"),
+        "mind" | "mindmax" | "maxmind" => Some("mind"),
+        _ => None,
+    };
+
+    if let Some(field) = pool_field {
+        let Ok(mut stats) = stats_q.get_mut(entity) else {
+            return format!("debug: target has no CombatStats; cannot edit {}", stat);
+        };
+        let edits_max = matches!(stat.as_str(),
+            "hpmax" | "healthmax" | "maxhp" |
+            "moralemax" | "maxmorale" |
+            "apmax" | "actionpointsmax" | "action_points_max" | "stammax" | "staminamax" | "maxstam" |
+            "movementmax" | "maxmovement" |
+            "lethalitymax" | "maxlethality" |
+            "hitmax" | "maxhit" |
+            "armormax" | "maxarmor" |
+            "speedmax" | "maxspeed" |
+            "evasionmax" | "maxevasion" |
+            "mindmax" | "maxmind");
+        let pool = pool_mut_by_field(&mut stats, field);
+        match (op, edits_max) {
+            (StatOp::Set(v), false) => pool.current = v,
+            (StatOp::Add(v), false) => pool.current += v,
+            (StatOp::Set(v), true) => pool.base = v.max(0),
+            (StatOp::Add(v), true) => pool.base = (pool.base + v).max(0),
+        }
+        if pool.base < 0 {
+            pool.base = 0;
+        }
+        if pool.current > pool.base {
+            pool.current = pool.base;
+        }
+        if pool.current < 0 {
+            pool.current = 0;
+        }
+        return format!("set {} = {} (base {})", stat, pool.current, pool.base);
+    }
+
     match stat.as_str() {
-        "hp" | "health" => {
-            let (current, max, regen) = match health_q.get_mut(entity) {
-                Ok(mut h) => {
-                    if h.max < 0 {
-                        h.max = 0;
-                    }
-                    match op {
-                        StatOp::Set(value) => h.current = value,
-                        StatOp::Add(delta) => h.current += delta,
-                    }
-                    h.current = h.current.clamp(0, h.max);
-                    return format!("set hp = {} (max {})", h.current, h.max);
-                }
-                Err(_) => {
-                    let value = match op {
-                        StatOp::Set(value) => value,
-                        StatOp::Add(delta) => delta,
-                    };
-                    let value = value.max(0);
-                    (value, value, 0)
-                }
-            };
-            commands.entity(entity).insert(Health {
-                current,
-                max,
-                regen,
-            });
-            format!("set hp = {} (max {})", current, max)
-        }
-        "hpmax" | "healthmax" | "maxhp" => {
-            if let Ok(mut h) = health_q.get_mut(entity) {
-                match op {
-                    StatOp::Set(value) => h.max = value,
-                    StatOp::Add(delta) => h.max += delta,
-                }
-                if h.max < 0 {
-                    h.max = 0;
-                }
-                if h.current > h.max {
-                    h.current = h.max;
-                }
-                return format!("set hpmax = {}", h.max);
-            }
-            let value = match op {
-                StatOp::Set(value) => value,
-                StatOp::Add(delta) => delta,
-            };
-            let value = value.max(0);
-            commands.entity(entity).insert(Health {
-                current: value,
-                max: value,
-                regen: 0,
-            });
-            format!("set hpmax = {}", value)
-        }
         "mp" | "mana" | "magic" | "mpmax" | "magicmax" | "maxmp" => {
             "use kiho/chiseijutsu/yokaijutsu/kamishin fields directly".to_string()
         }
-        "kiho" => apply_magic_school_stat(op, entity, commands, magic_q, MagicSchool::Kiho, MagicField::Current),
-        "kihomax" | "maxkiho" => apply_magic_school_stat(op, entity, commands, magic_q, MagicSchool::Kiho, MagicField::Max),
-        "kihoregen" => apply_magic_school_stat(op, entity, commands, magic_q, MagicSchool::Kiho, MagicField::Regen),
-        "chiseijutsu" | "chisei" => apply_magic_school_stat(op, entity, commands, magic_q, MagicSchool::Chiseijutsu, MagicField::Current),
-        "chiseijutsumax" | "chiseimax" | "maxchisei" => apply_magic_school_stat(op, entity, commands, magic_q, MagicSchool::Chiseijutsu, MagicField::Max),
-        "chiseijutsuregen" | "chiseiregen" => apply_magic_school_stat(op, entity, commands, magic_q, MagicSchool::Chiseijutsu, MagicField::Regen),
-        "yokaijutsu" | "yokai" => apply_magic_school_stat(op, entity, commands, magic_q, MagicSchool::Yokaijutsu, MagicField::Current),
-        "yokaijutsumax" | "yokaimax" | "maxyokai" => apply_magic_school_stat(op, entity, commands, magic_q, MagicSchool::Yokaijutsu, MagicField::Max),
-        "yokaijutsuregen" | "yokairegen" => apply_magic_school_stat(op, entity, commands, magic_q, MagicSchool::Yokaijutsu, MagicField::Regen),
-        "kamishin" => apply_magic_school_stat(op, entity, commands, magic_q, MagicSchool::Kamishin, MagicField::Current),
-        "kamishinmax" | "maxkamishin" => apply_magic_school_stat(op, entity, commands, magic_q, MagicSchool::Kamishin, MagicField::Max),
-        "kamishinregen" => apply_magic_school_stat(op, entity, commands, magic_q, MagicSchool::Kamishin, MagicField::Regen),
-        "ap" | "actionpoints" | "action_points" | "stam" | "stamina" => {
-            let (current, max) = match action_points_q.get_mut(entity) {
-                Ok(mut ap) => {
-                    if ap.max < 0 {
-                        ap.max = 0;
-                    }
-                    match op {
-                        StatOp::Set(value) => ap.current = value,
-                        StatOp::Add(delta) => ap.current += delta,
-                    }
-                    ap.current = ap.current.clamp(0, ap.max);
-                    return format!("set action points = {} (max {})", ap.current, ap.max);
-                }
-                Err(_) => {
-                    let value = match op {
-                        StatOp::Set(value) => value,
-                        StatOp::Add(delta) => delta,
-                    };
-                    let value = value.max(0);
-                    (value, value)
-                }
-            };
-            commands.entity(entity).insert(ActionPoints { current, max });
-            format!("set action points = {} (max {})", current, max)
-        }
-        "apmax" | "actionpointsmax" | "action_points_max" | "stammax" | "staminamax" | "maxstam" => {
-            if let Ok(mut ap) = action_points_q.get_mut(entity) {
-                match op {
-                    StatOp::Set(value) => ap.max = value,
-                    StatOp::Add(delta) => ap.max += delta,
-                }
-                if ap.max < 0 {
-                    ap.max = 0;
-                }
-                if ap.current > ap.max {
-                    ap.current = ap.max;
-                }
-                return format!("set action points max = {}", ap.max);
-            }
-            let value = match op {
-                StatOp::Set(value) => value,
-                StatOp::Add(delta) => delta,
-            };
-            let value = value.max(0);
-            commands.entity(entity).insert(ActionPoints {
-                current: value,
-                max: value,
-            });
-            format!("set action points max = {}", value)
-        }
-        "lethality" | "hit" | "armor" | "agility" | "mind" | "morale" => {
-            if let Ok(mut stats) = stats_q.get_mut(entity) {
-                apply_stat_to_combat_stats(op, &stat, &mut stats);
-                return format!("set {} = {}", stat, combat_stat_value(&stat, &stats));
-            }
-            let mut stats = CombatStats {
-                base_lethality: 0,
-                base_hit: 0,
-                base_armor: 0,
-                base_agility: 0,
-                base_mind: 0,
-                base_morale: 0,
-                movement: 0,
-            };
-            apply_stat_to_combat_stats(op, &stat, &mut stats);
-            let value = combat_stat_value(&stat, &stats);
-            commands.entity(entity).insert(stats);
-            format!("set {} = {}", stat, value)
-        }
+        "kiho" => apply_magic_school_stat(op, entity, commands, stats_q, MagicSchool::Kiho, MagicField::Current),
+        "kihomax" | "maxkiho" => apply_magic_school_stat(op, entity, commands, stats_q, MagicSchool::Kiho, MagicField::Max),
+        "kihoregen" => apply_magic_school_stat(op, entity, commands, stats_q, MagicSchool::Kiho, MagicField::Regen),
+        "chiseijutsu" | "chisei" => apply_magic_school_stat(op, entity, commands, stats_q, MagicSchool::Chiseijutsu, MagicField::Current),
+        "chiseijutsumax" | "chiseimax" | "maxchisei" => apply_magic_school_stat(op, entity, commands, stats_q, MagicSchool::Chiseijutsu, MagicField::Max),
+        "chiseijutsuregen" | "chiseiregen" => apply_magic_school_stat(op, entity, commands, stats_q, MagicSchool::Chiseijutsu, MagicField::Regen),
+        "yokaijutsu" | "yokai" => apply_magic_school_stat(op, entity, commands, stats_q, MagicSchool::Yokaijutsu, MagicField::Current),
+        "yokaijutsumax" | "yokaimax" | "maxyokai" => apply_magic_school_stat(op, entity, commands, stats_q, MagicSchool::Yokaijutsu, MagicField::Max),
+        "yokaijutsuregen" | "yokairegen" => apply_magic_school_stat(op, entity, commands, stats_q, MagicSchool::Yokaijutsu, MagicField::Regen),
+        "kamishin" => apply_magic_school_stat(op, entity, commands, stats_q, MagicSchool::Kamishin, MagicField::Current),
+        "kamishinmax" | "maxkamishin" => apply_magic_school_stat(op, entity, commands, stats_q, MagicSchool::Kamishin, MagicField::Max),
+        "kamishinregen" => apply_magic_school_stat(op, entity, commands, stats_q, MagicSchool::Kamishin, MagicField::Regen),
         "xp" | "exp" => {
             let value = match op {
                 StatOp::Set(value) => value,
@@ -936,31 +914,19 @@ fn apply_stat(
     }
 }
 
-fn apply_stat_to_combat_stats(op: StatOp, stat: &str, stats: &mut CombatStats) {
-    let apply = |current: &mut i32| match op {
-        StatOp::Set(value) => *current = value,
-        StatOp::Add(delta) => *current += delta,
-    };
-    match stat {
-        "lethality" => apply(&mut stats.base_lethality),
-        "hit" => apply(&mut stats.base_hit),
-        "armor" => apply(&mut stats.base_armor),
-        "agility" => apply(&mut stats.base_agility),
-        "mind" => apply(&mut stats.base_mind),
-        "morale" => apply(&mut stats.base_morale),
-        _ => {}
-    }
-}
-
-fn combat_stat_value(stat: &str, stats: &CombatStats) -> i32 {
-    match stat {
-        "lethality" => stats.base_lethality,
-        "hit" => stats.base_hit,
-        "armor" => stats.base_armor,
-        "agility" => stats.base_agility,
-        "mind" => stats.base_mind,
-        "morale" => stats.base_morale,
-        _ => 0,
+fn pool_mut_by_field<'a>(stats: &'a mut CombatStats, field: &str) -> &'a mut StatPool<i32> {
+    match field {
+        "health" => &mut stats.health,
+        "morale" => &mut stats.morale,
+        "action_points" => &mut stats.action_points,
+        "movement" => &mut stats.movement,
+        "lethality" => &mut stats.lethality,
+        "hit" => &mut stats.hit,
+        "armor" => &mut stats.armor,
+        "speed" => &mut stats.speed,
+        "evasion" => &mut stats.evasion,
+        "mind" => &mut stats.mind,
+        _ => unreachable!("unknown pool field {}", field),
     }
 }
 

@@ -811,6 +811,143 @@ fn watch_dialogue_choice(
 }
 
 // ---------------------------------------------------------------------------
+// Hunts (Merchant-issued quests)
+// ---------------------------------------------------------------------------
+
+/// Hunt-specific metadata layered on top of a regular Quest. The objective(s)
+/// live in the parent `Quest` (typically a `Kill` objective on the target
+/// yokai); this struct only holds Merchant-related fields.
+#[derive(Debug, Clone)]
+pub struct Hunt {
+    pub quest_id: u32,
+    pub target_enemy_id: u32,
+    pub deadline_timestamp: u32,
+    /// Coin reward in Merchant Coins (the "favor" currency from GDD Rule V).
+    pub coin_reward: u32,
+    /// Per GDD Rule X: if the target is beyond the bound's reach, the
+    /// Merchant warns plainly. Set true on assignment when the target's
+    /// difficulty exceeds an internal threshold.
+    pub warning_issued: bool,
+    /// Set to a specific bound character when the hunt is assigned to one;
+    /// drives whose performance changes on completion / failure / neglect.
+    pub assigned_to: Option<Entity>,
+}
+
+#[derive(Resource, Default)]
+pub struct HuntRegistry(pub HashMap<u32, Hunt>);
+
+#[derive(Resource, Default)]
+pub struct MerchantCoins(pub u32);
+
+#[derive(Debug, Clone, Message)]
+pub struct HuntAssignedEvent {
+    pub quest_id: u32,
+    pub assigned_to: Option<Entity>,
+}
+
+#[derive(Debug, Clone, Message)]
+pub struct HuntCompletedEvent {
+    pub quest_id: u32,
+    pub completer: Option<Entity>,
+    pub coin_reward: u32,
+    /// True if completed after deadline. Used by Contract Rule VI (Stolen
+    /// Hours) to apply the late-completion debuff.
+    pub completed_late: bool,
+}
+
+#[derive(Debug, Clone, Message)]
+pub struct HuntFailedEvent {
+    pub quest_id: u32,
+    pub assigned_to: Option<Entity>,
+    /// True if the hunt was abandoned past Rule IV's "one week" threshold,
+    /// triggering Deny the Contract.
+    pub neglected: bool,
+}
+
+/// Convenience helper used by external systems (Merchant NPC, debug console,
+/// generated content): registers a Quest + its Hunt sidecar.
+pub fn register_hunt(
+    log: &mut QuestLog,
+    hunts: &mut HuntRegistry,
+    quest: Quest,
+    hunt: Hunt,
+) {
+    let id = quest.id;
+    log.quests.insert(id, quest);
+    hunts.0.insert(id, hunt);
+}
+
+/// Watches the global Timestamp; once a hunt's deadline passes plus the GDD's
+/// one-week neglect grace, fails the hunt as "neglected" so the Contract
+/// enforcer can apply Deny the Contract.
+pub fn process_hunt_deadlines(
+    timestamp: Res<crate::core::Timestamp>,
+    log: Res<QuestLog>,
+    hunts: Res<HuntRegistry>,
+    mut writer: MessageWriter<HuntFailedEvent>,
+) {
+    let now = timestamp.0;
+    let neglect_grace = 7 * 24 * crate::constants::TIMESTAMP_TICKS_PER_HOUR;
+    for (quest_id, hunt) in hunts.0.iter() {
+        let Some(quest) = log.quests.get(quest_id) else {
+            continue;
+        };
+        if quest.status != QuestStatus::Active {
+            continue;
+        }
+        let auto_fail_at = hunt.deadline_timestamp.saturating_add(neglect_grace);
+        if now >= auto_fail_at {
+            writer.write(HuntFailedEvent {
+                quest_id: *quest_id,
+                assigned_to: hunt.assigned_to,
+                neglected: true,
+            });
+        }
+    }
+}
+
+/// On hunt completion, award coins and update the assignee's resurrection
+/// standing.
+pub fn handle_hunt_completion_system(
+    mut reader: MessageReader<HuntCompletedEvent>,
+    mut coins: ResMut<MerchantCoins>,
+    mut q: Query<&mut crate::combat_plugin::ResurrectionStanding>,
+) {
+    for ev in reader.read() {
+        coins.0 = coins.0.saturating_add(ev.coin_reward);
+        let Some(who) = ev.completer else {
+            continue;
+        };
+        if let Ok(mut standing) = q.get_mut(who) {
+            standing.hunts_completed = standing.hunts_completed.saturating_add(1);
+            standing.score = if ev.completed_late {
+                standing.score.saturating_add(15)
+            } else {
+                standing.score.saturating_add(30)
+            };
+        }
+    }
+}
+
+/// On hunt failure, penalize the assignee's standing.
+pub fn handle_hunt_failure_system(
+    mut reader: MessageReader<HuntFailedEvent>,
+    mut q: Query<&mut crate::combat_plugin::ResurrectionStanding>,
+) {
+    for ev in reader.read() {
+        let Some(who) = ev.assigned_to else {
+            continue;
+        };
+        if let Ok(mut standing) = q.get_mut(who) {
+            standing.hunts_failed = standing.hunts_failed.saturating_add(1);
+            standing.score = standing
+                .score
+                .saturating_sub(if ev.neglected { 60 } else { 25 });
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Plugin
 // ---------------------------------------------------------------------------
 
@@ -821,6 +958,8 @@ impl Plugin for QuestPlugin {
         app.init_resource::<QuestRegistry>()
             .init_resource::<QuestLog>()
             .init_resource::<QuestFlags>()
+            .init_resource::<HuntRegistry>()
+            .init_resource::<MerchantCoins>()
             .add_message::<AddQuestEvent>()
             .add_message::<AdvanceObjectiveEvent>()
             .add_message::<UpdateObjectiveEvent>()
@@ -830,6 +969,9 @@ impl Plugin for QuestPlugin {
             .add_message::<DialogueChoicePickedEvent>()
             .add_message::<ManualFlagEvent>()
             .add_message::<QuestRewardGrantedEvent>()
+            .add_message::<HuntAssignedEvent>()
+            .add_message::<HuntCompletedEvent>()
+            .add_message::<HuntFailedEvent>()
             .add_systems(Startup, load_quest_registry)
             .add_systems(
                 Update,
@@ -849,6 +991,9 @@ impl Plugin for QuestPlugin {
                     watch_dialogue_completion,
                     watch_dialogue_choice,
                     fulfill_quest_rewards,
+                    process_hunt_deadlines,
+                    handle_hunt_completion_system,
+                    handle_hunt_failure_system,
                 ),
             );
     }

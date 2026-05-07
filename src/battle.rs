@@ -3,11 +3,11 @@ use bevy::input::mouse::MouseButton;
 use bevy::prelude::*;
 
 use crate::combat_plugin::{
-    Abilities, AccumulatedAgility, ActionPoints, CombatStats, Experience, GrowthAttributes, Health,
-    Level, Magic, PendingPlayerAction, PlayerAction, PlayerActionEvent, PlayerControlled,
-    StatModifiers, TurnManager, TurnOrder, TurnStartEvent,
+    Abilities, AccumulatedSpeed, CombatStats, Experience, GrowthAttributes, Level,
+    MagicDistribution, PendingPlayerAction, PlayerAction, PlayerActionEvent, PlayerControlled,
+    StatModifiers, StatPool, TurnManager, TurnOrder, TurnStartEvent,
 };
-use crate::constants::{GRID_HEIGHT, GRID_WIDTH, PLAYER_SPEED};
+use crate::constants::{DEFAULT_ACTION_POINTS, GRID_HEIGHT, GRID_WIDTH, PLAYER_SPEED};
 use crate::core::{GameState, Game_State, Global_Variables, MainCamera, Player, Position};
 use crate::economy::MerchantNpc;
 use crate::governance::{
@@ -21,6 +21,15 @@ pub struct EnemyEncounter {
     pub id: u32,
 }
 
+/// Tags an `EnemyEncounter` as one of the GDD-flavored yokai species. When
+/// present, the battle system spawns the encounter via
+/// `spawn_yokai_combatant` (which wires the species' BT profile, abilities,
+/// and stat block) rather than the generic `spawn_enemy_combat` lookup.
+#[derive(Component, Clone, Copy, Debug)]
+pub struct WorldYokai {
+    pub kind: YokaiKind,
+}
+
 #[derive(Component, Clone, Copy, Debug)]
 pub struct WorldNpc {
     pub id: u32,
@@ -29,7 +38,7 @@ pub struct WorldNpc {
 #[derive(Component, Clone, Copy, Debug)]
 pub struct WorldAlly;
 
-#[derive(Component, Clone, Copy, Debug)]
+#[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BattleSide {
     Ally,
     Enemy,
@@ -77,6 +86,7 @@ pub fn battle_trigger_system(
             &EnemyEncounter,
             Option<&GovernorNpc>,
             Option<&SuccessorNpc>,
+            Option<&WorldYokai>,
         ),
     >,
     ally_q: Query<(Entity, &Transform), With<WorldAlly>>,
@@ -94,7 +104,9 @@ pub fn battle_trigger_system(
     };
 
     let player_pos = player_tf.translation.truncate();
-    for (enemy_entity, enemy_tf, encounter, governor_opt, successor_opt) in enemy_q.iter() {
+    for (enemy_entity, enemy_tf, encounter, governor_opt, successor_opt, yokai_opt) in
+        enemy_q.iter()
+    {
         let enemy_pos = enemy_tf.translation.truncate();
         if player_pos.distance(enemy_pos) <= 32.0 {
             game_state.0 = Game_State::Battle;
@@ -111,6 +123,7 @@ pub fn battle_trigger_system(
                 encounter.id,
                 governor_city_id,
                 successor_target,
+                yokai_opt.map(|y| y.kind),
                 enemy_entity,
                 player_entity,
                 player_tf.translation,
@@ -122,6 +135,7 @@ pub fn battle_trigger_system(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn start_battle(
     commands: &mut Commands,
     battle_state: &mut BattleState,
@@ -130,6 +144,7 @@ fn start_battle(
     enemy_id: u32,
     governor_city_id: Option<u16>,
     successor_target: Option<(u16, u32)>,
+    yokai_kind: Option<YokaiKind>,
     enemy_world_entity: Entity,
     player_world_entity: Entity,
     player_world_pos: Vec3,
@@ -145,13 +160,19 @@ fn start_battle(
         let ally = spawn_ally_combat(commands, ally_entity, ally_tf.translation);
         participants.push(ally);
     }
-    let enemy = spawn_enemy_combat(
-        commands,
-        enemy_id,
-        enemy_world_pos,
-        governor_city_id,
-        successor_target,
-    );
+    // Yokai-tagged encounters use the species-specific spawn (wires
+    // BehaviorTreeProfile, abilities, and the right stat block); other
+    // encounters fall back to the generic enemy spawn.
+    let enemy = match yokai_kind {
+        Some(kind) => spawn_yokai_combatant(commands, kind, enemy_world_pos),
+        None => spawn_enemy_combat(
+            commands,
+            enemy_id,
+            enemy_world_pos,
+            governor_city_id,
+            successor_target,
+        ),
+    };
     participants.push(enemy);
 
     battle_state.participants = participants;
@@ -159,7 +180,11 @@ fn start_battle(
     turn_order.queue.clear();
 
     commands.entity(enemy_world_entity).despawn();
-    info!("Battle started against enemy {}", enemy_id);
+    info!(
+        "Battle started against enemy {} (yokai: {:?})",
+        enemy_id,
+        yokai_kind.map(|k| k.label())
+    );
 }
 
 fn spawn_player_combat(commands: &mut Commands, world_entity: Entity, world_pos: Vec3) -> Entity {
@@ -170,21 +195,27 @@ fn spawn_player_combat(commands: &mut Commands, world_entity: Entity, world_pos:
     e.insert(PlayerControlled);
     e.insert(BattleWorldLink { world_entity });
     e.insert(Transform::from_translation(world_pos));
-    e.insert(Health {
-        current: 120,
-        max: 120,
-        regen: 2,
-    });
-    e.insert(Magic::with_regen(2.0, 2.0, 1.0, 1.0, 0.00035, 0.00035, 0.0002, 0.0002));
-    e.insert(ActionPoints::default());
     e.insert(CombatStats {
-        base_lethality: 14,
-        base_hit: 80,
-        base_armor: 10,
-        base_agility: 10,
-        base_mind: 8,
-        base_morale: 90,
-        movement: 5,
+        health: <StatPool<i32>>::new(120),
+        morale: <StatPool<i32>>::new(90),
+        action_points: <StatPool<i32>>::new(DEFAULT_ACTION_POINTS),
+        movement: <StatPool<i32>>::new(5),
+        kiho: <StatPool<f32>>::new(2.0),
+        chiseijutsu: <StatPool<f32>>::new(2.0),
+        yokaijutsu: <StatPool<f32>>::new(1.0),
+        kamishin: <StatPool<f32>>::new(1.0),
+        lethality: <StatPool<i32>>::new(14),
+        hit: <StatPool<i32>>::new(80),
+        armor: <StatPool<i32>>::new(10),
+        speed: <StatPool<i32>>::new(10),
+        evasion: <StatPool<i32>>::new(10),
+        mind: <StatPool<i32>>::new(8),
+        health_per_rest_hour: 2,
+        morale_per_rest_hour: 5,
+        kiho_per_rest_hour: 0.4,
+        chiseijutsu_per_rest_hour: 0.4,
+        yokaijutsu_per_rest_hour: 0.2,
+        kamishin_per_rest_hour: 0.2,
     });
     e.insert(GrowthAttributes {
         vitality: 12,
@@ -192,19 +223,22 @@ fn spawn_player_combat(commands: &mut Commands, world_entity: Entity, world_pos:
         spirit: 10,
         power: 12,
         control: 10,
-        agility: 10,
+        celerity: 10,
+        reflex: 10,
         insight: 10,
         resolve: 12,
-        kiho: 2,
-        chiseijutsu: 2,
-        yokaijutsu: 1,
-        kamishin: 1,
-        ..Default::default()
+        // Generalist player: spirit=10 → 30 points, balanced split.
+        magic_distribution: MagicDistribution {
+            kiho: 8,
+            chiseijutsu: 8,
+            yokaijutsu: 7,
+            kamishin: 7,
+        },
     });
     e.insert(Abilities(vec![]));
     e.insert(Experience(0));
     e.insert(Level(1));
-    e.insert(AccumulatedAgility(0));
+    e.insert(AccumulatedSpeed(0));
     e.insert(StatModifiers(Vec::new()));
     e.insert(CombatMovePoints::default());
     e.id()
@@ -228,21 +262,27 @@ fn spawn_enemy_combat(
     e.insert(BattleParticipant);
     e.insert(BattleSide::Enemy);
     e.insert(Transform::from_translation(world_pos));
-    e.insert(Health {
-        current: hp,
-        max: hp,
-        regen: 1,
-    });
-    e.insert(Magic::with_regen(1.0, 0.5, 0.5, 0.0, 0.00025, 0.0001, 0.0001, 0.0));
-    e.insert(ActionPoints::default());
     e.insert(CombatStats {
-        base_lethality: lethality,
-        base_hit: hit,
-        base_armor: armor,
-        base_agility: agility,
-        base_mind: 6,
-        base_morale: 70,
-        movement: 4,
+        health: <StatPool<i32>>::new(hp),
+        morale: <StatPool<i32>>::new(70),
+        action_points: <StatPool<i32>>::new(DEFAULT_ACTION_POINTS),
+        movement: <StatPool<i32>>::new(4),
+        kiho: <StatPool<f32>>::new(1.0),
+        chiseijutsu: <StatPool<f32>>::new(0.5),
+        yokaijutsu: <StatPool<f32>>::new(0.5),
+        kamishin: <StatPool<f32>>::new(0.0),
+        lethality: <StatPool<i32>>::new(lethality),
+        hit: <StatPool<i32>>::new(hit),
+        armor: <StatPool<i32>>::new(armor),
+        speed: <StatPool<i32>>::new(agility),
+        evasion: <StatPool<i32>>::new(agility),
+        mind: <StatPool<i32>>::new(6),
+        health_per_rest_hour: 1,
+        morale_per_rest_hour: 3,
+        kiho_per_rest_hour: 0.25,
+        chiseijutsu_per_rest_hour: 0.1,
+        yokaijutsu_per_rest_hour: 0.1,
+        kamishin_per_rest_hour: 0.0,
     });
     e.insert(GrowthAttributes {
         vitality: 8,
@@ -250,19 +290,22 @@ fn spawn_enemy_combat(
         spirit: 6,
         power: 8,
         control: 8,
-        agility: 8,
+        celerity: 8,
+        reflex: 8,
         insight: 6,
         resolve: 6,
-        kiho: 2,
-        chiseijutsu: 1,
-        yokaijutsu: 1,
-        kamishin: 0,
-        ..Default::default()
+        // Generic enemy: spirit=6 → 18 points, yokai-leaning.
+        magic_distribution: MagicDistribution {
+            kiho: 4,
+            chiseijutsu: 4,
+            yokaijutsu: 8,
+            kamishin: 2,
+        },
     });
     e.insert(Abilities(vec![]));
     e.insert(Experience(0));
     e.insert(Level(1));
-    e.insert(AccumulatedAgility(0));
+    e.insert(AccumulatedSpeed(0));
     e.insert(StatModifiers(Vec::new()));
     e.insert(CombatMovePoints::default());
     if let Some(city_id) = governor_city_id {
@@ -277,6 +320,106 @@ fn spawn_enemy_combat(
     e.id()
 }
 
+/// The yokai species that the GDD-flavored content authors. Each variant
+/// carries the stat block, the ability ids it knows, and the BT profile name
+/// so a single helper can spawn it as a battle participant.
+#[derive(Debug, Clone, Copy)]
+pub enum YokaiKind {
+    /// Onibi — will-o'-wisp. Fast, fragile, fire-leaning.
+    Onibi,
+    /// Kappa — river demon. Balanced melee with a slow effect.
+    Kappa,
+    /// Kasha — cat-cart yokai. Mental caster with an AOE Final cry.
+    Kasha,
+}
+
+impl YokaiKind {
+    pub fn label(self) -> &'static str {
+        match self {
+            YokaiKind::Onibi => "Onibi",
+            YokaiKind::Kappa => "Kappa",
+            YokaiKind::Kasha => "Kasha",
+        }
+    }
+
+    /// BT profile name (matches a key in `assets/data/decision_tree.ron`).
+    fn behavior_profile(self) -> &'static str {
+        match self {
+            YokaiKind::Onibi => "yokai_onibi",
+            YokaiKind::Kappa => "yokai_kappa",
+            YokaiKind::Kasha => "yokai_kasha",
+        }
+    }
+
+    /// Ability ids granted to this yokai (match `AbilitiesExample.ron`).
+    fn abilities(self) -> Vec<u16> {
+        match self {
+            YokaiKind::Onibi => vec![3840],
+            YokaiKind::Kappa => vec![3841],
+            YokaiKind::Kasha => vec![3842],
+        }
+    }
+}
+
+/// Spawn a yokai as a battle participant. Wires `CombatStats`, `Reactions`
+/// (empty for now — author-time hookable), and the BT profile string so
+/// `crate::ai_decision::evaluate_behavior_tree_system` drives its turns.
+pub fn spawn_yokai_combatant(
+    commands: &mut Commands,
+    kind: YokaiKind,
+    world_pos: Vec3,
+) -> Entity {
+    use crate::combat_plugin::Reactions;
+
+    // Stat block per species. Onibi is the fragile striker; Kappa is sturdy
+    // melee; Kasha is squishy but high-mind.
+    let (hp, lethality, hit, armor, speed, mind, yokai_pool) = match kind {
+        YokaiKind::Onibi => (35, 14, 70, 4, 18, 12, 6.0_f32),
+        YokaiKind::Kappa => (90, 16, 65, 12, 9, 6, 3.0_f32),
+        YokaiKind::Kasha => (55, 8, 60, 6, 12, 18, 8.0_f32),
+    };
+
+    let mut e = commands.spawn_empty();
+    e.insert(Name::new(format!("Yokai({})", kind.label())));
+    e.insert(BattleParticipant);
+    e.insert(BattleSide::Enemy);
+    e.insert(Transform::from_translation(world_pos));
+    e.insert(CombatStats {
+        health: <StatPool<i32>>::new(hp),
+        morale: <StatPool<i32>>::new(60),
+        action_points: <StatPool<i32>>::new(DEFAULT_ACTION_POINTS),
+        movement: <StatPool<i32>>::new(5),
+        kiho: <StatPool<f32>>::new(0.0),
+        chiseijutsu: <StatPool<f32>>::new(if matches!(kind, YokaiKind::Kappa) { 4.0 } else { 0.0 }),
+        yokaijutsu: <StatPool<f32>>::new(yokai_pool),
+        kamishin: <StatPool<f32>>::new(0.0),
+        lethality: <StatPool<i32>>::new(lethality),
+        hit: <StatPool<i32>>::new(hit),
+        armor: <StatPool<i32>>::new(armor),
+        speed: <StatPool<i32>>::new(speed),
+        evasion: <StatPool<i32>>::new(speed),
+        mind: <StatPool<i32>>::new(mind),
+        health_per_rest_hour: 0,
+        morale_per_rest_hour: 0,
+        kiho_per_rest_hour: 0.0,
+        chiseijutsu_per_rest_hour: 0.0,
+        yokaijutsu_per_rest_hour: 0.0,
+        kamishin_per_rest_hour: 0.0,
+    });
+    e.insert(GrowthAttributes::default());
+    e.insert(Abilities(kind.abilities()));
+    e.insert(Experience(0));
+    e.insert(Level(1));
+    e.insert(AccumulatedSpeed(0));
+    e.insert(StatModifiers(Vec::new()));
+    e.insert(Reactions::default());
+    e.insert(CombatMovePoints::default());
+    e.insert(crate::ai_decision::BehaviorTreeProfile(
+        kind.behavior_profile().to_string(),
+    ));
+    e.id()
+}
+
 fn spawn_ally_combat(commands: &mut Commands, world_entity: Entity, world_pos: Vec3) -> Entity {
     let mut e = commands.spawn_empty();
     e.insert(Name::new("AllyCombat"));
@@ -285,21 +428,27 @@ fn spawn_ally_combat(commands: &mut Commands, world_entity: Entity, world_pos: V
     e.insert(PlayerControlled);
     e.insert(BattleWorldLink { world_entity });
     e.insert(Transform::from_translation(world_pos));
-    e.insert(Health {
-        current: 100,
-        max: 100,
-        regen: 2,
-    });
-    e.insert(Magic::with_regen(1.0, 1.5, 1.0, 0.5, 0.00025, 0.00035, 0.00025, 0.00015));
-    e.insert(ActionPoints::default());
     e.insert(CombatStats {
-        base_lethality: 12,
-        base_hit: 75,
-        base_armor: 8,
-        base_agility: 9,
-        base_mind: 8,
-        base_morale: 85,
-        movement: 5,
+        health: <StatPool<i32>>::new(100),
+        morale: <StatPool<i32>>::new(85),
+        action_points: <StatPool<i32>>::new(DEFAULT_ACTION_POINTS),
+        movement: <StatPool<i32>>::new(5),
+        kiho: <StatPool<f32>>::new(1.0),
+        chiseijutsu: <StatPool<f32>>::new(1.5),
+        yokaijutsu: <StatPool<f32>>::new(1.0),
+        kamishin: <StatPool<f32>>::new(0.5),
+        lethality: <StatPool<i32>>::new(12),
+        hit: <StatPool<i32>>::new(75),
+        armor: <StatPool<i32>>::new(8),
+        speed: <StatPool<i32>>::new(9),
+        evasion: <StatPool<i32>>::new(9),
+        mind: <StatPool<i32>>::new(8),
+        health_per_rest_hour: 2,
+        morale_per_rest_hour: 4,
+        kiho_per_rest_hour: 0.25,
+        chiseijutsu_per_rest_hour: 0.4,
+        yokaijutsu_per_rest_hour: 0.25,
+        kamishin_per_rest_hour: 0.15,
     });
     e.insert(GrowthAttributes {
         vitality: 10,
@@ -307,19 +456,22 @@ fn spawn_ally_combat(commands: &mut Commands, world_entity: Entity, world_pos: V
         spirit: 8,
         power: 10,
         control: 9,
-        agility: 9,
+        celerity: 9,
+        reflex: 9,
         insight: 8,
         resolve: 10,
-        kiho: 1,
-        chiseijutsu: 3,
-        yokaijutsu: 1,
-        kamishin: 1,
-        ..Default::default()
+        // Ally combatant: spirit=8 → 24 points, nature-leaning support.
+        magic_distribution: MagicDistribution {
+            kiho: 6,
+            chiseijutsu: 10,
+            yokaijutsu: 4,
+            kamishin: 4,
+        },
     });
     e.insert(Abilities(vec![]));
     e.insert(Experience(0));
     e.insert(Level(1));
-    e.insert(AccumulatedAgility(0));
+    e.insert(AccumulatedSpeed(0));
     e.insert(StatModifiers(Vec::new()));
     e.insert(CombatMovePoints::default());
     e.id()
@@ -342,7 +494,7 @@ pub fn setup_player_turns(
             continue;
         }
         if let Ok(stats) = stats_q.get(ev.who) {
-            let movement = stats.movement.max(0) as f32;
+            let movement = stats.movement.current.max(0) as f32;
             let max_distance = (movement * crate::constants::PLAYER_SPEED).min(250.0);
             // Always refresh points at turn start.
             commands.entity(ev.who).insert(CombatMovePoints {

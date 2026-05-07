@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 
-use crate::battle::{CombatMovePoints, EnemyEncounter, WorldAlly, WorldNpc};
+use crate::battle::{CombatMovePoints, EnemyEncounter, WorldAlly, WorldNpc, WorldYokai, YokaiKind};
 use crate::city_data::CityCatalog;
 use crate::core::{MainCamera, Player, Position};
 use crate::dialogue::{load_dialogue, CachedInteractables, Dialogue_Data, Interactable};
@@ -44,6 +44,13 @@ pub fn setup(
     query: Query<&Collider>,
     occ: Option<Res<crate::light_plugin::OcclusionTarget>>,
 ) {
+    // The player spawns at the center of tile (0, 0). All the hardcoded test
+    // entities below were authored relative to a 512-unit world, so we offset
+    // them by the same origin so they remain visible near the player as
+    // `TILE_WORLD_SIZE` grows.
+    let world_origin = tile_center_world(Position::default());
+    let origin3 = world_origin.extend(0.0);
+
     let mut quadtree = QuadtreeNode::new(Rect::from_center_size(Vec2::ZERO, Vec2::splat(2048.0)), 0);
 
     for collider in &query {
@@ -60,11 +67,7 @@ pub fn setup(
             Camera2d,
             RenderLayers::layer(0), // explicitly see layer 0 (light quad and world)
             MainCamera,
-            Transform::from_xyz(
-                tile_center_world(Position::default()).x,
-                tile_center_world(Position::default()).y,
-                MAIN_CAMERA_HEIGHT,
-            ),
+            Transform::from_xyz(world_origin.x, world_origin.y, MAIN_CAMERA_HEIGHT),
         ));
 
     commands.spawn((
@@ -73,7 +76,7 @@ pub fn setup(
             custom_size: Some(Vec2::new(32.0, 32.0)),
             ..default()
         },
-        Transform::from_translation(tile_center_world(Position::default()).extend(0.0)),
+        Transform::from_translation(origin3),
         Player,
         VisualOcclusionTarget,
         YSort { base_z: 0.0 },
@@ -88,12 +91,63 @@ pub fn setup(
             custom_size: Some(Vec2::new(32.0, 32.0)),
             ..default()
         },
-        Transform::from_xyz(4.0 * 32.0, 0.0, 0.0),
+        Transform::from_translation(origin3 + Vec3::new(4.0 * 32.0, 0.0, 0.0)),
         EnemyEncounter { id: 1 },
         VisualOcclusionTarget,
         YSort { base_z: 0.0 },
         crate::light_plugin::LightSensitive { threshold: 0.15 },
     ));
+
+    // Yokai scattered around the player's spawn so the battle loop is
+    // exercisable. Each carries `WorldYokai { kind }`, which routes
+    // `start_battle` to `spawn_yokai_combatant` (per-species stats, BT
+    // profile, and ability set).
+    let yokai_seedlings: [(YokaiKind, Vec3, Color); 4] = [
+        // Onibi — fast, fragile fire wisp. Tinted hot orange.
+        (
+            YokaiKind::Onibi,
+            Vec3::new(7.0 * 32.0, 2.0 * 32.0, 0.0),
+            Color::srgb(0.95, 0.55, 0.20),
+        ),
+        // Kappa — sturdy river demon. Algae-green.
+        (
+            YokaiKind::Kappa,
+            Vec3::new(-5.0 * 32.0, 4.0 * 32.0, 0.0),
+            Color::srgb(0.30, 0.65, 0.45),
+        ),
+        // Kasha — mental caster. Ashen purple.
+        (
+            YokaiKind::Kasha,
+            Vec3::new(2.0 * 32.0, -6.0 * 32.0, 0.0),
+            Color::srgb(0.55, 0.30, 0.65),
+        ),
+        // Second Onibi to test "two enemies of the same kind in different cells".
+        (
+            YokaiKind::Onibi,
+            Vec3::new(-8.0 * 32.0, -3.0 * 32.0, 0.0),
+            Color::srgb(0.95, 0.55, 0.20),
+        ),
+    ];
+    for (i, (kind, pos, color)) in yokai_seedlings.into_iter().enumerate() {
+        commands.spawn((
+            Sprite {
+                image: asset_server.load("character.png"),
+                color,
+                custom_size: Some(Vec2::new(32.0, 32.0)),
+                ..default()
+            },
+            Transform::from_translation(origin3 + pos),
+            // EnemyEncounter ids start at 100 to avoid colliding with the
+            // generic id-1 enemy above and the city-governor encounters
+            // (10_000+) further down.
+            EnemyEncounter { id: 100 + i as u32 },
+            WorldYokai { kind },
+            VisualOcclusionTarget,
+            YSort { base_z: 0.0 },
+            crate::light_plugin::LightSensitive { threshold: 0.15 },
+            Name::new(format!("WorldYokai({} #{})", kind.label(), i)),
+        ));
+    }
 
     for merchant in merchants.0.values() {
         if let Some(spawn_pos) = first_tile_world_position_for_region(&map, merchant.region_id) {
@@ -215,37 +269,55 @@ pub fn setup(
         }
     }
 
-    commands.spawn((
-        Sprite {
-            image: asset_server.load("character.png"),
-            color: Color::srgb(0.9, 0.8, 0.2),
-            custom_size: Some(Vec2::new(32.0, 32.0)),
-            ..default()
-        },
-        Transform::from_xyz(-2.0 * 32.0, 0.0, 0.0),
-        WorldAlly,
-        VisualOcclusionTarget,
-        YSort { base_z: 0.0 },
-        crate::light_plugin::LightSensitive { threshold: 0.15 },
-        Name::new("AllyA"),
-    ));
+    let ally_spawn = origin3 + Vec3::new(-2.0 * 32.0, -2.0 * 32.0, 0.0);
+    let ally_colors = [
+        Color::srgb(0.9, 0.8, 0.2),
+        Color::srgb(0.9, 0.6, 0.2),
+        Color::srgb(0.5, 0.85, 0.4),
+    ];
+    for (i, color) in ally_colors.into_iter().enumerate() {
+        commands.spawn((
+            Sprite {
+                image: asset_server.load("character.png"),
+                color,
+                custom_size: Some(Vec2::new(32.0, 32.0)),
+                ..default()
+            },
+            Transform::from_translation(ally_spawn),
+            WorldAlly,
+            VisualOcclusionTarget,
+            YSort { base_z: 0.0 },
+            crate::light_plugin::LightSensitive { threshold: 0.15 },
+            Name::new(format!("Ally{}", i)),
+        ));
+    }
 
-    commands.spawn((
-        Sprite {
-            image: asset_server.load("character.png"),
-            color: Color::srgb(0.9, 0.6, 0.2),
-            custom_size: Some(Vec2::new(32.0, 32.0)),
-            ..default()
-        },
-        Transform::from_xyz(-3.0 * 32.0, -1.0 * 32.0, 0.0),
-        WorldAlly,
-        VisualOcclusionTarget,
-        YSort { base_z: 0.0 },
-        crate::light_plugin::LightSensitive { threshold: 0.15 },
-        Name::new("AllyB"),
-    ));
+    let test_obstacles = [
+        (Vec3::new(2.0 * 32.0, -3.0 * 32.0, 0.0), Color::srgb(0.55, 0.55, 0.55)),
+        (Vec3::new(-4.0 * 32.0, 1.0 * 32.0, 0.0), Color::srgb(0.45, 0.40, 0.35)),
+    ];
+    for (i, (offset, color)) in test_obstacles.into_iter().enumerate() {
+        let world_pos = origin3 + offset;
+        let size = Vec2::splat(48.0);
+        commands.spawn((
+            Sprite {
+                image: asset_server.load("character.png"),
+                color,
+                custom_size: Some(size),
+                ..default()
+            },
+            Transform::from_translation(world_pos),
+            Collider {
+                bounds: Rect::from_center_size(world_pos.truncate(), size),
+            },
+            Occluder::new(size),
+            RenderLayers::layer(0),
+            YSort { base_z: 0.0 },
+            Name::new(format!("TestObstacle{}", i)),
+        ));
+    }
 
-    let tower_base = Vec3::new(6.0 * 32.0, 5.0 * 32.0, 0.0);
+    let tower_base = origin3 + Vec3::new(6.0 * 32.0, 5.0 * 32.0, 0.0);
     commands.spawn((
         Sprite {
             image: asset_server.load("character.png"),
@@ -264,7 +336,10 @@ pub fn setup(
         Visibility::Visible,
         InheritedVisibility::default(),
         ViewVisibility::default(),
-        Occluder,
+        // Shadow footprint is the tower's base — same rectangle as the
+        // collider — so the cast shadow lines up with the trunk on the
+        // ground rather than the much-taller visible sprite.
+        Occluder::with_offset(Vec2::new(36.0, 20.0), Vec2::new(0.0, 10.0)),
         RenderLayers::layer(0),
         FadeWhenCovered,
         VisualOccluder {
@@ -276,19 +351,37 @@ pub fn setup(
         Name::new("Tower"),
     ));
 
-    for x in 1..3 {
+    let test_interactables = [
+        (
+            Vec3::new(1.0 * 32.0, 5.0 * 32.0, 0.0),
+            Color::srgb(0.2, 0.6, 0.9),
+            "Villager A",
+            "The last goodbye 1",
+        ),
+        (
+            Vec3::new(2.0 * 32.0, 5.0 * 32.0, 0.0),
+            Color::srgb(0.9, 0.4, 0.7),
+            "Villager B",
+            "Interactable 1",
+        ),
+    ];
+    for (offset, color, label, dialogue_id) in test_interactables {
         commands.spawn((
             Sprite {
                 image: asset_server.load("character.png"),
-                color: Color::srgb(0.8, 0.1, 0.1),
+                color,
                 custom_size: Some(Vec2::new(32.0, 32.0)),
                 ..default()
             },
-            Transform::from_xyz(x as f32 * 32.0, 5.0 * 32.0, 0.0),
+            Transform::from_translation(origin3 + offset),
             Interactable {
-                name: "Test interactable".to_string(),
-                dialogue_id: "The last goodbye 1".to_string(),
+                name: label.to_string(),
+                dialogue_id: dialogue_id.to_string(),
             },
+            VisualOcclusionTarget,
+            YSort { base_z: 0.0 },
+            crate::light_plugin::LightSensitive { threshold: 0.15 },
+            Name::new(label.to_string()),
         ));
     }
 
@@ -300,7 +393,7 @@ pub fn setup(
                 custom_size: Some(Vec2::splat(128.0)),
                 ..default()
             },
-            Transform::from_xyz(0.0, 0.0, 50.0),
+            Transform::from_translation(origin3 + Vec3::new(0.0, 0.0, 50.0)),
             Name::new("OcclusionDebugSprite"),
         ));
     }

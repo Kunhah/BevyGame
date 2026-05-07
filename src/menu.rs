@@ -6,6 +6,10 @@ use bevy::prelude::*;
 use crate::core::{GameState, Game_State};
 use crate::save::{AutoSaveSettings, SaveAction, SaveRequest, SaveSlot};
 use crate::settings::{GraphicsSettings, GraphicsToggle, GRAPHICS_TOGGLES};
+use crate::ui_style::{
+    button_node, button_text, button_text_lg, button_visual, label_text, overlay_root, panel,
+    palette, spacing, title_text,
+};
 
 pub struct MenuPlugin;
 
@@ -15,7 +19,6 @@ impl Plugin for MenuPlugin {
             .add_systems(Update, spawn_main_menu_ui)
             .add_systems(Update, spawn_pause_menu_ui)
             .add_systems(Update, toggle_pause_state)
-            .add_systems(Update, update_button_interaction_visuals)
             .add_systems(Update, handle_menu_actions)
             .add_systems(Update, update_autosave_status_text)
             .add_systems(Update, update_graphics_toggle_text);
@@ -59,44 +62,67 @@ struct AutosaveStatusText;
 #[derive(Component)]
 struct GraphicsToggleText(GraphicsToggle);
 
-fn spawn_graphics_settings_section(parent: &mut ChildSpawnerCommands) {
+const HERO_BTN: f32 = 52.0;
+const ROW_BTN: f32 = 44.0;
+const TOGGLE_BTN: f32 = 40.0;
+
+fn spawn_section_label(parent: &mut ChildSpawnerCommands, text: &str) {
     parent.spawn((
-        Text::new("Performance"),
-        TextFont {
-            font_size: 18.0,
+        label_text(text),
+        Node {
+            margin: UiRect::top(Val::Px(spacing::SM)),
             ..default()
         },
-        TextColor(Color::srgb(0.75, 0.8, 0.88)),
     ));
+}
+
+fn spawn_hero_button(
+    parent: &mut ChildSpawnerCommands,
+    label: &str,
+    action: MenuButtonAction,
+) {
+    parent
+        .spawn((
+            Button::default(),
+            button_node(HERO_BTN),
+            button_visual(),
+            action,
+        ))
+        .with_children(|btn| {
+            btn.spawn(button_text_lg(label));
+        });
+}
+
+fn spawn_row_button(
+    parent: &mut ChildSpawnerCommands,
+    label: &str,
+    action: MenuButtonAction,
+) {
+    parent
+        .spawn((
+            Button::default(),
+            button_node(ROW_BTN),
+            button_visual(),
+            action,
+        ))
+        .with_children(|btn| {
+            btn.spawn(button_text(label));
+        });
+}
+
+fn spawn_graphics_settings_section(parent: &mut ChildSpawnerCommands) {
+    spawn_section_label(parent, "Performance");
 
     for toggle in GRAPHICS_TOGGLES {
         parent
             .spawn((
                 Button::default(),
-                Node {
-                    height: Val::Px(40.0),
-                    display: Display::Flex,
-                    justify_content: JustifyContent::Center,
-                    align_items: AlignItems::Center,
-                    padding: UiRect::all(Val::Px(6.0)),
-                    border: UiRect::all(Val::Px(1.5)),
-                    ..default()
-                },
-                BackgroundColor(Color::srgba(0.12, 0.17, 0.25, 0.95)),
-                BorderRadius::all(Val::Px(8.0)),
-                BorderColor::all(Color::srgba(0.24, 0.32, 0.46, 1.0)),
+                button_node(TOGGLE_BTN),
+                button_visual(),
                 MenuButtonAction::ToggleGraphics(toggle),
             ))
             .with_children(|btn| {
-                btn.spawn((
-                    Text::new("..."),
-                    TextFont {
-                        font_size: 16.0,
-                        ..default()
-                    },
-                    TextColor(Color::srgb(0.88, 0.9, 0.95)),
-                    GraphicsToggleText(toggle),
-                ));
+                btn.spawn((button_text("..."), GraphicsToggleText(toggle)));
             });
     }
 }
@@ -110,231 +136,49 @@ fn spawn_main_menu_ui(
         return;
     }
 
-    let root = commands
-        .spawn((
-            Node {
-                width: Val::Percent(100.0),
-                height: Val::Percent(100.0),
-                display: Display::Flex,
-                flex_direction: FlexDirection::Column,
-                justify_content: JustifyContent::Center,
-                align_items: AlignItems::Center,
-                row_gap: Val::Px(16.0),
-                position_type: PositionType::Absolute,
-                ..default()
-            },
-            BackgroundColor(Color::srgba(0.04, 0.05, 0.08, 0.92)),
-            MainMenuRoot,
-        ))
-        .id();
+    let root = commands.spawn((overlay_root(), MainMenuRoot)).id();
 
     commands.entity(root).with_children(|parent| {
-        parent
-            .spawn((
-                Node {
-                    width: Val::Px(520.0),
-                    display: Display::Flex,
-                    flex_direction: FlexDirection::Column,
-                    justify_content: JustifyContent::Center,
-                    align_items: AlignItems::Stretch,
-                    row_gap: Val::Px(12.0),
-                    padding: UiRect::all(Val::Px(24.0)),
+        parent.spawn(panel(520.0)).with_children(|col| {
+            col.spawn(title_text("Seirei Kuni"));
+            col.spawn((
+                Text::new("Choose your path and step into the world."),
+                TextFont {
+                    font_size: 20.0,
                     ..default()
                 },
-                BackgroundColor(Color::srgba(0.08, 0.1, 0.16, 0.85)),
-                BorderRadius::all(Val::Px(14.0)),
+                TextColor(palette::TEXT_SECONDARY),
+                Node {
+                    margin: UiRect::bottom(Val::Px(spacing::SM)),
+                    ..default()
+                },
+            ));
+
+            spawn_hero_button(col, "Start Journey", MenuButtonAction::StartGame);
+
+            spawn_section_label(col, "Save / Load");
+            spawn_row_button(col, "Save Slot 1", MenuButtonAction::SaveSlot1);
+            spawn_row_button(col, "Save Slot 2", MenuButtonAction::SaveSlot2);
+            spawn_row_button(col, "Save Slot 3", MenuButtonAction::SaveSlot3);
+            spawn_row_button(col, "Load Slot 1", MenuButtonAction::LoadSlot1);
+            spawn_row_button(col, "Load Slot 2", MenuButtonAction::LoadSlot2);
+            spawn_row_button(col, "Load Slot 3", MenuButtonAction::LoadSlot3);
+
+            spawn_section_label(col, "Autosave");
+            col.spawn((
+                Button::default(),
+                button_node(ROW_BTN),
+                button_visual(),
+                MenuButtonAction::ToggleAutosave,
             ))
-            .with_children(|col| {
-                col.spawn((
-                    Text::new("Seirei Kuni"),
-                    TextFont {
-                        font_size: 48.0,
-                        ..default()
-                    },
-                    TextColor(Color::srgb(0.92, 0.94, 0.98)),
-                ));
-
-                col.spawn((
-                    Text::new("Choose your path and step into the world."),
-                    TextFont {
-                        font_size: 20.0,
-                        ..default()
-                    },
-                    TextColor(Color::srgb(0.75, 0.8, 0.88)),
-                ));
-
-                col
-                    .spawn((
-                        Button::default(),
-                        Node {
-                            height: Val::Px(52.0),
-                            display: Display::Flex,
-                            justify_content: JustifyContent::Center,
-                            align_items: AlignItems::Center,
-                            padding: UiRect::all(Val::Px(6.0)),
-                            border: UiRect::all(Val::Px(1.5)),
-                            ..default()
-                        },
-                        BackgroundColor(Color::srgba(0.14, 0.19, 0.28, 0.95)),
-                        BorderRadius::all(Val::Px(10.0)),
-                        BorderColor::all(Color::srgba(0.26, 0.34, 0.48, 1.0)),
-                        MenuButtonAction::StartGame,
-                    ))
-                    .with_children(|btn| {
-                        btn.spawn((
-                            Text::new("Start Journey"),
-                            TextFont {
-                                font_size: 22.0,
-                                ..default()
-                            },
-                            TextColor(Color::srgb(0.9, 0.92, 0.96)),
-                        ));
-                    });
-
-                col.spawn((
-                    Text::new("Save / Load"),
-                    TextFont {
-                        font_size: 18.0,
-                        ..default()
-                    },
-                    TextColor(Color::srgb(0.75, 0.8, 0.88)),
-                ));
-
-                let save_actions = [
-                    ("Save Slot 1", MenuButtonAction::SaveSlot1),
-                    ("Save Slot 2", MenuButtonAction::SaveSlot2),
-                    ("Save Slot 3", MenuButtonAction::SaveSlot3),
-                ];
-                for (label, action) in save_actions {
-                    col.spawn((
-                        Button::default(),
-                        Node {
-                            height: Val::Px(44.0),
-                            display: Display::Flex,
-                            justify_content: JustifyContent::Center,
-                            align_items: AlignItems::Center,
-                            padding: UiRect::all(Val::Px(6.0)),
-                            border: UiRect::all(Val::Px(1.5)),
-                            ..default()
-                        },
-                        BackgroundColor(Color::srgba(0.12, 0.17, 0.25, 0.95)),
-                        BorderRadius::all(Val::Px(10.0)),
-                        BorderColor::all(Color::srgba(0.24, 0.32, 0.46, 1.0)),
-                        action,
-                    ))
-                    .with_children(|btn| {
-                        btn.spawn((
-                            Text::new(label),
-                            TextFont {
-                                font_size: 18.0,
-                                ..default()
-                            },
-                            TextColor(Color::srgb(0.88, 0.9, 0.95)),
-                        ));
-                    });
-                }
-
-                let load_actions = [
-                    ("Load Slot 1", MenuButtonAction::LoadSlot1),
-                    ("Load Slot 2", MenuButtonAction::LoadSlot2),
-                    ("Load Slot 3", MenuButtonAction::LoadSlot3),
-                ];
-                for (label, action) in load_actions {
-                    col.spawn((
-                        Button::default(),
-                        Node {
-                            height: Val::Px(44.0),
-                            display: Display::Flex,
-                            justify_content: JustifyContent::Center,
-                            align_items: AlignItems::Center,
-                            padding: UiRect::all(Val::Px(6.0)),
-                            border: UiRect::all(Val::Px(1.5)),
-                            ..default()
-                        },
-                        BackgroundColor(Color::srgba(0.11, 0.15, 0.22, 0.95)),
-                        BorderRadius::all(Val::Px(10.0)),
-                        BorderColor::all(Color::srgba(0.24, 0.32, 0.46, 1.0)),
-                        action,
-                    ))
-                    .with_children(|btn| {
-                        btn.spawn((
-                            Text::new(label),
-                            TextFont {
-                                font_size: 18.0,
-                                ..default()
-                            },
-                            TextColor(Color::srgb(0.88, 0.9, 0.95)),
-                        ));
-                    });
-                }
-
-                col.spawn((
-                    Text::new("Autosave"),
-                    TextFont {
-                        font_size: 18.0,
-                        ..default()
-                    },
-                    TextColor(Color::srgb(0.75, 0.8, 0.88)),
-                ));
-
-                col.spawn((
-                    Button::default(),
-                    Node {
-                        height: Val::Px(44.0),
-                        display: Display::Flex,
-                        justify_content: JustifyContent::Center,
-                        align_items: AlignItems::Center,
-                        padding: UiRect::all(Val::Px(6.0)),
-                        border: UiRect::all(Val::Px(1.5)),
-                        ..default()
-                    },
-                    BackgroundColor(Color::srgba(0.12, 0.17, 0.25, 0.95)),
-                    BorderRadius::all(Val::Px(10.0)),
-                    BorderColor::all(Color::srgba(0.24, 0.32, 0.46, 1.0)),
-                    MenuButtonAction::ToggleAutosave,
-                ))
-                .with_children(|btn| {
-                    btn.spawn((
-                        Text::new("Autosave: ..."),
-                        TextFont {
-                            font_size: 18.0,
-                            ..default()
-                        },
-                        TextColor(Color::srgb(0.88, 0.9, 0.95)),
-                        AutosaveStatusText,
-                    ));
-                });
-
-                spawn_graphics_settings_section(col);
-
-                col
-                    .spawn((
-                        Button::default(),
-                        Node {
-                            height: Val::Px(52.0),
-                            display: Display::Flex,
-                            justify_content: JustifyContent::Center,
-                            align_items: AlignItems::Center,
-                            padding: UiRect::all(Val::Px(6.0)),
-                            border: UiRect::all(Val::Px(1.5)),
-                            ..default()
-                        },
-                        BackgroundColor(Color::srgba(0.14, 0.19, 0.28, 0.95)),
-                        BorderRadius::all(Val::Px(10.0)),
-                        BorderColor::all(Color::srgba(0.26, 0.34, 0.48, 1.0)),
-                        MenuButtonAction::QuitGame,
-                    ))
-                    .with_children(|btn| {
-                        btn.spawn((
-                            Text::new("Quit"),
-                            TextFont {
-                                font_size: 22.0,
-                                ..default()
-                            },
-                            TextColor(Color::srgb(0.9, 0.92, 0.96)),
-                        ));
-                    });
+            .with_children(|btn| {
+                btn.spawn((button_text("Autosave: ..."), AutosaveStatusText));
             });
+
+            spawn_graphics_settings_section(col);
+
+            spawn_hero_button(col, "Quit", MenuButtonAction::QuitGame);
+        });
     });
 }
 
@@ -348,135 +192,30 @@ fn spawn_pause_menu_ui(
         return;
     }
 
-    let root = commands
-        .spawn((
-            Node {
-                width: Val::Percent(100.0),
-                height: Val::Percent(100.0),
-                display: Display::Flex,
-                flex_direction: FlexDirection::Column,
-                justify_content: JustifyContent::Center,
-                align_items: AlignItems::Center,
-                position_type: PositionType::Absolute,
-                ..default()
-            },
-            BackgroundColor(Color::srgba(0.02, 0.03, 0.05, 0.7)),
-            PauseMenuRoot,
-        ))
-        .id();
+    let root = commands.spawn((overlay_root(), PauseMenuRoot)).id();
 
     commands.entity(root).with_children(|parent| {
-        parent
-            .spawn((
-                Node {
-                    width: Val::Px(420.0),
-                    display: Display::Flex,
-                    flex_direction: FlexDirection::Column,
-                    justify_content: JustifyContent::Center,
-                    align_items: AlignItems::Stretch,
-                    row_gap: Val::Px(10.0),
-                    padding: UiRect::all(Val::Px(18.0)),
+        parent.spawn(panel(420.0)).with_children(|col| {
+            col.spawn((
+                Text::new("Paused"),
+                TextFont {
+                    font_size: 36.0,
                     ..default()
                 },
-                BackgroundColor(Color::srgba(0.07, 0.1, 0.15, 0.9)),
-                BorderRadius::all(Val::Px(12.0)),
-            ))
-            .with_children(|col| {
-                col.spawn((
-                    Text::new("Paused"),
-                    TextFont {
-                        font_size: 36.0,
-                        ..default()
-                    },
-                    TextColor(Color::srgb(0.92, 0.94, 0.98)),
-                ));
+                TextColor(palette::TEXT_HEADING),
+                Node {
+                    margin: UiRect::bottom(Val::Px(spacing::SM)),
+                    ..default()
+                },
+            ));
 
-                col
-                    .spawn((
-                        Button::default(),
-                        Node {
-                            height: Val::Px(52.0),
-                            display: Display::Flex,
-                            justify_content: JustifyContent::Center,
-                            align_items: AlignItems::Center,
-                            padding: UiRect::all(Val::Px(6.0)),
-                            border: UiRect::all(Val::Px(1.5)),
-                            ..default()
-                        },
-                        BackgroundColor(Color::srgba(0.14, 0.19, 0.28, 0.95)),
-                        BorderRadius::all(Val::Px(10.0)),
-                        BorderColor::all(Color::srgba(0.26, 0.34, 0.48, 1.0)),
-                        MenuButtonAction::ResumeGame,
-                    ))
-                    .with_children(|btn| {
-                        btn.spawn((
-                            Text::new("Resume"),
-                            TextFont {
-                                font_size: 22.0,
-                                ..default()
-                            },
-                            TextColor(Color::srgb(0.9, 0.92, 0.96)),
-                        ));
-                    });
+            spawn_hero_button(col, "Resume", MenuButtonAction::ResumeGame);
+            spawn_hero_button(col, "Return to Title", MenuButtonAction::ReturnToTitle);
 
-                col
-                    .spawn((
-                        Button::default(),
-                        Node {
-                            height: Val::Px(52.0),
-                            display: Display::Flex,
-                            justify_content: JustifyContent::Center,
-                            align_items: AlignItems::Center,
-                            padding: UiRect::all(Val::Px(6.0)),
-                            border: UiRect::all(Val::Px(1.5)),
-                            ..default()
-                        },
-                        BackgroundColor(Color::srgba(0.14, 0.19, 0.28, 0.95)),
-                        BorderRadius::all(Val::Px(10.0)),
-                        BorderColor::all(Color::srgba(0.26, 0.34, 0.48, 1.0)),
-                        MenuButtonAction::ReturnToTitle,
-                    ))
-                    .with_children(|btn| {
-                        btn.spawn((
-                            Text::new("Return to Title"),
-                            TextFont {
-                                font_size: 22.0,
-                                ..default()
-                            },
-                            TextColor(Color::srgb(0.9, 0.92, 0.96)),
-                        ));
-                    });
+            spawn_graphics_settings_section(col);
 
-                spawn_graphics_settings_section(col);
-
-                col
-                    .spawn((
-                        Button::default(),
-                        Node {
-                            height: Val::Px(52.0),
-                            display: Display::Flex,
-                            justify_content: JustifyContent::Center,
-                            align_items: AlignItems::Center,
-                            padding: UiRect::all(Val::Px(6.0)),
-                            border: UiRect::all(Val::Px(1.5)),
-                            ..default()
-                        },
-                        BackgroundColor(Color::srgba(0.14, 0.19, 0.28, 0.95)),
-                        BorderRadius::all(Val::Px(10.0)),
-                        BorderColor::all(Color::srgba(0.26, 0.34, 0.48, 1.0)),
-                        MenuButtonAction::QuitGame,
-                    ))
-                    .with_children(|btn| {
-                        btn.spawn((
-                            Text::new("Quit"),
-                            TextFont {
-                                font_size: 22.0,
-                                ..default()
-                            },
-                            TextColor(Color::srgb(0.9, 0.92, 0.96)),
-                        ));
-                    });
-            });
+            spawn_hero_button(col, "Quit", MenuButtonAction::QuitGame);
+        });
     });
 }
 
@@ -503,37 +242,6 @@ fn toggle_pause_state(
             game_state.0 = Game_State::Paused;
         }
     }
-}
-
-fn update_button_interaction_visuals(
-    mut buttons: Query<
-        (&Interaction, &mut BackgroundColor, &mut BorderColor),
-        (Changed<Interaction>, With<Button>),
-    >,
-) {
-    for (interaction, mut bg, mut border) in &mut buttons {
-        match *interaction {
-            Interaction::Pressed => {
-                bg.0 = Color::srgba(0.2, 0.26, 0.4, 1.0);
-                set_border_color(&mut border, Color::srgba(0.34, 0.44, 0.62, 1.0));
-            }
-            Interaction::Hovered => {
-                bg.0 = Color::srgba(0.16, 0.22, 0.32, 1.0);
-                set_border_color(&mut border, Color::srgba(0.3, 0.4, 0.56, 1.0));
-            }
-            Interaction::None => {
-                bg.0 = Color::srgba(0.14, 0.19, 0.28, 0.95);
-                set_border_color(&mut border, Color::srgba(0.26, 0.34, 0.48, 1.0));
-            }
-        }
-    }
-}
-
-fn set_border_color(border: &mut BorderColor, color: Color) {
-    border.top = color;
-    border.right = color;
-    border.bottom = color;
-    border.left = color;
 }
 
 fn handle_menu_actions(

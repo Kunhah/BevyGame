@@ -23,9 +23,9 @@ use serde::{Deserialize, Serialize};
 use crate::battle::BattleSide;
 use crate::combat_ability::{Ability, AbilityEffect, Ability_Tree};
 use crate::combat_plugin::{
-    Abilities, ActionPoints, AIParameters, AbilityIntentEvent, AttackContext, AttackIntentEvent,
-    DefendIntentEvent, Health, Magic, PlayerControlled, TargetFocus, TurnEndEvent,
-    TurnInProgress, TurnStartEvent, WaitIntentEvent,
+    Abilities, AIParameters, AbilityIntentEvent, ActionCause, AttackContext, AttackIntentEvent,
+    CombatStats, DefendIntentEvent, PlayerControlled, TargetFocus, TurnEndEvent, TurnInProgress,
+    TurnStartEvent, WaitIntentEvent,
 };
 
 const BEHAVIOR_TREE_PATH: &str = "assets/data/decision_tree.ron";
@@ -400,9 +400,7 @@ pub fn evaluate_behavior_tree_system(
     actors: Query<(
         Entity,
         &BattleSide,
-        &Health,
-        Option<&Magic>,
-        &ActionPoints,
+        &CombatStats,
         Option<&Abilities>,
         Option<&AIParameters>,
         Option<&GlobalTransform>,
@@ -436,7 +434,7 @@ pub fn evaluate_behavior_tree_system(
 
         let mut allies = Vec::new();
         let mut enemies = Vec::new();
-        for (entity, _side, _, _, _, _, _, _) in actors.iter() {
+        for (entity, _side, _, _, _, _) in actors.iter() {
             if entity == ev.who {
                 continue;
             }
@@ -471,6 +469,7 @@ pub fn evaluate_behavior_tree_system(
                     target,
                     ability: None,
                     context: AttackContext::default(),
+                    cause: ActionCause::Ai,
                 });
             }
             Some(AiAction::Ability { ability_id, target: _ }) => {
@@ -498,30 +497,27 @@ fn build_snapshot(
     actors: &Query<(
         Entity,
         &BattleSide,
-        &Health,
-        Option<&Magic>,
-        &ActionPoints,
+        &CombatStats,
         Option<&Abilities>,
         Option<&AIParameters>,
         Option<&GlobalTransform>,
     )>,
     entity: Entity,
 ) -> Option<ActorSnapshot> {
-    let (e, side, health, magic, ap, abilities, params, transform) =
-        actors.get(entity).ok()?;
-    if health.current <= 0 {
+    let (e, side, stats, abilities, params, transform) = actors.get(entity).ok()?;
+    if stats.health.current <= 0 {
         return None;
     }
-    let hp_percent = if health.max > 0 {
-        ((health.current.max(0) as i64 * 100) / health.max as i64).clamp(0, 100) as u8
+    let hp_percent = if stats.health.base > 0 {
+        ((stats.health.current.max(0) as i64 * 100) / stats.health.base as i64).clamp(0, 100) as u8
     } else {
         0
     };
-    let magic_percent = match magic {
-        Some(m) if m.total_max() > 0.0 => {
-            ((m.total_current() / m.total_max()) * 100.0).clamp(0.0, 100.0) as u8
-        }
-        _ => 100,
+    let total_max = stats.total_magic_base();
+    let magic_percent = if total_max > 0.0 {
+        ((stats.total_magic_current() / total_max) * 100.0).clamp(0.0, 100.0) as u8
+    } else {
+        100
     };
     let abilities = abilities.map(|a| a.0.clone()).unwrap_or_default();
     let params = params.copied().unwrap_or_default();
@@ -533,7 +529,7 @@ fn build_snapshot(
         side: *side,
         hp_percent,
         magic_percent,
-        action_points: ap.current,
+        action_points: stats.action_points.current,
         abilities,
         params,
         position,

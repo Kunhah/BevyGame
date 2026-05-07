@@ -8,12 +8,14 @@ use bevy::render::{
 use bevy::window::{Window, WindowPlugin};
 use bevy::log::{Level, LogPlugin};
 
+mod activities;
 mod ai_decision;
 mod battle;
 mod city_data;
 mod combat_ability;
 mod combat_plugin;
 mod constants;
+mod contract;
 mod core;
 mod debug_console;
 mod dialogue;
@@ -29,13 +31,19 @@ mod quests;
 mod save;
 mod services;
 mod settings;
+mod status_effects;
+mod ui_style;
 mod world;
 
 use battle::{
     battle_trigger_system, combat_end_turn_input, end_battle_on_death,
     setup_player_turns, sync_combat_move_points_from_world, test_log_button, transform_npc_to_enemy, BattleState,
 };
-use combat_plugin::{CombatPlugin, DamageQueue, HealthRegenEvent, DeathEvent, AwardXpEvent, AttackIntentEvent};
+use combat_plugin::{
+    AfterRestEvent, AttackIntentEvent, AwardXpEvent, BeforeRestEvent, CombatPlugin, DamageQueue,
+    DeathEvent, RestEvent,
+};
+use contract::ContractPlugin;
 use constants::*;
 use core::{GameState, Game_State, GlobalVariables, Global_Variables, PlayerMapPosition, Position, Timestamp};
 use debug_console::DebugConsolePlugin;
@@ -48,16 +56,19 @@ use economy::EconomyPlugin;
 use governance::GovernancePlugin;
 use light_plugin::LightPlugin;
 use menu::MenuPlugin;
-use movement::{follow_path_system, mouse_click, player_movement, toggle_camera_lock};
+use movement::{
+    ally_follow_player_system, follow_path_system, mouse_click, player_movement,
+    toggle_camera_lock,
+};
 use map::{
     clear_completed_tile_events, confirm_travel, generate_map_tiles, handle_tile_entry,
     handle_local_map_boundary_crossing,
     navigate_map_selection_keyboard, navigate_map_selection_mouse, toggle_map_mode,
     update_active_tile_background, update_path_preview, demo_tile_event_handler,
-    ActiveMapBackgrounds, ActiveTileEvent, AreaChanged, AreaTransitionLog, CurrentArea,
-    LastEnteredTile, MapOverlay, MapPathPreview, MapSelection, MapTravelUi,
-    MapTravelPathCache, TerrainSlowEffectIndex, TerrainSlowEffectList, TileContentCache,
-    TileEventCompleted, TileEventTriggered, handle_area_changed,
+    ActiveMapBackgrounds, ActiveTileEvent, AfterTileEnterEvent, AreaChanged, AreaTransitionLog,
+    BeforeTileEnterEvent, CurrentArea, LastEnteredTile, MapOverlay, MapPathPreview, MapSelection,
+    MapTravelUi, MapTravelPathCache, TerrainSlowEffectIndex, TerrainSlowEffectList,
+    TileContentCache, TileEventCompleted, TileEventTriggered, handle_area_changed,
     rebuild_terrain_slow_effect_index, update_travel_ui,
 };
 use quests::QuestPlugin;
@@ -66,6 +77,8 @@ use save::{
 };
 use services::ServicesPlugin;
 use settings::SettingsPlugin;
+use status_effects::StatusEffectsPlugin;
+use ui_style::UiStylePlugin;
 use ai_decision::AiDecisionPlugin;
 use quadtree::CachedColliders;
 use world::{apply_y_sort, setup, update_cache, update_visual_occluders};
@@ -97,8 +110,11 @@ fn main() {
                     ..default()
                 }),
         )
+        .add_plugins(UiStylePlugin)
         .add_plugins(LightPlugin)
         .add_plugins(CombatPlugin)
+        .add_plugins(StatusEffectsPlugin)
+        .add_plugins(ContractPlugin)
         .add_plugins(GovernancePlugin)
         .add_plugins(EconomyPlugin)
         .add_plugins(ServicesPlugin)
@@ -106,6 +122,7 @@ fn main() {
         .add_plugins(MenuPlugin)
         .add_plugins(SettingsPlugin)
         .add_plugins(AiDecisionPlugin)
+        .add_plugins(activities::ActivitiesPlugin)
         .add_plugins(DebugConsolePlugin)
         .insert_resource(PlayerMapPosition(Position::default()))
         .insert_resource(ClearColor(Color::srgb(0.1, 0.1, 0.1)))
@@ -124,7 +141,9 @@ fn main() {
         .insert_resource(Messages::<DialogueBoxTriggerEvent>::default())
         .insert_resource(Messages::<DialogueTriggerEvent>::default())
         .insert_resource(Messages::<DeathEvent>::default())
-        .insert_resource(Messages::<HealthRegenEvent>::default())
+        .insert_resource(Messages::<RestEvent>::default())
+        .insert_resource(Messages::<BeforeRestEvent>::default())
+        .insert_resource(Messages::<AfterRestEvent>::default())
         .insert_resource(Messages::<AwardXpEvent>::default())
         .insert_resource(Messages::<AttackIntentEvent>::default())
         .init_resource::<movement::TravelTimeAccumulator>()
@@ -146,6 +165,8 @@ fn main() {
         .insert_resource(Messages::<TileEventTriggered>::default())
         .insert_resource(Messages::<TileEventCompleted>::default())
         .insert_resource(Messages::<AreaChanged>::default())
+        .insert_resource(Messages::<BeforeTileEnterEvent>::default())
+        .insert_resource(Messages::<AfterTileEnterEvent>::default())
         .insert_resource(Messages::<SaveRequest>::default())
         .insert_resource(AutoSaveSettings::default())
         .add_systems(Startup, setup)
@@ -169,6 +190,7 @@ fn main() {
         .add_systems(Update, test_log_button)
         .add_systems(Update, end_battle_on_death)
         .add_systems(Update, follow_path_system)
+        .add_systems(Update, ally_follow_player_system.after(player_movement))
         // map travel mode
         .add_systems(Update, toggle_map_mode)
         .add_systems(Update, navigate_map_selection_keyboard)

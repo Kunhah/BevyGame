@@ -1,0 +1,6 @@
+(
+    light_raymarch: true,
+    light_visibility_culling: true,
+    visual_occluder_fade: true,
+    log_occluder_motion: false,
+)

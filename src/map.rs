@@ -10,10 +10,11 @@ use crate::core::{GameState, Game_State, MainCamera, Player, PlayerMapPosition, 
 use crate::constants::{WINDOW_HEIGHT, WINDOW_WIDTH};
 use crate::light_plugin::Occluder;
 use crate::quadtree::Collider;
+use crate::ui_style::{font_size, palette, radius, spacing};
 use bevy_camera::visibility::RenderLayers;
 
 /// World-space size of each map tile background (square).
-pub const TILE_WORLD_SIZE: f32 = 512.0;
+pub const TILE_WORLD_SIZE: f32 = 4096.0;
 pub const LOCAL_MAP_BORDER_THICKNESS: f32 = 24.0;
 pub const LOCAL_MAP_BORDER_INSET: f32 = 8.0;
 
@@ -367,6 +368,28 @@ pub struct AreaChanged {
     pub from: u16,
     pub to: u16,
     pub tile: Position,
+}
+
+/// Fires once when the player crosses into a new tile, *before* area-change
+/// and tile-event resolution. Listeners can react conditionally on the cause
+/// (player walk, teleport ability, scripted world event) and mutate world
+/// state before the entry is finalized.
+#[derive(Debug, Clone, Message)]
+pub struct BeforeTileEnterEvent {
+    pub tile: Position,
+    pub from: Position,
+    pub cause: crate::combat_plugin::ActionCause,
+}
+
+/// Fires once after a new-tile entry has been fully processed (area change
+/// recorded, pending events queued). Symmetric counterpart to
+/// `BeforeTileEnterEvent`; suitable for post-arrival reactions that should
+/// not block the entry itself.
+#[derive(Debug, Clone, Message)]
+pub struct AfterTileEnterEvent {
+    pub tile: Position,
+    pub from: Position,
+    pub cause: crate::combat_plugin::ActionCause,
 }
 
 #[derive(Component)]
@@ -917,12 +940,20 @@ pub fn update_active_tile_background(
                 Sprite {
                     image: texture,
                     custom_size: Some(Vec2::splat(TILE_WORLD_SIZE)),
+                    // Multiplicative tint that darkens the source image to
+                    // ~30% brightness. Keep alpha at 1.0 so the tile is fully
+                    // opaque — only the perceived luminance changes.
+                    color: Color::srgb(0.3, 0.3, 0.3),
                     ..default()
                 },
+                // Push deeper than any y-sorted entity. With Y_SORT_SCALE = 0.001
+                // and tiles now 4096 units across, a player at very high `y`
+                // could reach z near -50 from y-sort alone, so we move the
+                // background out of that range entirely.
                 Transform::from_translation(Vec3::new(
                     tile_center_world(pos).x,
                     tile_center_world(pos).y,
-                    -50.0,
+                    -1000.0,
                 )),
                 Name::new(format!("MapTileBackground({}, {})", pos.x, pos.y)),
             ))
@@ -997,7 +1028,7 @@ fn spawn_tile_content(commands: &mut Commands, coords: Position, tile: &MapTile)
         },
         Transform::from_translation(world_pos + Vec3::new(0.0, 0.0, 10.0)),
         Collider { bounds },
-        Occluder,
+        Occluder::new(Vec2::splat(32.0)),
         RenderLayers::layer(0),
         TileSpawn { coords },
         Name::new(format!("TileContent({}, {})", coords.x, coords.y)),
@@ -1149,6 +1180,8 @@ pub fn handle_tile_entry(
     mut player_q: Query<&mut Transform, With<Player>>,
     mut event_triggered: ResMut<Messages<TileEventTriggered>>,
     mut area_changed: ResMut<Messages<AreaChanged>>,
+    mut before_enter: ResMut<Messages<BeforeTileEnterEvent>>,
+    mut after_enter: ResMut<Messages<AfterTileEnterEvent>>,
 ) {
     if game_state.0 != Game_State::Exploring {
         return;
@@ -1177,7 +1210,16 @@ pub fn handle_tile_entry(
     map_position.0 = tile;
 
     if tile != last_tile.0 {
+        let from = last_tile.0;
         last_tile.0 = tile;
+
+        // Fire Before before any state mutation listeners care about, so they
+        // can read the previous area / queue cleanups based on cause.
+        before_enter.write(BeforeTileEnterEvent {
+            tile,
+            from,
+            cause: crate::combat_plugin::ActionCause::World,
+        });
 
         if let Some(map_tile) = map
             .tiles
@@ -1196,6 +1238,12 @@ pub fn handle_tile_entry(
             active_event.pending = map_tile.event_ids.clone();
             active_event.current = None;
         }
+
+        after_enter.write(AfterTileEnterEvent {
+            tile,
+            from,
+            cause: crate::combat_plugin::ActionCause::World,
+        });
     }
 
     if active_event.current.is_none() {
@@ -1319,16 +1367,21 @@ pub fn update_travel_ui(
                 Text::new(""),
                 TextFont {
                     font,
-                    font_size: 24.0,
+                    font_size: font_size::SUBHEADING,
                     ..default()
                 },
-                TextColor(Color::srgb(0.9, 0.95, 1.0)),
+                TextColor(palette::TEXT_HEADING),
                 Node {
                     position_type: PositionType::Absolute,
-                    left: Val::Px(24.0),
-                    top: Val::Px(24.0),
+                    left: Val::Px(spacing::XL),
+                    top: Val::Px(spacing::XL),
+                    padding: UiRect::all(Val::Px(spacing::MD)),
+                    border: UiRect::all(Val::Px(1.0)),
                     ..default()
                 },
+                BackgroundColor(palette::BG_PANEL),
+                BorderRadius::all(Val::Px(radius::MD)),
+                BorderColor::all(palette::BORDER_SUBTLE),
                 MapTravelUiText,
             ))
             .id();
