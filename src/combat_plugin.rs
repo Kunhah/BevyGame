@@ -13,8 +13,19 @@ use crate::constants::{
     ITEM_ACTION_POINT_COST,
 };
 use crate::core::Timestamp;
+use crate::skill_tree::{LearnedSkills, MagicCostMultipliers, SkillPoints, SkillTreeAccess, SkillTreeKind};
 
 const HIT_CHANCE_LOGISTIC_K: f32 = 0.03;
+
+/// A successful hit roll lands in the critical window when the random roll is
+/// within this fraction of the upper end of the hit chance — i.e. a "barely
+/// landed" hit. With the default 0.10, the top 10% of the rolls that still hit
+/// become critical hits.
+const CRITICAL_HIT_FRACTION: f32 = 0.10;
+
+/// Multiplicative damage bonus applied when a hit rolls into the critical
+/// window. Stacks multiplicatively with weakness multipliers.
+const CRITICAL_HIT_DAMAGE_MULTIPLIER: f32 = 1.5;
 
 /// TO DO: Implement what the AI pointed out bellow
 /// One important note: the current turn flow still allows one committed action per turn. So AP now exists, is configurable per character, and is refilled correctly, but spending multiple actions inside a single turn is not implemented yet. If you want, I can do that next.
@@ -368,7 +379,7 @@ pub struct MagicDistribution {
 /// Distinct from [`Stat`] because growth writes to `base` (a permanent change)
 /// for capacity stats and to the `*_per_rest_hour` rates for regens, while
 /// `Stat` is for combat-time reads of `current`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum GrowthTarget {
     Health,
     HealthRegen,
@@ -583,6 +594,36 @@ pub enum DamageSignal {
 #[derive(Debug, Clone)]
 pub enum DamageTag {
     FromAbility(u16),
+    Critical,
+}
+
+/// Per-target multipliers for incoming damage by type. `1.0` is neutral,
+/// `< 1.0` is resistant, `> 1.0` is weak. Applied in
+/// `process_damage_queue_system` after armor/incoming-mods, multiplicatively
+/// alongside any crit multiplier so the two stack.
+#[derive(Component, Debug, Clone, Copy)]
+pub struct DamageWeaknesses {
+    pub physical: f32,
+    pub fire: f32,
+    pub ice: f32,
+    pub true_dmg: f32,
+}
+
+impl Default for DamageWeaknesses {
+    fn default() -> Self {
+        Self { physical: 1.0, fire: 1.0, ice: 1.0, true_dmg: 1.0 }
+    }
+}
+
+impl DamageWeaknesses {
+    pub fn multiplier_for(&self, dt: DamageType) -> f32 {
+        match dt {
+            DamageType::Physical => self.physical,
+            DamageType::Fire => self.fire,
+            DamageType::Ice => self.ice,
+            DamageType::True => self.true_dmg,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -603,7 +644,10 @@ pub struct QueuedDamage {
     /// Optional override: force accuracy (0.0..1.0)
     pub accuracy_override: Option<f32>,
 
-    pub crit_chance: f32,
+    /// Multiplicative crit bonus already applied in
+    /// `process_damage_queue_system`. `1.0` = normal hit, `> 1.0` = critical.
+    /// Decided at hit-roll time in `queue_damage_from_before_attack`.
+    pub crit_multiplier: f32,
 
     /// Optional tags for special behavior (from ability id, critical, reflect etc.)
     pub tags: Vec<DamageTag>,
@@ -1791,7 +1835,7 @@ fn spirit_medium_absorb_system(
                     scaled_with: vec![],
                     defended_with: vec![],
                     accuracy_override: None,
-                    crit_chance: 0.0,
+                    crit_multiplier: 1.0,
                     tags: vec![],
                     cause: ev.cause.clone(),
                 });
@@ -1810,7 +1854,7 @@ fn spirit_medium_absorb_system(
                 scaled_with: vec![],
                 defended_with: vec![],
                 accuracy_override: None,
-                crit_chance: 0.0,
+                crit_multiplier: 1.0,
                 tags: vec![],
                 cause: ev.cause.clone(),
             });
@@ -1846,7 +1890,7 @@ fn paladin_damage_reduction_system(
                 scaled_with: vec![],
                 defended_with: vec![],
                 accuracy_override: None,
-                crit_chance: 0.0,
+                crit_multiplier: 1.0,
                 tags: vec![],
                 cause: ev.cause.clone(),
             });
@@ -1891,7 +1935,7 @@ fn rogue_dodge_system(
                     scaled_with: vec![],
                     defended_with: vec![],
                     accuracy_override: None,
-                    crit_chance: 0.0,
+                    crit_multiplier: 1.0,
                     tags: vec![],
                     cause: ev.cause.clone(),
                 });
@@ -1908,7 +1952,7 @@ fn rogue_dodge_system(
             scaled_with: vec![],
             defended_with: vec![],
             accuracy_override: None,
-            crit_chance: 0.0,
+            crit_multiplier: 1.0,
             tags: vec![],
             cause: ev.cause.clone(),
         });
@@ -2383,7 +2427,8 @@ fn queue_damage_from_before_attack(
             + luck_shift)
             .clamp(0.0, 1.0);
 
-        if rand::random::<f32>() > chance {
+        let roll = rand::random::<f32>();
+        if roll > chance {
             dq.0.push(QueuedDamage {
                 attacker,
                 target,
@@ -2392,12 +2437,21 @@ fn queue_damage_from_before_attack(
                 scaled_with: vec![],
                 defended_with: vec![],
                 accuracy_override: None,
-                crit_chance: 0.0,
+                crit_multiplier: 1.0,
                 tags: vec![],
                 cause: ev.cause.clone(),
             });
             continue;
         }
+
+        // Critical hit: roll landed in the top fraction of the hit window —
+        // a "barely landed" lucky shot. Crit damage stacks multiplicatively
+        // with weakness in `process_damage_queue_system`.
+        let (crit_multiplier, tags) = if roll >= chance * (1.0 - CRITICAL_HIT_FRACTION) {
+            (CRITICAL_HIT_DAMAGE_MULTIPLIER, vec![DamageTag::Critical])
+        } else {
+            (1.0, Vec::new())
+        };
 
         dq.0.push(QueuedDamage {
             attacker,
@@ -2407,8 +2461,8 @@ fn queue_damage_from_before_attack(
             scaled_with: vec![],
             defended_with,
             accuracy_override: None,
-            crit_chance: 0.0,
-            tags: vec![],
+            crit_multiplier,
+            tags,
             cause: ev.cause.clone(),
         });
     }
@@ -2419,6 +2473,7 @@ fn process_damage_queue_system(
     mut dq: ResMut<DamageQueue>,
     stats_q: Query<&CombatStats>,
     mut status_q: Query<&mut crate::status_effects::StatusEffects>,
+    weaknesses_q: Query<&DamageWeaknesses>,
     mut damage_writer: MessageWriter<DamageEvent>,
 ) {
     for mut entry in dq.0.drain(..) {
@@ -2484,6 +2539,17 @@ fn process_damage_queue_system(
                     entry.amount = ((entry.amount as f32) * exposed_mult).round() as i32;
                 }
             }
+        }
+
+        // CRIT × WEAKNESS — both are multiplicative final modifiers, so they
+        // stack. Defaults are 1.0 (no-op) when neither applies.
+        let weakness_mult = weaknesses_q
+            .get(entry.target)
+            .map(|w| w.multiplier_for(entry.damage_type))
+            .unwrap_or(1.0);
+        let final_mult = entry.crit_multiplier * weakness_mult;
+        if (final_mult - 1.0).abs() > f32::EPSILON {
+            entry.amount = ((entry.amount as f32) * final_mult).round() as i32;
         }
 
         entry.amount = entry.amount.max(0);
@@ -4114,7 +4180,7 @@ fn spawn_examples(mut commands: Commands, mut tm: ResMut<TurnManager>, timestamp
 
     // The four GDD protagonists. All are bound by the Merchant's Contract
     // (`Bound` + `ResurrectionStanding`), and their `Abilities` lists hold the
-    // per-character ability ids from `src/abilities/AbilitiesExample.ron`.
+    // per-character ability ids from `assets/data/abilities/AbilitiesExample.ron`.
 
     // --------------------------------------
     // Rina — Rogue (Kiho)
@@ -4165,6 +4231,16 @@ fn spawn_examples(mut commands: Commands, mut tm: ResMut<TurnManager>, timestamp
         .insert(AccumulatedSpeed(0))
         .insert(RogueBehavior)
         .insert(StatModifiers(Vec::new()))
+        .insert(SkillPoints::default())
+        .insert(LearnedSkills::default())
+        .insert(MagicCostMultipliers::default())
+        // Rina: Kiho only, plus her Rogue class tree.
+        .insert(
+            SkillTreeAccess::new()
+                .with_universal()
+                .with_magic([MagicSchool::Kiho])
+                .with(SkillTreeKind::RinaRogue),
+        )
         .id();
 
     // --------------------------------------
@@ -4213,6 +4289,16 @@ fn spawn_examples(mut commands: Commands, mut tm: ResMut<TurnManager>, timestamp
         .insert(Level(1))
         .insert(AccumulatedSpeed(0))
         .insert(StatModifiers(Vec::new()))
+        .insert(SkillPoints::default())
+        .insert(LearnedSkills::default())
+        .insert(MagicCostMultipliers::default())
+        // Sayaka: Kamishin + Chiseijutsu, plus her Cleric class tree.
+        .insert(
+            SkillTreeAccess::new()
+                .with_universal()
+                .with_magic([MagicSchool::Kamishin, MagicSchool::Chiseijutsu])
+                .with(SkillTreeKind::SayakaCleric),
+        )
         .id();
 
     // --------------------------------------
@@ -4266,6 +4352,16 @@ fn spawn_examples(mut commands: Commands, mut tm: ResMut<TurnManager>, timestamp
         .insert(Level(1))
         .insert(AccumulatedSpeed(0))
         .insert(StatModifiers(Vec::new()))
+        .insert(SkillPoints::default())
+        .insert(LearnedSkills::default())
+        .insert(MagicCostMultipliers::default())
+        // Houjou: Kiho + Yokaijutsu (limited), plus his Samurai class tree.
+        .insert(
+            SkillTreeAccess::new()
+                .with_universal()
+                .with_magic([MagicSchool::Kiho, MagicSchool::Yokaijutsu])
+                .with(SkillTreeKind::HoujouSamurai),
+        )
         .id();
 
     // --------------------------------------
@@ -4322,6 +4418,16 @@ fn spawn_examples(mut commands: Commands, mut tm: ResMut<TurnManager>, timestamp
         .insert(AccumulatedSpeed(0))
         .insert(SpiritMediumBehavior)
         .insert(StatModifiers(Vec::new()))
+        .insert(SkillPoints::default())
+        .insert(LearnedSkills::default())
+        .insert(MagicCostMultipliers::default())
+        // Toshiko: Yokaijutsu only, plus her Vessel class tree.
+        .insert(
+            SkillTreeAccess::new()
+                .with_universal()
+                .with_magic([MagicSchool::Yokaijutsu])
+                .with(SkillTreeKind::ToshikoVessel),
+        )
         .id();
 
     // register participants in turn manager
@@ -4346,8 +4452,8 @@ fn init_messages(mut commands: Commands) {
 }
 
 fn load_ability_tree_system(mut ability_tree: ResMut<Ability_Tree>) {
-    let Ok(contents) = std::fs::read_to_string("src/abilities/AbilitiesExample.ron") else {
-        warn!("Unable to load abilities from src/abilities/AbilitiesExample.ron");
+    let Ok(contents) = std::fs::read_to_string("assets/data/abilities/AbilitiesExample.ron") else {
+        warn!("Unable to load abilities from assets/data/abilities/AbilitiesExample.ron");
         return;
     };
 

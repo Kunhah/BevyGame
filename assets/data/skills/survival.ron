@@ -1,0 +1,79 @@
+// Survival — Travel, foraging, rest quality, terrain handling. Hooks into
+// the existing activities and travel-time systems. IDs: 0xE5XX.
+[
+    (
+        id: 58624, // 0xE500
+        tree: Survival,
+        tier: 1,
+        name: "Pathfinder",
+        description: "Roads pretend to be the only way to walk. They aren't. +1 Movement.",
+        cost: 1,
+        prerequisites: [],
+        effects: [
+            StatBonus(target: Movement, amount: 1),
+        ],
+    ),
+    (
+        id: 58625, // 0xE501
+        tree: Survival,
+        tier: 1,
+        name: "Sturdy Constitution",
+        description: "A body that knows how to recover on hard ground. +5 Health, +1 Health per rest hour.",
+        cost: 1,
+        prerequisites: [],
+        effects: [
+            StatBonus(target: Health, amount: 5),
+            StatBonus(target: HealthRegen, amount: 1),
+        ],
+    ),
+    (
+        id: 58626, // 0xE502
+        tree: Survival,
+        tier: 2,
+        name: "Forager's Hand",
+        description: "Knows which leaf is medicine and which is just a leaf. +4 Mind.",
+        cost: 2,
+        prerequisites: [58624],
+        effects: [
+            StatBonus(target: Mind, amount: 4),
+        ],
+    ),
+    (
+        id: 58627, // 0xE503
+        tree: Survival,
+        tier: 2,
+        name: "Camp Discipline",
+        description: "A clean fire, a watch rotation, a real night's sleep. +1 Morale per rest hour.",
+        cost: 2,
+        prerequisites: [58625],
+        effects: [
+            StatBonus(target: MoraleRegen, amount: 1),
+        ],
+    ),
+    (
+        id: 58628, // 0xE504
+        tree: Survival,
+        tier: 2,
+        name: "Beast Sense",
+        description: "Hears what the forest is doing while everyone else hears the forest. +5 Evasion.",
+        cost: 2,
+        prerequisites: [58624],
+        effects: [
+            StatBonus(target: Evasion, amount: 5),
+        ],
+    ),
+    (
+        id: 58629, // 0xE505
+        tree: Survival,
+        tier: 3,
+        name: "Wanderer's Resolve",
+        description: "Has slept on five mountains and woken up sharper. +10 Health, +1 Movement, +5 Morale.",
+        cost: 3,
+        prerequisites: [58626, 58627],
+        effects: [
+            StatBonus(target: Health, amount: 10),
+            StatBonus(target: Movement, amount: 1),
+            StatBonus(target: Morale, amount: 5),
+        ],
+    ),
+]

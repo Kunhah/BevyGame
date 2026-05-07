@@ -1,0 +1,81 @@
+// Bound — The Merchant's Contract. Atonement, resurrection-standing, and the
+// strange strength of being tied to other people who will not let you stay
+// dead. Themed around Morale and the bound-by-oath relationship. IDs: 0xE6XX.
+[
+    (
+        id: 58880, // 0xE600
+        tree: Bound,
+        tier: 1,
+        name: "Resilient Spirit",
+        description: "Knowing the contract holds you up even when nothing else will. +5 Morale.",
+        cost: 1,
+        prerequisites: [],
+        effects: [
+            StatBonus(target: Morale, amount: 5),
+        ],
+    ),
+    (
+        id: 58881, // 0xE601
+        tree: Bound,
+        tier: 1,
+        name: "Steady Vow",
+        description: "An oath repeated every morning becomes a kind of armor. +5 Health.",
+        cost: 1,
+        prerequisites: [],
+        effects: [
+            StatBonus(target: Health, amount: 5),
+        ],
+    ),
+    (
+        id: 58882, // 0xE602
+        tree: Bound,
+        tier: 2,
+        name: "Shared Strength",
+        description: "What hits one of the Bound steadies the others. +5 Lethality, +5 Morale.",
+        cost: 2,
+        prerequisites: [58880],
+        effects: [
+            StatBonus(target: Lethality, amount: 5),
+            StatBonus(target: Morale, amount: 5),
+        ],
+    ),
+    (
+        id: 58883, // 0xE603
+        tree: Bound,
+        tier: 2,
+        name: "Atonement Patient",
+        description: "Has read every clause of the contract twice and forgiven himself once. +5 Mind.",
+        cost: 2,
+        prerequisites: [58881],
+        effects: [
+            StatBonus(target: Mind, amount: 5),
+        ],
+    ),
+    (
+        id: 58884, // 0xE604
+        tree: Bound,
+        tier: 2,
+        name: "Tea-Time Trust",
+        description: "Long tea with the people who share your tether. +1 Health and +1 Morale per rest hour.",
+        cost: 2,
+        prerequisites: [58880, 58881],
+        effects: [
+            StatBonus(target: HealthRegen, amount: 1),
+            StatBonus(target: MoraleRegen, amount: 1),
+        ],
+    ),
+    (
+        id: 58885, // 0xE605
+        tree: Bound,
+        tier: 3,
+        name: "Merchant's Mark",
+        description: "Walks with the contract glowing faintly under the skin. +10 Morale, +5 Mind, +5 Health.",
+        cost: 3,
+        prerequisites: [58882, 58883],
+        effects: [
+            StatBonus(target: Morale, amount: 10),
+            StatBonus(target: Mind, amount: 5),
+            StatBonus(target: Health, amount: 5),
+        ],
+    ),
+]

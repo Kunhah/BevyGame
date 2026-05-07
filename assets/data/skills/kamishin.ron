@@ -1,0 +1,103 @@
+// Kamishin — Divine invocation, faith, prayer, liturgy, sacred duty.
+// IDs: 0xE3XX. Capstone unlocks ability 0x1301 ("Heaven's Mandate").
+[
+    (
+        id: 58112, // 0xE300
+        tree: Kamishin,
+        tier: 1,
+        name: "Pilgrim's Resolve",
+        description: "Walk a road already prayed over. Raises max Kamishin by 5.",
+        cost: 1,
+        prerequisites: [],
+        effects: [
+            StatBonus(target: Kamishin, amount: 5),
+        ],
+    ),
+    (
+        id: 58113, // 0xE301
+        tree: Kamishin,
+        tier: 1,
+        name: "Litany",
+        description: "Daily recitation as habit. +0.25 Kamishin per rest hour.",
+        cost: 1,
+        prerequisites: [],
+        effects: [
+            MagicRegenBonus(school: Kamishin, amount: 0.25),
+        ],
+    ),
+    (
+        id: 58114, // 0xE302
+        tree: Kamishin,
+        tier: 2,
+        name: "Sacred Vow",
+        description: "Swear a thing in front of the kami. +5 Mind.",
+        cost: 2,
+        prerequisites: [58112],
+        effects: [
+            StatBonus(target: Mind, amount: 5),
+        ],
+    ),
+    (
+        id: 58115, // 0xE303
+        tree: Kamishin,
+        tier: 2,
+        name: "Blessed Voice",
+        description: "Words that carry a temple bell behind them. +5 Morale.",
+        cost: 2,
+        prerequisites: [58113],
+        effects: [
+            StatBonus(target: Morale, amount: 5),
+        ],
+    ),
+    (
+        id: 58116, // 0xE304
+        tree: Kamishin,
+        tier: 2,
+        name: "Liturgist",
+        description: "Knows the proper order of every rite. Reduces Kamishin ability cost by 10%.",
+        cost: 2,
+        prerequisites: [58112],
+        effects: [
+            MagicCostReduction(school: Kamishin, percent: 0.10),
+        ],
+    ),
+    (
+        id: 58117, // 0xE305
+        tree: Kamishin,
+        tier: 3,
+        name: "Divine Conduit",
+        description: "Become an instrument the kami can speak through. +5 max Kamishin and unlock the Heaven's Mandate ability.",
+        cost: 3,
+        prerequisites: [58114, 58115],
+        effects: [
+            StatBonus(target: Kamishin, amount: 5),
+            UnlockAbility(ability_id: 4865), // 0x1301
+        ],
+    ),
+    (
+        id: 58118, // 0xE306
+        tree: Kamishin,
+        tier: 2,
+        name: "Mercy Reading",
+        description: "Knows which kanji to draw on the air for a wound. Unlocks Kanji of Mercy. +3 Mind.",
+        cost: 2,
+        prerequisites: [58112],
+        effects: [
+            StatBonus(target: Mind, amount: 3),
+            UnlockAbility(ability_id: 5888), // 0x1700
+        ],
+    ),
+    (
+        id: 58119, // 0xE307
+        tree: Kamishin,
+        tier: 3,
+        name: "Severing Light",
+        description: "Cut the wound free of its persistence. Unlocks Severance Prayer. +5 Mind.",
+        cost: 3,
+        prerequisites: [58118],
+        effects: [
+            StatBonus(target: Mind, amount: 5),
+            UnlockAbility(ability_id: 5890), // 0x1702
+        ],
+    ),
+]

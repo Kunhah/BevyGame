@@ -120,7 +120,7 @@
 
         // ----------------------------------------------------------------
         // Yokai profiles. Three flavors that match the yokai authored in
-        // `src/abilities/AbilitiesExample.ron` (ids 0x0F00..) and spawned by
+        // `assets/data/abilities/AbilitiesExample.ron` (ids 0x0F00..) and spawned by
         // `crate::battle::spawn_yokai_combatant`.
         // ----------------------------------------------------------------
 

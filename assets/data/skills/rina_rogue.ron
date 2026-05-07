@@ -1,0 +1,81 @@
+// Rina — Rogue. Stealth, surprise, mobility, knife-and-flintlock tricks.
+// Pairs with the Kiho-flavored ability set at 0x0A** (Quick slash, Throw
+// knife, Shoot, Reload, Dodge, Get knife back, Invisibility, Surprise
+// attack). IDs: 0xE7XX.
+[
+    (
+        id: 59136, // 0xE700
+        tree: RinaRogue,
+        tier: 1,
+        name: "Quick Hands",
+        description: "Reach the knife before the room finishes blinking. +5 Speed.",
+        cost: 1,
+        prerequisites: [],
+        effects: [
+            StatBonus(target: Speed, amount: 5),
+        ],
+    ),
+    (
+        id: 59137, // 0xE701
+        tree: RinaRogue,
+        tier: 1,
+        name: "Knife Sense",
+        description: "A blade in either hand and a third one in mind. +6 Lethality.",
+        cost: 1,
+        prerequisites: [],
+        effects: [
+            StatBonus(target: Lethality, amount: 6),
+        ],
+    ),
+    (
+        id: 59138, // 0xE702
+        tree: RinaRogue,
+        tier: 2,
+        name: "Vanishing Step",
+        description: "Out of the candlelight, between two heartbeats. +8 Evasion.",
+        cost: 2,
+        prerequisites: [59136],
+        effects: [
+            StatBonus(target: Evasion, amount: 8),
+        ],
+    ),
+    (
+        id: 59139, // 0xE703
+        tree: RinaRogue,
+        tier: 2,
+        name: "Critical Eye",
+        description: "Reads where the armor is loose, where the eye is tired. +8 Hit.",
+        cost: 2,
+        prerequisites: [59137],
+        effects: [
+            StatBonus(target: Hit, amount: 8),
+        ],
+    ),
+    (
+        id: 59140, // 0xE704
+        tree: RinaRogue,
+        tier: 2,
+        name: "Throwing Form",
+        description: "The knife leaves the hand at the right angle by reflex now. +5 Lethality, +3 Hit.",
+        cost: 2,
+        prerequisites: [59137],
+        effects: [
+            StatBonus(target: Lethality, amount: 5),
+            StatBonus(target: Hit, amount: 3),
+        ],
+    ),
+    (
+        id: 59141, // 0xE705
+        tree: RinaRogue,
+        tier: 3,
+        name: "Shadow Strike",
+        description: "Steps from one shadow to another and the body falls without anyone hearing. +10 Lethality, +5 Speed, +5 Evasion.",
+        cost: 3,
+        prerequisites: [59138, 59139],
+        effects: [
+            StatBonus(target: Lethality, amount: 10),
+            StatBonus(target: Speed, amount: 5),
+            StatBonus(target: Evasion, amount: 5),
+        ],
+    ),
+]

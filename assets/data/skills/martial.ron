@@ -1,0 +1,110 @@
+// Martial — Universal weapon and combat fundamentals.
+// Open to any character. Branches around the four physical capabilities:
+// Lethality (offense), Hit (accuracy), Armor (defense), Speed/Evasion
+// (mobility). IDs: 0xE4XX.
+[
+    (
+        id: 58368, // 0xE400
+        tree: Martial,
+        tier: 1,
+        name: "Weapon Form",
+        description: "The first month of any sword school: how to hold the thing without dropping it. +5 Hit.",
+        cost: 1,
+        prerequisites: [],
+        effects: [
+            StatBonus(target: Hit, amount: 5),
+        ],
+    ),
+    (
+        id: 58369, // 0xE401
+        tree: Martial,
+        tier: 1,
+        name: "Stance Drilling",
+        description: "Repeating the same stance until it lives in the hips, not the head. +3 Lethality, +3 Armor.",
+        cost: 1,
+        prerequisites: [],
+        effects: [
+            StatBonus(target: Lethality, amount: 3),
+            StatBonus(target: Armor, amount: 3),
+        ],
+    ),
+    (
+        id: 58370, // 0xE402
+        tree: Martial,
+        tier: 2,
+        name: "Footwork",
+        description: "Move first, then strike — never the other way around. +5 Speed, +5 Evasion.",
+        cost: 2,
+        prerequisites: [58368],
+        effects: [
+            StatBonus(target: Speed, amount: 5),
+            StatBonus(target: Evasion, amount: 5),
+        ],
+    ),
+    (
+        id: 58371, // 0xE403
+        tree: Martial,
+        tier: 2,
+        name: "Heavy Strikes",
+        description: "Drive the weapon's full weight through the cut. +6 Lethality.",
+        cost: 2,
+        prerequisites: [58369],
+        effects: [
+            StatBonus(target: Lethality, amount: 6),
+        ],
+    ),
+    (
+        id: 58372, // 0xE404
+        tree: Martial,
+        tier: 2,
+        name: "Read the Cut",
+        description: "Watch the shoulder, not the blade. +5 Hit, +3 Evasion.",
+        cost: 2,
+        prerequisites: [58368, 58369],
+        effects: [
+            StatBonus(target: Hit, amount: 5),
+            StatBonus(target: Evasion, amount: 3),
+        ],
+    ),
+    (
+        id: 58373, // 0xE405
+        tree: Martial,
+        tier: 3,
+        name: "Battle Tempered",
+        description: "Veteran's economy of motion. +10 Health, +5 Lethality.",
+        cost: 3,
+        prerequisites: [58370, 58371],
+        effects: [
+            StatBonus(target: Health, amount: 10),
+            StatBonus(target: Lethality, amount: 5),
+        ],
+    ),
+    (
+        id: 58374, // 0xE406
+        tree: Martial,
+        tier: 2,
+        name: "Sweeping Form",
+        description: "Carries the cut through the second target. Unlocks Sweeping Strike + Brace. +3 Lethality.",
+        cost: 2,
+        prerequisites: [58371],
+        effects: [
+            StatBonus(target: Lethality, amount: 3),
+            UnlockAbility(ability_id: 6144), // 0x1800 Sweeping Strike
+            UnlockAbility(ability_id: 6145), // 0x1801 Brace
+        ],
+    ),
+    (
+        id: 58375, // 0xE407
+        tree: Martial,
+        tier: 2,
+        name: "Marksman",
+        description: "Patient eye, steady hand. Unlocks Aimed Shot + Disengage. +3 Hit.",
+        cost: 2,
+        prerequisites: [58372],
+        effects: [
+            StatBonus(target: Hit, amount: 3),
+            UnlockAbility(ability_id: 6146), // 0x1802 Aimed Shot
+            UnlockAbility(ability_id: 6147), // 0x1803 Disengage
+        ],
+    ),
+]

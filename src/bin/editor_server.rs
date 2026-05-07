@@ -22,8 +22,8 @@ use serde::{Deserialize, Serialize};
 use tiny_http::{Header, Method, Response, Server, StatusCode};
 
 const DEFAULT_BIND: &str = "127.0.0.1:8000";
-const ABILITIES_PATH: &str = "src/abilities/AbilitiesExample.ron";
-const DIALOGUES_PATH: &str = "dialogues/example.ron";
+const ABILITIES_PATH: &str = "assets/data/abilities/AbilitiesExample.ron";
+const DIALOGUES_PATH: &str = "assets/data/dialogues/example.ron";
 const STATIC_ROOT: &str = "tools/editors";
 
 // ---------------- Ability data model (mirrors combat_ability::*) ----------------
@@ -251,4 +251,3 @@ fn guess_mime(path: &Path) -> &'static str {
         _ => "application/octet-stream",
     }
 }
-

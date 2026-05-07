@@ -296,7 +296,7 @@ pub fn handle_ability(
                         scaled_with: vec![(*scaled_with, 1.0)],
                         defended_with: vec![(*defended_with, 1.0)],
                         accuracy_override: None,
-                        crit_chance: 0.0,
+                        crit_multiplier: 1.0,
                         tags: vec![DamageTag::FromAbility(ability.id)],
                         cause: cause.clone(),
                     });

@@ -1,0 +1,89 @@
+// Toshiko — Vessel. The Kuro-binding mechanic: extra HP that absorbs damage,
+// shared pain, spirit sight. Pairs with the 0x0D** ability set (Shadow touch,
+// Whisper, See unseen, Kuro's grasp, Night veil, Shared pain). IDs: 0xEAXX.
+//
+// Trigger ids in this file (see `SkillEffect::Trigger`):
+//   0x0001 — TwoSoulsBond: Toshiko's pact with Kuro deepens. A listener
+//     elsewhere may grant Bound resurrection bonus, set a story flag, etc.
+[
+    (
+        id: 59904, // 0xEA00
+        tree: ToshikoVessel,
+        tier: 1,
+        name: "Vessel's Calm",
+        description: "Letting the passenger ride without panicking the host. +5 Mind.",
+        cost: 1,
+        prerequisites: [],
+        effects: [
+            StatBonus(target: Mind, amount: 5),
+        ],
+    ),
+    (
+        id: 59905, // 0xEA01
+        tree: ToshikoVessel,
+        tier: 1,
+        name: "Kuro's Hand",
+        description: "Lets the bound spirit reach a little further out. +5 Yokaijutsu max.",
+        cost: 1,
+        prerequisites: [],
+        effects: [
+            StatBonus(target: Yokaijutsu, amount: 5),
+        ],
+    ),
+    (
+        id: 59906, // 0xEA02
+        tree: ToshikoVessel,
+        tier: 2,
+        name: "Shared Pain",
+        description: "Hurt is split, never doubled. +8 Health, +3 Mind.",
+        cost: 2,
+        prerequisites: [59905],
+        effects: [
+            StatBonus(target: Health, amount: 8),
+            StatBonus(target: Mind, amount: 3),
+        ],
+    ),
+    (
+        id: 59907, // 0xEA03
+        tree: ToshikoVessel,
+        tier: 2,
+        name: "Spirit Sight",
+        description: "Sees the second outline behind every person and uses the gap. +5 Evasion, +3 Hit.",
+        cost: 2,
+        prerequisites: [59904],
+        effects: [
+            StatBonus(target: Evasion, amount: 5),
+            StatBonus(target: Hit, amount: 3),
+        ],
+    ),
+    (
+        id: 59908, // 0xEA04
+        tree: ToshikoVessel,
+        tier: 2,
+        name: "Whispered Pact",
+        description: "Negotiates her contract with Kuro inch by inch, in private. +1 Yokaijutsu per rest hour, +3 Yokaijutsu max.",
+        cost: 2,
+        prerequisites: [59904, 59905],
+        effects: [
+            MagicRegenBonus(school: Yokaijutsu, amount: 1.0),
+            StatBonus(target: Yokaijutsu, amount: 3),
+        ],
+    ),
+    (
+        id: 59909, // 0xEA05
+        tree: ToshikoVessel,
+        tier: 3,
+        name: "Two-Souls Resolve",
+        description: "When she stands she stands for two; when she fights, both fight. +10 Yokaijutsu max, +5 Mind, +5 Health.",
+        cost: 3,
+        prerequisites: [59906, 59908],
+        effects: [
+            StatBonus(target: Yokaijutsu, amount: 10),
+            StatBonus(target: Mind, amount: 5),
+            StatBonus(target: Health, amount: 5),
+            // One-shot custom hook: fires SkillTriggerEvent so any system
+            // (story flags, contract module, dialogue gate) can react.
+            Trigger(trigger_id: 1),
+        ],
+    ),
+]

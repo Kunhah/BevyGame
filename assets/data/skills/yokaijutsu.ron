@@ -1,0 +1,104 @@
+// Yokaijutsu — Occult bargains, fear, shadow, taboo knowledge, spirit entanglement.
+// IDs: 0xE2XX. Capstone unlocks ability 0x1201 ("Shadow Pact").
+[
+    (
+        id: 57856, // 0xE200
+        tree: Yokaijutsu,
+        tier: 1,
+        name: "Whispered Bargain",
+        description: "Make small offerings to small things. Raises max Yokaijutsu by 5.",
+        cost: 1,
+        prerequisites: [],
+        effects: [
+            StatBonus(target: Yokaijutsu, amount: 5),
+        ],
+    ),
+    (
+        id: 57857, // 0xE201
+        tree: Yokaijutsu,
+        tier: 1,
+        name: "Shade Familiar",
+        description: "A passenger that pays its rent. +6 Lethality.",
+        cost: 1,
+        prerequisites: [],
+        effects: [
+            StatBonus(target: Lethality, amount: 6),
+        ],
+    ),
+    (
+        id: 57858, // 0xE202
+        tree: Yokaijutsu,
+        tier: 2,
+        name: "Blood Tribute",
+        description: "Pay in self what cannot be paid in coin. +5 Lethality, +0.2 Yokaijutsu per rest hour.",
+        cost: 2,
+        prerequisites: [57857],
+        effects: [
+            StatBonus(target: Lethality, amount: 5),
+            MagicRegenBonus(school: Yokaijutsu, amount: 0.2),
+        ],
+    ),
+    (
+        id: 57859, // 0xE203
+        tree: Yokaijutsu,
+        tier: 2,
+        name: "Veil of Dread",
+        description: "Wear other people's fear like a cloak. +5 Evasion.",
+        cost: 2,
+        prerequisites: [57856],
+        effects: [
+            StatBonus(target: Evasion, amount: 5),
+        ],
+    ),
+    (
+        id: 57860, // 0xE204
+        tree: Yokaijutsu,
+        tier: 2,
+        name: "Liminal Step",
+        description: "Walk where the world has not yet decided. Reduces Yokaijutsu ability cost by 10%.",
+        cost: 2,
+        prerequisites: [57856],
+        effects: [
+            MagicCostReduction(school: Yokaijutsu, percent: 0.10),
+        ],
+    ),
+    (
+        id: 57861, // 0xE205
+        tree: Yokaijutsu,
+        tier: 3,
+        name: "Bound Echo",
+        description: "Sign a pact with a louder shadow. +5 max Yokaijutsu and unlock the Shadow Pact ability.",
+        cost: 3,
+        prerequisites: [57858, 57859],
+        effects: [
+            StatBonus(target: Yokaijutsu, amount: 5),
+            UnlockAbility(ability_id: 4609), // 0x1201
+        ],
+    ),
+    (
+        id: 57862, // 0xE206
+        tree: Yokaijutsu,
+        tier: 2,
+        name: "Shadow Tongue",
+        description: "Speak the language shadows answer to. Unlocks Spectral Lash. +3 Lethality.",
+        cost: 2,
+        prerequisites: [57857],
+        effects: [
+            StatBonus(target: Lethality, amount: 3),
+            UnlockAbility(ability_id: 5632), // 0x1600
+        ],
+    ),
+    (
+        id: 57863, // 0xE207
+        tree: Yokaijutsu,
+        tier: 3,
+        name: "Sower of Doubt",
+        description: "Plant the wrong thought and watch it root. Unlocks Whisper of Doubt. +3 Mind.",
+        cost: 3,
+        prerequisites: [57862],
+        effects: [
+            StatBonus(target: Mind, amount: 3),
+            UnlockAbility(ability_id: 5634), // 0x1602
+        ],
+    ),
+]

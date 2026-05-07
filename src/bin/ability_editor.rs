@@ -21,7 +21,7 @@ use std::collections::HashSet;
 use std::fs;
 use std::path::PathBuf;
 
-const DEFAULT_ABILITY_PATH: &str = "src/abilities/AbilitiesExample.ron";
+const DEFAULT_ABILITY_PATH: &str = "assets/data/abilities/AbilitiesExample.ron";
 
 // ---------------- Data models ----------------
 #[derive(Clone, Debug, Serialize, Deserialize)]

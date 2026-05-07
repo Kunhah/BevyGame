@@ -1,7 +1,7 @@
 // bevy_egui_dialogue_editor.rs
 // Dialogue editor with graph visualization using Bevy + bevy_egui + ron + petgraph
 // Features:
-// - Load / Save dialogues.ron from ./dialogues/dialogues.ron
+// - Load / Save dialogue RON from ./assets/data/dialogues/example.ron
 // - List dialogues, select/edit/delete
 // - Edit id, speaker, text, next, choices
 // - Validation: missing refs, cycles, unreachable
@@ -32,8 +32,8 @@ use petgraph::algo::{is_cyclic_directed, kosaraju_scc};
 use petgraph::dot::{Config, Dot};
 use petgraph::graph::{DiGraph, NodeIndex};
 
-const DEFAULT_DIALOGUE_DIR: &str = "dialogues";
-const DEFAULT_DIALOGUE_FILE: &str = "dialogues.ron";
+const DEFAULT_DIALOGUE_DIR: &str = "assets/data/dialogues";
+const DEFAULT_DIALOGUE_FILE: &str = "example.ron";
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct Dialogue {

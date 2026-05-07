@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use bevy::app::AppExit;
 use bevy::input::keyboard::KeyCode;
 use bevy::input::mouse::MouseButton;
@@ -7,8 +9,8 @@ use crate::core::{GameState, Game_State};
 use crate::save::{AutoSaveSettings, SaveAction, SaveRequest, SaveSlot};
 use crate::settings::{GraphicsSettings, GraphicsToggle, GRAPHICS_TOGGLES};
 use crate::ui_style::{
-    button_node, button_text, button_text_lg, button_visual, label_text, overlay_root, panel,
-    palette, spacing, title_text,
+    button_node, button_text, button_text_lg, button_visual, label_text, overlay_root, palette,
+    panel, spacing, title_text,
 };
 
 pub struct MenuPlugin;
@@ -16,12 +18,17 @@ pub struct MenuPlugin;
 impl Plugin for MenuPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<ResumeState>()
+            .init_resource::<MainMenuPage>()
+            .init_resource::<PauseMenuPage>()
+            .add_systems(Update, sync_main_menu_page)
+            .add_systems(Update, sync_pause_menu_page)
             .add_systems(Update, spawn_main_menu_ui)
             .add_systems(Update, spawn_pause_menu_ui)
             .add_systems(Update, toggle_pause_state)
             .add_systems(Update, handle_menu_actions)
             .add_systems(Update, update_autosave_status_text)
-            .add_systems(Update, update_graphics_toggle_text);
+            .add_systems(Update, update_graphics_toggle_text)
+            .add_systems(Update, update_load_slot_status);
     }
 }
 
@@ -34,21 +41,48 @@ impl Default for ResumeState {
     }
 }
 
-#[derive(Component)]
-struct MainMenuRoot;
+#[derive(Resource, Clone, Copy, PartialEq, Eq)]
+pub enum MainMenuPage {
+    Title,
+    Load,
+    Settings,
+}
+
+impl Default for MainMenuPage {
+    fn default() -> Self {
+        Self::Title
+    }
+}
+
+#[derive(Resource, Clone, Copy, PartialEq, Eq)]
+pub enum PauseMenuPage {
+    Main,
+    Settings,
+}
+
+impl Default for PauseMenuPage {
+    fn default() -> Self {
+        Self::Main
+    }
+}
 
 #[derive(Component)]
-struct PauseMenuRoot;
+struct MainMenuRoot(MainMenuPage);
+
+#[derive(Component)]
+struct PauseMenuRoot(PauseMenuPage);
 
 #[derive(Component, Clone, Copy)]
 enum MenuButtonAction {
     StartGame,
     QuitGame,
+    OpenLoadPage,
+    OpenSettingsPage,
+    BackToTitle,
     ResumeGame,
     ReturnToTitle,
-    SaveSlot1,
-    SaveSlot2,
-    SaveSlot3,
+    PauseOpenSettings,
+    PauseBack,
     LoadSlot1,
     LoadSlot2,
     LoadSlot3,
@@ -62,18 +96,243 @@ struct AutosaveStatusText;
 #[derive(Component)]
 struct GraphicsToggleText(GraphicsToggle);
 
-const HERO_BTN: f32 = 52.0;
+#[derive(Component)]
+struct LoadSlotStatusText(SaveSlot);
+
+const HERO_BTN: f32 = 56.0;
 const ROW_BTN: f32 = 44.0;
 const TOGGLE_BTN: f32 = 40.0;
+const TITLE_PANEL_WIDTH: f32 = 460.0;
+const SUB_PANEL_WIDTH: f32 = 520.0;
+const PAUSE_PANEL_WIDTH: f32 = 420.0;
 
-fn spawn_section_label(parent: &mut ChildSpawnerCommands, text: &str) {
-    parent.spawn((
-        label_text(text),
-        Node {
-            margin: UiRect::top(Val::Px(spacing::SM)),
-            ..default()
-        },
-    ));
+fn sync_main_menu_page(
+    game_state: Res<GameState>,
+    mut page: ResMut<MainMenuPage>,
+) {
+    if game_state.is_changed() && game_state.0 == Game_State::MainMenu {
+        *page = MainMenuPage::Title;
+    }
+}
+
+fn sync_pause_menu_page(
+    game_state: Res<GameState>,
+    mut page: ResMut<PauseMenuPage>,
+) {
+    if game_state.is_changed() && game_state.0 == Game_State::Paused {
+        *page = PauseMenuPage::Main;
+    }
+}
+
+fn spawn_main_menu_ui(
+    mut commands: Commands,
+    game_state: Res<GameState>,
+    page: Res<MainMenuPage>,
+    existing: Query<(Entity, &MainMenuRoot)>,
+    children: Query<&Children>,
+) {
+    if game_state.0 != Game_State::MainMenu {
+        for (entity, _) in existing.iter() {
+            despawn_recursive(&mut commands, entity, &children);
+        }
+        return;
+    }
+
+    if let Ok((entity, root)) = existing.single() {
+        if root.0 == *page {
+            return;
+        }
+        despawn_recursive(&mut commands, entity, &children);
+    }
+
+    let root = commands.spawn((overlay_root(), MainMenuRoot(*page))).id();
+
+    match *page {
+        MainMenuPage::Title => spawn_title_page(&mut commands, root),
+        MainMenuPage::Load => spawn_load_page(&mut commands, root),
+        MainMenuPage::Settings => {
+            spawn_settings_page(&mut commands, root, /* is_pause */ false)
+        }
+    }
+}
+
+fn spawn_title_page(commands: &mut Commands, root: Entity) {
+    commands.entity(root).with_children(|parent| {
+        parent.spawn(panel(TITLE_PANEL_WIDTH)).with_children(|col| {
+            col.spawn(title_text("Seirei Kuni"));
+            col.spawn((
+                Text::new("A journey through spirits and steel."),
+                TextFont {
+                    font_size: 18.0,
+                    ..default()
+                },
+                TextColor(palette::TEXT_SECONDARY),
+                Node {
+                    margin: UiRect::bottom(Val::Px(spacing::LG)),
+                    ..default()
+                },
+            ));
+
+            spawn_hero_button(col, "New Game", MenuButtonAction::StartGame);
+            spawn_hero_button(col, "Load Game", MenuButtonAction::OpenLoadPage);
+            spawn_hero_button(col, "Settings", MenuButtonAction::OpenSettingsPage);
+            spawn_hero_button(col, "Quit", MenuButtonAction::QuitGame);
+        });
+    });
+}
+
+fn spawn_load_page(commands: &mut Commands, root: Entity) {
+    commands.entity(root).with_children(|parent| {
+        parent.spawn(panel(SUB_PANEL_WIDTH)).with_children(|col| {
+            col.spawn((
+                Text::new("Load Game"),
+                TextFont {
+                    font_size: 36.0,
+                    ..default()
+                },
+                TextColor(palette::TEXT_HEADING),
+                Node {
+                    margin: UiRect::bottom(Val::Px(spacing::SM)),
+                    ..default()
+                },
+            ));
+            col.spawn(label_text(
+                "Pick a save slot to resume your journey.",
+            ));
+
+            for (slot, action) in [
+                (SaveSlot::Slot1, MenuButtonAction::LoadSlot1),
+                (SaveSlot::Slot2, MenuButtonAction::LoadSlot2),
+                (SaveSlot::Slot3, MenuButtonAction::LoadSlot3),
+            ] {
+                spawn_load_slot_button(col, slot, action);
+            }
+
+            col.spawn(Node {
+                height: Val::Px(spacing::SM),
+                ..default()
+            });
+
+            spawn_hero_button(col, "Back", MenuButtonAction::BackToTitle);
+        });
+    });
+}
+
+fn spawn_settings_page(commands: &mut Commands, root: Entity, is_pause: bool) {
+    let back_action = if is_pause {
+        MenuButtonAction::PauseBack
+    } else {
+        MenuButtonAction::BackToTitle
+    };
+
+    commands.entity(root).with_children(|parent| {
+        parent.spawn(panel(SUB_PANEL_WIDTH)).with_children(|col| {
+            col.spawn((
+                Text::new("Settings"),
+                TextFont {
+                    font_size: 36.0,
+                    ..default()
+                },
+                TextColor(palette::TEXT_HEADING),
+                Node {
+                    margin: UiRect::bottom(Val::Px(spacing::SM)),
+                    ..default()
+                },
+            ));
+
+            col.spawn(label_text("Saving"));
+            col.spawn((
+                Button::default(),
+                button_node(ROW_BTN),
+                button_visual(),
+                MenuButtonAction::ToggleAutosave,
+            ))
+            .with_children(|btn| {
+                btn.spawn((button_text("Autosave: ..."), AutosaveStatusText));
+            });
+
+            col.spawn((
+                label_text("Performance"),
+                Node {
+                    margin: UiRect::top(Val::Px(spacing::SM)),
+                    ..default()
+                },
+            ));
+
+            for toggle in GRAPHICS_TOGGLES {
+                col.spawn((
+                    Button::default(),
+                    button_node(TOGGLE_BTN),
+                    button_visual(),
+                    MenuButtonAction::ToggleGraphics(toggle),
+                ))
+                .with_children(|btn| {
+                    btn.spawn((button_text("..."), GraphicsToggleText(toggle)));
+                });
+            }
+
+            col.spawn(Node {
+                height: Val::Px(spacing::SM),
+                ..default()
+            });
+
+            spawn_hero_button(col, "Back", back_action);
+        });
+    });
+}
+
+fn spawn_pause_menu_ui(
+    mut commands: Commands,
+    game_state: Res<GameState>,
+    page: Res<PauseMenuPage>,
+    main_menu_root: Query<Entity, With<MainMenuRoot>>,
+    existing: Query<(Entity, &PauseMenuRoot)>,
+    children: Query<&Children>,
+) {
+    if game_state.0 != Game_State::Paused || !main_menu_root.is_empty() {
+        for (entity, _) in existing.iter() {
+            despawn_recursive(&mut commands, entity, &children);
+        }
+        return;
+    }
+
+    if let Ok((entity, root)) = existing.single() {
+        if root.0 == *page {
+            return;
+        }
+        despawn_recursive(&mut commands, entity, &children);
+    }
+
+    let root = commands.spawn((overlay_root(), PauseMenuRoot(*page))).id();
+
+    match *page {
+        PauseMenuPage::Main => spawn_pause_main_page(&mut commands, root),
+        PauseMenuPage::Settings => spawn_settings_page(&mut commands, root, /* is_pause */ true),
+    }
+}
+
+fn spawn_pause_main_page(commands: &mut Commands, root: Entity) {
+    commands.entity(root).with_children(|parent| {
+        parent.spawn(panel(PAUSE_PANEL_WIDTH)).with_children(|col| {
+            col.spawn((
+                Text::new("Paused"),
+                TextFont {
+                    font_size: 36.0,
+                    ..default()
+                },
+                TextColor(palette::TEXT_HEADING),
+                Node {
+                    margin: UiRect::bottom(Val::Px(spacing::SM)),
+                    ..default()
+                },
+            ));
+
+            spawn_hero_button(col, "Resume", MenuButtonAction::ResumeGame);
+            spawn_hero_button(col, "Settings", MenuButtonAction::PauseOpenSettings);
+            spawn_hero_button(col, "Return to Title", MenuButtonAction::ReturnToTitle);
+            spawn_hero_button(col, "Quit", MenuButtonAction::QuitGame);
+        });
+    });
 }
 
 fn spawn_hero_button(
@@ -93,149 +352,109 @@ fn spawn_hero_button(
         });
 }
 
-fn spawn_row_button(
+fn spawn_load_slot_button(
     parent: &mut ChildSpawnerCommands,
-    label: &str,
+    slot: SaveSlot,
     action: MenuButtonAction,
 ) {
     parent
         .spawn((
             Button::default(),
-            button_node(ROW_BTN),
+            Node {
+                height: Val::Px(56.0),
+                display: Display::Flex,
+                flex_direction: FlexDirection::Row,
+                justify_content: JustifyContent::SpaceBetween,
+                align_items: AlignItems::Center,
+                padding: UiRect::horizontal(Val::Px(spacing::LG)),
+                border: UiRect::all(Val::Px(1.5)),
+                ..default()
+            },
             button_visual(),
             action,
         ))
         .with_children(|btn| {
-            btn.spawn(button_text(label));
-        });
-}
-
-fn spawn_graphics_settings_section(parent: &mut ChildSpawnerCommands) {
-    spawn_section_label(parent, "Performance");
-
-    for toggle in GRAPHICS_TOGGLES {
-        parent
-            .spawn((
-                Button::default(),
-                button_node(TOGGLE_BTN),
-                button_visual(),
-                MenuButtonAction::ToggleGraphics(toggle),
-            ))
-            .with_children(|btn| {
-                btn.spawn((button_text("..."), GraphicsToggleText(toggle)));
-            });
-    }
-}
-
-fn spawn_main_menu_ui(
-    mut commands: Commands,
-    game_state: Res<GameState>,
-    existing: Query<Entity, With<MainMenuRoot>>,
-) {
-    if game_state.0 != Game_State::MainMenu || !existing.is_empty() {
-        return;
-    }
-
-    let root = commands.spawn((overlay_root(), MainMenuRoot)).id();
-
-    commands.entity(root).with_children(|parent| {
-        parent.spawn(panel(520.0)).with_children(|col| {
-            col.spawn(title_text("Seirei Kuni"));
-            col.spawn((
-                Text::new("Choose your path and step into the world."),
+            btn.spawn(button_text_lg(slot_label(slot)));
+            btn.spawn((
+                Text::new("..."),
                 TextFont {
-                    font_size: 20.0,
+                    font_size: 16.0,
                     ..default()
                 },
                 TextColor(palette::TEXT_SECONDARY),
-                Node {
-                    margin: UiRect::bottom(Val::Px(spacing::SM)),
-                    ..default()
-                },
+                LoadSlotStatusText(slot),
             ));
-
-            spawn_hero_button(col, "Start Journey", MenuButtonAction::StartGame);
-
-            spawn_section_label(col, "Save / Load");
-            spawn_row_button(col, "Save Slot 1", MenuButtonAction::SaveSlot1);
-            spawn_row_button(col, "Save Slot 2", MenuButtonAction::SaveSlot2);
-            spawn_row_button(col, "Save Slot 3", MenuButtonAction::SaveSlot3);
-            spawn_row_button(col, "Load Slot 1", MenuButtonAction::LoadSlot1);
-            spawn_row_button(col, "Load Slot 2", MenuButtonAction::LoadSlot2);
-            spawn_row_button(col, "Load Slot 3", MenuButtonAction::LoadSlot3);
-
-            spawn_section_label(col, "Autosave");
-            col.spawn((
-                Button::default(),
-                button_node(ROW_BTN),
-                button_visual(),
-                MenuButtonAction::ToggleAutosave,
-            ))
-            .with_children(|btn| {
-                btn.spawn((button_text("Autosave: ..."), AutosaveStatusText));
-            });
-
-            spawn_graphics_settings_section(col);
-
-            spawn_hero_button(col, "Quit", MenuButtonAction::QuitGame);
         });
-    });
 }
 
-fn spawn_pause_menu_ui(
-    mut commands: Commands,
-    game_state: Res<GameState>,
-    existing: Query<Entity, With<PauseMenuRoot>>,
-    main_menu_root: Query<Entity, With<MainMenuRoot>>,
-) {
-    if game_state.0 != Game_State::Paused || !existing.is_empty() || !main_menu_root.is_empty() {
-        return;
+fn slot_label(slot: SaveSlot) -> &'static str {
+    match slot {
+        SaveSlot::Slot1 => "Slot 1",
+        SaveSlot::Slot2 => "Slot 2",
+        SaveSlot::Slot3 => "Slot 3",
+        SaveSlot::Auto => "Auto",
     }
+}
 
-    let root = commands.spawn((overlay_root(), PauseMenuRoot)).id();
+fn slot_status_text(slot: SaveSlot) -> &'static str {
+    let path = save_slot_path(slot);
+    if Path::new(&path).exists() {
+        "Saved"
+    } else {
+        "Empty"
+    }
+}
 
-    commands.entity(root).with_children(|parent| {
-        parent.spawn(panel(420.0)).with_children(|col| {
-            col.spawn((
-                Text::new("Paused"),
-                TextFont {
-                    font_size: 36.0,
-                    ..default()
-                },
-                TextColor(palette::TEXT_HEADING),
-                Node {
-                    margin: UiRect::bottom(Val::Px(spacing::SM)),
-                    ..default()
-                },
-            ));
+fn save_slot_path(slot: SaveSlot) -> String {
+    let file_name = match slot {
+        SaveSlot::Auto => "auto.ron",
+        SaveSlot::Slot1 => "slot_1.ron",
+        SaveSlot::Slot2 => "slot_2.ron",
+        SaveSlot::Slot3 => "slot_3.ron",
+    };
+    format!("saves/{}", file_name)
+}
 
-            spawn_hero_button(col, "Resume", MenuButtonAction::ResumeGame);
-            spawn_hero_button(col, "Return to Title", MenuButtonAction::ReturnToTitle);
-
-            spawn_graphics_settings_section(col);
-
-            spawn_hero_button(col, "Quit", MenuButtonAction::QuitGame);
-        });
-    });
+fn update_load_slot_status(mut labels: Query<(&mut Text, &mut TextColor, &LoadSlotStatusText)>) {
+    for (mut text, mut color, marker) in &mut labels {
+        let status = slot_status_text(marker.0);
+        if text.0 != status {
+            text.0 = status.to_string();
+        }
+        color.0 = if status == "Saved" {
+            palette::ACCENT_SUCCESS
+        } else {
+            palette::TEXT_DIM
+        };
+    }
 }
 
 fn toggle_pause_state(
     input: Res<ButtonInput<KeyCode>>,
     mut game_state: ResMut<GameState>,
     mut resume_state: ResMut<ResumeState>,
-    pause_menu: Query<Entity, With<PauseMenuRoot>>,
-    children: Query<&Children>,
-    mut commands: Commands,
+    pause_page: Res<PauseMenuPage>,
+    main_page: Res<MainMenuPage>,
+    mut next_pause_page: ResMut<PauseMenuPage>,
+    mut next_main_page: ResMut<MainMenuPage>,
 ) {
     if !input.just_pressed(KeyCode::Escape) {
         return;
     }
 
     match game_state.0 {
-        Game_State::MainMenu => {}
+        Game_State::MainMenu => {
+            // ESC backs out of sub-pages on the title screen.
+            if *main_page != MainMenuPage::Title {
+                *next_main_page = MainMenuPage::Title;
+            }
+        }
         Game_State::Paused => {
-            game_state.0 = resume_state.0;
-            despawn_menu(&mut commands, &pause_menu, &children);
+            if *pause_page != PauseMenuPage::Main {
+                *next_pause_page = PauseMenuPage::Main;
+            } else {
+                game_state.0 = resume_state.0;
+            }
         }
         other => {
             resume_state.0 = other;
@@ -245,16 +464,14 @@ fn toggle_pause_state(
 }
 
 fn handle_menu_actions(
-    mut commands: Commands,
     mut exit: MessageWriter<AppExit>,
     mut game_state: ResMut<GameState>,
     mut resume_state: ResMut<ResumeState>,
     mut autosave: ResMut<AutoSaveSettings>,
     mut graphics: ResMut<GraphicsSettings>,
     mut save_requests: ResMut<Messages<SaveRequest>>,
-    main_menu: Query<Entity, With<MainMenuRoot>>,
-    pause_menu: Query<Entity, With<PauseMenuRoot>>,
-    children: Query<&Children>,
+    mut main_page: ResMut<MainMenuPage>,
+    mut pause_page: ResMut<PauseMenuPage>,
     mut mouse_input: ResMut<ButtonInput<MouseButton>>,
     mut key_input: ResMut<ButtonInput<KeyCode>>,
     mut interactions: Query<(&Interaction, &MenuButtonAction), (Changed<Interaction>, With<Button>)>,
@@ -268,60 +485,67 @@ fn handle_menu_actions(
             MenuButtonAction::StartGame => {
                 game_state.0 = Game_State::Exploring;
                 resume_state.0 = Game_State::Exploring;
-                despawn_menu(&mut commands, &main_menu, &children);
                 mouse_input.reset_all();
                 key_input.clear();
             }
             MenuButtonAction::QuitGame => {
                 exit.write(AppExit::Success);
             }
+            MenuButtonAction::OpenLoadPage => {
+                *main_page = MainMenuPage::Load;
+            }
+            MenuButtonAction::OpenSettingsPage => {
+                *main_page = MainMenuPage::Settings;
+            }
+            MenuButtonAction::BackToTitle => {
+                *main_page = MainMenuPage::Title;
+            }
             MenuButtonAction::ResumeGame => {
                 game_state.0 = resume_state.0;
-                despawn_menu(&mut commands, &pause_menu, &children);
                 mouse_input.reset_all();
                 key_input.clear();
             }
             MenuButtonAction::ReturnToTitle => {
                 game_state.0 = Game_State::MainMenu;
-                despawn_menu(&mut commands, &pause_menu, &children);
+                *main_page = MainMenuPage::Title;
                 mouse_input.reset_all();
                 key_input.clear();
             }
-            MenuButtonAction::SaveSlot1 => {
-                save_requests.write(SaveRequest {
-                    action: SaveAction::Save,
-                    slot: SaveSlot::Slot1,
-                });
+            MenuButtonAction::PauseOpenSettings => {
+                *pause_page = PauseMenuPage::Settings;
             }
-            MenuButtonAction::SaveSlot2 => {
-                save_requests.write(SaveRequest {
-                    action: SaveAction::Save,
-                    slot: SaveSlot::Slot2,
-                });
-            }
-            MenuButtonAction::SaveSlot3 => {
-                save_requests.write(SaveRequest {
-                    action: SaveAction::Save,
-                    slot: SaveSlot::Slot3,
-                });
+            MenuButtonAction::PauseBack => {
+                *pause_page = PauseMenuPage::Main;
             }
             MenuButtonAction::LoadSlot1 => {
                 save_requests.write(SaveRequest {
                     action: SaveAction::Load,
                     slot: SaveSlot::Slot1,
                 });
+                game_state.0 = Game_State::Exploring;
+                resume_state.0 = Game_State::Exploring;
+                mouse_input.reset_all();
+                key_input.clear();
             }
             MenuButtonAction::LoadSlot2 => {
                 save_requests.write(SaveRequest {
                     action: SaveAction::Load,
                     slot: SaveSlot::Slot2,
                 });
+                game_state.0 = Game_State::Exploring;
+                resume_state.0 = Game_State::Exploring;
+                mouse_input.reset_all();
+                key_input.clear();
             }
             MenuButtonAction::LoadSlot3 => {
                 save_requests.write(SaveRequest {
                     action: SaveAction::Load,
                     slot: SaveSlot::Slot3,
                 });
+                game_state.0 = Game_State::Exploring;
+                resume_state.0 = Game_State::Exploring;
+                mouse_input.reset_all();
+                key_input.clear();
             }
             MenuButtonAction::ToggleAutosave => {
                 autosave.enabled = !autosave.enabled;
@@ -353,16 +577,6 @@ fn update_autosave_status_text(
     let label = if autosave.enabled { "Autosave: On" } else { "Autosave: Off" };
     for mut text in &mut labels {
         text.0 = label.to_string();
-    }
-}
-
-fn despawn_menu<T: Component>(
-    commands: &mut Commands,
-    roots: &Query<Entity, With<T>>,
-    children: &Query<&Children>,
-) {
-    for entity in roots.iter() {
-        despawn_recursive(commands, entity, children);
     }
 }
 

@@ -13,8 +13,10 @@ use crate::economy::MerchantNpc;
 use crate::governance::{
     CastleAssaultStartedEvent, GovernorCombatant, GovernorNpc, SuccessorCombatant, SuccessorNpc,
 };
+use crate::combat_ability::MagicSchool;
 use crate::pathfinding::is_walkable_move;
 use crate::quadtree::QuadTree;
+use crate::skill_tree::{LearnedSkills, MagicCostMultipliers, SkillPoints, SkillTreeAccess};
 
 #[derive(Component, Clone, Copy, Debug)]
 pub struct EnemyEncounter {
@@ -241,6 +243,21 @@ fn spawn_player_combat(commands: &mut Commands, world_entity: Entity, world_pos:
     e.insert(AccumulatedSpeed(0));
     e.insert(StatModifiers(Vec::new()));
     e.insert(CombatMovePoints::default());
+    e.insert(SkillPoints::default());
+    e.insert(LearnedSkills::default());
+    e.insert(MagicCostMultipliers::default());
+    // Generic player: bound to the contract, generalist across every magic
+    // school, no protagonist-specific class tree.
+    e.insert(
+        SkillTreeAccess::new()
+            .with_universal()
+            .with_magic([
+                MagicSchool::Kiho,
+                MagicSchool::Chiseijutsu,
+                MagicSchool::Yokaijutsu,
+                MagicSchool::Kamishin,
+            ]),
+    );
     e.id()
 }
 

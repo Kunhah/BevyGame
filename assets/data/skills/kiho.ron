@@ -1,0 +1,104 @@
+// Kiho — Disciplined inner force. Breath, body alignment, martial focus.
+// IDs: 0xE0XX. Capstone unlocks ability 0x1001 ("Tide of Breath").
+[
+    (
+        id: 57344, // 0xE000
+        tree: Kiho,
+        tier: 1,
+        name: "Steady Breath",
+        description: "Breathe in patient cycles. Raises max Kiho by 5.",
+        cost: 1,
+        prerequisites: [],
+        effects: [
+            StatBonus(target: Kiho, amount: 5),
+        ],
+    ),
+    (
+        id: 57345, // 0xE001
+        tree: Kiho,
+        tier: 1,
+        name: "Centered Stance",
+        description: "Settle the spine before each motion. +5 Lethality.",
+        cost: 1,
+        prerequisites: [],
+        effects: [
+            StatBonus(target: Lethality, amount: 5),
+        ],
+    ),
+    (
+        id: 57346, // 0xE002
+        tree: Kiho,
+        tier: 2,
+        name: "Iron Lung",
+        description: "Long, slow exhalations. Restores +0.25 Kiho per rest hour.",
+        cost: 2,
+        prerequisites: [57344],
+        effects: [
+            MagicRegenBonus(school: Kiho, amount: 0.25),
+        ],
+    ),
+    (
+        id: 57347, // 0xE003
+        tree: Kiho,
+        tier: 2,
+        name: "Focused Strike",
+        description: "Strike from the breath, not the arm. +3 Hit, +3 Lethality.",
+        cost: 2,
+        prerequisites: [57345],
+        effects: [
+            StatBonus(target: Hit, amount: 3),
+            StatBonus(target: Lethality, amount: 3),
+        ],
+    ),
+    (
+        id: 57348, // 0xE004
+        tree: Kiho,
+        tier: 2,
+        name: "Quiet Drill",
+        description: "Repetition until form is silence. Reduces Kiho ability cost by 10%.",
+        cost: 2,
+        prerequisites: [57344],
+        effects: [
+            MagicCostReduction(school: Kiho, percent: 0.10),
+        ],
+    ),
+    (
+        id: 57349, // 0xE005
+        tree: Kiho,
+        tier: 3,
+        name: "Tide of Breath",
+        description: "Inhale the rhythm of the room and unlock the Tide of Breath ability. +5 max Kiho.",
+        cost: 3,
+        prerequisites: [57346, 57347],
+        effects: [
+            StatBonus(target: Kiho, amount: 5),
+            UnlockAbility(ability_id: 4097), // 0x1001
+        ],
+    ),
+    (
+        id: 57350, // 0xE006
+        tree: Kiho,
+        tier: 2,
+        name: "Steady Form",
+        description: "A drilled cut that lands in the rhythm of the breath. Unlocks Steady Strike. +3 Lethality.",
+        cost: 2,
+        prerequisites: [57345],
+        effects: [
+            StatBonus(target: Lethality, amount: 3),
+            UnlockAbility(ability_id: 5120), // 0x1400
+        ],
+    ),
+    (
+        id: 57351, // 0xE007
+        tree: Kiho,
+        tier: 3,
+        name: "Mountain Adept",
+        description: "Settle and refuse to move. Unlocks Mountain Stance. +5 Armor.",
+        cost: 3,
+        prerequisites: [57350],
+        effects: [
+            StatBonus(target: Armor, amount: 5),
+            UnlockAbility(ability_id: 5122), // 0x1402
+        ],
+    ),
+]

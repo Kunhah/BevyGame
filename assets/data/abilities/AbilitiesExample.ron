@@ -634,4 +634,373 @@
         duration: 0,
         targets: 4,
     ),
+
+    // -----------------------------------------------------------------------
+    // Skill-tree capstones. Each is unlocked by the tier-3 node of the
+    // matching school's tree (see assets/data/skills/*.ron).
+    // -----------------------------------------------------------------------
+    (
+        id: 4097, // 0x1001 Kiho capstone — Tide of Breath
+        next_id: None,
+        name: "Tide of Breath",
+        health_cost: 0,
+        magic_cost: 18.0,
+        magic_school: Kiho,
+        action_point_cost: 3,
+        cooldown: 5,
+        description: "A breath that flows outward, healing allies caught in its rhythm.",
+        effects: [
+            Heal(floor: 18, ceiling: 28, scaled_with: Mind),
+        ],
+        shape: Radius(4.0),
+        duration: 0,
+        targets: 4,
+    ),
+    (
+        id: 4353, // 0x1101 Chiseijutsu capstone — Verdant Pulse
+        next_id: None,
+        name: "Verdant Pulse",
+        health_cost: 0,
+        magic_cost: 22.0,
+        magic_school: Chiseijutsu,
+        action_point_cost: 3,
+        cooldown: 6,
+        description: "Pull green strength from the ground; heal nearby allies and slow the closest foe.",
+        effects: [
+            Heal(floor: 14, ceiling: 22, scaled_with: Mind),
+            ApplyStatus(kind: BadCondition(Slowed), tier: 1),
+        ],
+        shape: Radius(3.5),
+        duration: 0,
+        targets: 4,
+    ),
+    (
+        id: 4609, // 0x1201 Yokaijutsu capstone — Shadow Pact
+        next_id: None,
+        name: "Shadow Pact",
+        health_cost: 4,
+        magic_cost: 24.0,
+        magic_school: Yokaijutsu,
+        action_point_cost: 3,
+        cooldown: 5,
+        description: "Trade a sliver of life for a strike that exposes the soul beneath.",
+        effects: [
+            Damage(floor: 28, ceiling: 44, damage_type: True, scaled_with: Mind, defended_with: Mind),
+            ApplyStatus(kind: BadCondition(Exposed), tier: 1),
+        ],
+        shape: Select,
+        duration: 0,
+        targets: 1,
+    ),
+    (
+        id: 4865, // 0x1301 Kamishin capstone — Heaven's Mandate
+        next_id: None,
+        name: "Heaven's Mandate",
+        health_cost: 0,
+        magic_cost: 26.0,
+        magic_school: Kamishin,
+        action_point_cost: 3,
+        cooldown: 6,
+        description: "Call down a brief, blinding favor of the kami. Heals and steadies allies in a wide circle.",
+        effects: [
+            Heal(floor: 16, ceiling: 26, scaled_with: Mind),
+            Buff(stat: Morale, multiplier: 1.20, effects: None, scaled_with: Mind),
+        ],
+        shape: Radius(5.0),
+        duration: 3,
+        targets: 6,
+    ),
+
+    // -----------------------------------------------------------------------
+    // Common spell pool. Unlocked via skill-tree nodes (see assets/data/skills/*.ron).
+    // Anyone with the matching tree access can learn the unlock. IDs:
+    //   0x14XX Kiho       0x16XX Yokaijutsu
+    //   0x15XX Chiseijutsu 0x17XX Kamishin
+    //   0x18XX Universal martial activations
+    // -----------------------------------------------------------------------
+
+    // ----- Kiho (0x14XX) -----
+    (
+        id: 5120, // 0x1400 Steady Strike
+        next_id: None,
+        name: "Steady Strike",
+        health_cost: 0,
+        magic_cost: 6.0,
+        magic_school: Kiho,
+        action_point_cost: 2,
+        cooldown: 1,
+        description: "A breath-driven martial strike. Cheap; reliable.",
+        effects: [
+            Damage(floor: 14, ceiling: 22, damage_type: Physical, scaled_with: Lethality, defended_with: Armor),
+        ],
+        shape: Select,
+        duration: 0,
+        targets: 1,
+    ),
+    (
+        id: 5121, // 0x1401 Inner Wind
+        next_id: None,
+        name: "Inner Wind",
+        health_cost: 0,
+        magic_cost: 8.0,
+        magic_school: Kiho,
+        action_point_cost: 2,
+        cooldown: 3,
+        description: "Channel the breath into the legs; brief Speed surge.",
+        effects: [
+            Buff(stat: Speed, multiplier: 1.30, effects: None, scaled_with: Speed),
+        ],
+        shape: Select,
+        duration: 2,
+        targets: 1,
+    ),
+    (
+        id: 5122, // 0x1402 Mountain Stance
+        next_id: None,
+        name: "Mountain Stance",
+        health_cost: 0,
+        magic_cost: 14.0,
+        magic_school: Kiho,
+        action_point_cost: 3,
+        cooldown: 4,
+        description: "Settle the body so it cannot be moved. Hardens armor for several turns.",
+        effects: [
+            Buff(stat: Armor, multiplier: 1.40, effects: None, scaled_with: Armor),
+        ],
+        shape: Select,
+        duration: 3,
+        targets: 1,
+    ),
+
+    // ----- Chiseijutsu (0x15XX) -----
+    (
+        id: 5376, // 0x1500 Bramble Snare
+        next_id: None,
+        name: "Bramble Snare",
+        health_cost: 0,
+        magic_cost: 12.0,
+        magic_school: Chiseijutsu,
+        action_point_cost: 2,
+        cooldown: 3,
+        description: "Roots burst from the ground; piercing damage and slowed footing.",
+        effects: [
+            Damage(floor: 12, ceiling: 22, damage_type: Physical, scaled_with: Mind, defended_with: Armor),
+            ApplyStatus(kind: BadCondition(Slowed), tier: 1),
+        ],
+        shape: Select,
+        duration: 0,
+        targets: 1,
+    ),
+    (
+        id: 5377, // 0x1501 Stone Wall
+        next_id: None,
+        name: "Stone Wall",
+        health_cost: 0,
+        magic_cost: 16.0,
+        magic_school: Chiseijutsu,
+        action_point_cost: 3,
+        cooldown: 5,
+        description: "Pull a slab of earth between an ally and harm. Multiplies their armor briefly.",
+        effects: [
+            Buff(stat: Armor, multiplier: 1.50, effects: None, scaled_with: Armor),
+        ],
+        shape: Select,
+        duration: 3,
+        targets: 1,
+    ),
+    (
+        id: 5378, // 0x1502 Spring of Healing
+        next_id: None,
+        name: "Spring of Healing",
+        health_cost: 0,
+        magic_cost: 18.0,
+        magic_school: Chiseijutsu,
+        action_point_cost: 3,
+        cooldown: 4,
+        description: "A small spring opens at your feet; heals nearby allies with the soil's patience.",
+        effects: [
+            Heal(floor: 12, ceiling: 20, scaled_with: Mind),
+        ],
+        shape: Radius(3.0),
+        duration: 0,
+        targets: 4,
+    ),
+
+    // ----- Yokaijutsu (0x16XX) -----
+    (
+        id: 5632, // 0x1600 Spectral Lash
+        next_id: None,
+        name: "Spectral Lash",
+        health_cost: 0,
+        magic_cost: 12.0,
+        magic_school: Yokaijutsu,
+        action_point_cost: 2,
+        cooldown: 2,
+        description: "A cord of bound shadow whips out and leaves the spirit lingering on the target.",
+        effects: [
+            Damage(floor: 14, ceiling: 24, damage_type: True, scaled_with: Mind, defended_with: Mind),
+            ApplyStatus(kind: BadCondition(Haunted), tier: 1),
+        ],
+        shape: Select,
+        duration: 0,
+        targets: 1,
+    ),
+    (
+        id: 5633, // 0x1601 Crawling Shadow
+        next_id: None,
+        name: "Crawling Shadow",
+        health_cost: 0,
+        magic_cost: 18.0,
+        magic_school: Yokaijutsu,
+        action_point_cost: 3,
+        cooldown: 4,
+        description: "A long, low shadow walks the room and bites whatever it finds.",
+        effects: [
+            Damage(floor: 22, ceiling: 36, damage_type: True, scaled_with: Mind, defended_with: Mind),
+        ],
+        shape: Line(length: 6.0, thickness: 1.0),
+        duration: 0,
+        targets: 3,
+    ),
+    (
+        id: 5634, // 0x1602 Whisper of Doubt
+        next_id: None,
+        name: "Whisper of Doubt",
+        health_cost: 0,
+        magic_cost: 14.0,
+        magic_school: Yokaijutsu,
+        action_point_cost: 2,
+        cooldown: 4,
+        description: "Plant the wrong thought in their head until they don't know which side is theirs.",
+        effects: [
+            ApplyStatus(kind: BadCondition(Confused), tier: 1),
+        ],
+        shape: Select,
+        duration: 0,
+        targets: 1,
+    ),
+
+    // ----- Kamishin (0x17XX) -----
+    (
+        id: 5888, // 0x1700 Kanji of Mercy
+        next_id: None,
+        name: "Kanji of Mercy",
+        health_cost: 0,
+        magic_cost: 12.0,
+        magic_school: Kamishin,
+        action_point_cost: 2,
+        cooldown: 1,
+        description: "Inscribe the kanji for mercy on the air; heal a single ally.",
+        effects: [
+            Heal(floor: 18, ceiling: 26, scaled_with: Mind),
+        ],
+        shape: Select,
+        duration: 0,
+        targets: 1,
+    ),
+    (
+        id: 5889, // 0x1701 Field of Quiet
+        next_id: None,
+        name: "Field of Quiet",
+        health_cost: 0,
+        magic_cost: 16.0,
+        magic_school: Kamishin,
+        action_point_cost: 3,
+        cooldown: 5,
+        description: "A circle in which spirits do not press. Buffs the Mind of allies inside.",
+        effects: [
+            Buff(stat: Mind, multiplier: 1.25, effects: None, scaled_with: Mind),
+        ],
+        shape: Radius(3.5),
+        duration: 3,
+        targets: 4,
+    ),
+    (
+        id: 5890, // 0x1702 Severance Prayer
+        next_id: None,
+        name: "Severance Prayer",
+        health_cost: 0,
+        magic_cost: 14.0,
+        magic_school: Kamishin,
+        action_point_cost: 2,
+        cooldown: 3,
+        description: "Cut a Bleeding ally free of the wound's persistence.",
+        effects: [
+            RemoveStatus(kind: BadCondition(Bleeding)),
+        ],
+        shape: Select,
+        duration: 0,
+        targets: 1,
+    ),
+
+    // ----- Universal martial activations (0x18XX). Non-spell: magic_cost 0. -----
+    (
+        id: 6144, // 0x1800 Sweeping Strike
+        next_id: None,
+        name: "Sweeping Strike",
+        health_cost: 0,
+        magic_cost: 0.0,
+        magic_school: Kiho,
+        action_point_cost: 3,
+        cooldown: 1,
+        description: "A wide arc of the weapon catches several foes in front of you.",
+        effects: [
+            Damage(floor: 16, ceiling: 26, damage_type: Physical, scaled_with: Lethality, defended_with: Armor),
+        ],
+        shape: Cone(angle: 70.0, radius: 2.5),
+        duration: 0,
+        targets: 4,
+    ),
+    (
+        id: 6145, // 0x1801 Brace
+        next_id: None,
+        name: "Brace",
+        health_cost: 0,
+        magic_cost: 0.0,
+        magic_school: Kiho,
+        action_point_cost: 2,
+        cooldown: 2,
+        description: "Set the feet and ready the guard. Brief armor buff, no magic spent.",
+        effects: [
+            Buff(stat: Armor, multiplier: 1.30, effects: None, scaled_with: Armor),
+        ],
+        shape: Select,
+        duration: 2,
+        targets: 1,
+    ),
+    (
+        id: 6146, // 0x1802 Aimed Shot
+        next_id: None,
+        name: "Aimed Shot",
+        health_cost: 0,
+        magic_cost: 0.0,
+        magic_school: Kiho,
+        action_point_cost: 3,
+        cooldown: 1,
+        description: "Take an extra breath to aim. High-Hit physical strike.",
+        effects: [
+            Damage(floor: 18, ceiling: 32, damage_type: Physical, scaled_with: Hit, defended_with: Armor),
+        ],
+        shape: Select,
+        duration: 0,
+        targets: 1,
+    ),
+    (
+        id: 6147, // 0x1803 Disengage
+        next_id: None,
+        name: "Disengage",
+        health_cost: 0,
+        magic_cost: 0.0,
+        magic_school: Kiho,
+        action_point_cost: 2,
+        cooldown: 3,
+        description: "Pull back from the line; brief evasion bump and a moment to breathe.",
+        effects: [
+            Buff(stat: Evasion, multiplier: 1.30, effects: None, scaled_with: Evasion),
+            Heal(floor: 4, ceiling: 8, scaled_with: Mind),
+        ],
+        shape: Select,
+        duration: 2,
+        targets: 1,
+    ),
 ]

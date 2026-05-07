@@ -1,0 +1,84 @@
+// Sayaka — Cleric / Kitsune. Fox-cunning illusions and channeled blessings,
+// pairing Kamishin liturgy with Chiseijutsu nature work. Aligns with her
+// 0x0B** ability set (Purifying strike, Sacred prayer, Barrier of faith,
+// Cleanse, Ritual of stillness). IDs: 0xE8XX.
+[
+    (
+        id: 59392, // 0xE800
+        tree: SayakaCleric,
+        tier: 1,
+        name: "Fox Whisper",
+        description: "The kitsune in the lineage answers when called softly. +5 Mind.",
+        cost: 1,
+        prerequisites: [],
+        effects: [
+            StatBonus(target: Mind, amount: 5),
+        ],
+    ),
+    (
+        id: 59393, // 0xE801
+        tree: SayakaCleric,
+        tier: 1,
+        name: "Healing Hand",
+        description: "Knows the prayer that closes a small wound and means it. +1 Kamishin per rest hour, +3 Kamishin max.",
+        cost: 1,
+        prerequisites: [],
+        effects: [
+            MagicRegenBonus(school: Kamishin, amount: 1.0),
+            StatBonus(target: Kamishin, amount: 3),
+        ],
+    ),
+    (
+        id: 59394, // 0xE802
+        tree: SayakaCleric,
+        tier: 2,
+        name: "Liturgist Voice",
+        description: "Can lead a rite the elder forgot the middle of. +5 Morale, +3 Mind.",
+        cost: 2,
+        prerequisites: [59393],
+        effects: [
+            StatBonus(target: Morale, amount: 5),
+            StatBonus(target: Mind, amount: 3),
+        ],
+    ),
+    (
+        id: 59395, // 0xE803
+        tree: SayakaCleric,
+        tier: 2,
+        name: "Fox Glamour",
+        description: "Wears a face that asks the room to look elsewhere. +5 Evasion, +3 Mind.",
+        cost: 2,
+        prerequisites: [59392],
+        effects: [
+            StatBonus(target: Evasion, amount: 5),
+            StatBonus(target: Mind, amount: 3),
+        ],
+    ),
+    (
+        id: 59396, // 0xE804
+        tree: SayakaCleric,
+        tier: 2,
+        name: "Sacred Mediation",
+        description: "Stands between kami and place and translates each to the other. +5 Kamishin max, +3 Chiseijutsu max.",
+        cost: 2,
+        prerequisites: [59392, 59393],
+        effects: [
+            StatBonus(target: Kamishin, amount: 5),
+            StatBonus(target: Chiseijutsu, amount: 3),
+        ],
+    ),
+    (
+        id: 59397, // 0xE805
+        tree: SayakaCleric,
+        tier: 3,
+        name: "Nine-Tail Bond",
+        description: "The fox in her stops being a story and starts being a co-author. +5 Mind, +5 Kamishin max, +5 Chiseijutsu max.",
+        cost: 3,
+        prerequisites: [59394, 59396],
+        effects: [
+            StatBonus(target: Mind, amount: 5),
+            StatBonus(target: Kamishin, amount: 5),
+            StatBonus(target: Chiseijutsu, amount: 5),
+        ],
+    ),
+]

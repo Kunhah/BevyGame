@@ -13,6 +13,7 @@ mod ai_decision;
 mod battle;
 mod city_data;
 mod combat_ability;
+mod combat_hud;
 mod combat_plugin;
 mod constants;
 mod contract;
@@ -21,6 +22,7 @@ mod debug_console;
 mod dialogue;
 mod economy;
 mod governance;
+mod hud;
 mod light_plugin;
 mod menu;
 mod map;
@@ -31,6 +33,7 @@ mod quests;
 mod save;
 mod services;
 mod settings;
+mod skill_tree;
 mod status_effects;
 mod ui_style;
 mod world;
@@ -39,6 +42,7 @@ use battle::{
     battle_trigger_system, combat_end_turn_input, end_battle_on_death,
     setup_player_turns, sync_combat_move_points_from_world, test_log_button, transform_npc_to_enemy, BattleState,
 };
+use combat_hud::CombatHudPlugin;
 use combat_plugin::{
     AfterRestEvent, AttackIntentEvent, AwardXpEvent, BeforeRestEvent, CombatPlugin, DamageQueue,
     DeathEvent, RestEvent,
@@ -54,6 +58,7 @@ use dialogue::{
 };
 use economy::EconomyPlugin;
 use governance::GovernancePlugin;
+use hud::HudPlugin;
 use light_plugin::LightPlugin;
 use menu::MenuPlugin;
 use movement::{
@@ -77,6 +82,7 @@ use save::{
 };
 use services::ServicesPlugin;
 use settings::SettingsPlugin;
+use skill_tree::SkillTreePlugin;
 use status_effects::StatusEffectsPlugin;
 use ui_style::UiStylePlugin;
 use ai_decision::AiDecisionPlugin;
@@ -111,6 +117,7 @@ fn main() {
                 }),
         )
         .add_plugins(UiStylePlugin)
+        .add_plugins(HudPlugin)
         .add_plugins(LightPlugin)
         .add_plugins(CombatPlugin)
         .add_plugins(StatusEffectsPlugin)
@@ -121,6 +128,8 @@ fn main() {
         .add_plugins(QuestPlugin)
         .add_plugins(MenuPlugin)
         .add_plugins(SettingsPlugin)
+        .add_plugins(SkillTreePlugin)
+        .add_plugins(CombatHudPlugin)
         .add_plugins(AiDecisionPlugin)
         .add_plugins(activities::ActivitiesPlugin)
         .add_plugins(DebugConsolePlugin)

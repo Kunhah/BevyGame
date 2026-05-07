@@ -7,6 +7,15 @@ Rust HTTP server (`src/bin/editor_server.rs`). All on-disk data files use the
 of truth for parsing/serializing RON, and the JS frontend talks to it over a
 small JSON API.
 
+Authored game data now lives under `assets/data/` instead of `src/`, split by
+content type:
+
+- `assets/data/abilities/`
+- `assets/data/characters/`
+- `assets/data/dialogues/`
+- `assets/data/skills/`
+- `assets/data/*.ron` for shared registries such as quests, economy, and AI
+
 Run:
 
 ```bash

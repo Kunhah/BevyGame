@@ -637,19 +637,19 @@ pub fn interact(
 }
 
 pub fn load_dialogue() -> HashMap<String, DialogueLine> {
-    match fs::read_to_string("dialogues/example.ron") {
+    match fs::read_to_string("assets/data/dialogues/example.ron") {
         Ok(contents) => match ron::de::from_str::<Vec<DialogueLine>>(&contents) {
             Ok(dialogue_lines) => dialogue_lines
                 .into_iter()
                 .map(|line| (line.id.clone(), line))
                 .collect(),
             Err(err) => {
-                warn!("Failed to parse dialogues/example.ron: {err}");
+                warn!("Failed to parse assets/data/dialogues/example.ron: {err}");
                 HashMap::new()
             }
         },
         Err(err) => {
-            warn!("Failed to open dialogues/example.ron: {err}");
+            warn!("Failed to open assets/data/dialogues/example.ron: {err}");
             HashMap::new()
         }
     }

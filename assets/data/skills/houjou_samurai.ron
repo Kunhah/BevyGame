@@ -1,0 +1,83 @@
+// Houjou Utaka — Samurai. Bushido discipline, blade reverence, and a careful
+// dabbling in Yokaijutsu (Forbidden cut, Bind spirit). Pairs with the 0x0C**
+// ability set. IDs: 0xE9XX.
+[
+    (
+        id: 59648, // 0xE900
+        tree: HoujouSamurai,
+        tier: 1,
+        name: "Bushido Stance",
+        description: "Standing the way one stands when one's grandfather is watching. +5 Lethality, +5 Armor.",
+        cost: 1,
+        prerequisites: [],
+        effects: [
+            StatBonus(target: Lethality, amount: 5),
+            StatBonus(target: Armor, amount: 5),
+        ],
+    ),
+    (
+        id: 59649, // 0xE901
+        tree: HoujouSamurai,
+        tier: 1,
+        name: "Blade Reverence",
+        description: "Treats the sword as an instrument of an older agreement. +1 Kiho per rest hour, +3 Kiho max.",
+        cost: 1,
+        prerequisites: [],
+        effects: [
+            MagicRegenBonus(school: Kiho, amount: 1.0),
+            StatBonus(target: Kiho, amount: 3),
+        ],
+    ),
+    (
+        id: 59650, // 0xE902
+        tree: HoujouSamurai,
+        tier: 2,
+        name: "Iaido Reflex",
+        description: "Draw, cut, sheath — one motion, one heartbeat. +5 Speed, +3 Hit.",
+        cost: 2,
+        prerequisites: [59648],
+        effects: [
+            StatBonus(target: Speed, amount: 5),
+            StatBonus(target: Hit, amount: 3),
+        ],
+    ),
+    (
+        id: 59651, // 0xE903
+        tree: HoujouSamurai,
+        tier: 2,
+        name: "Forbidden Cut",
+        description: "There is a name for this technique and one does not say it aloud. +5 Yokaijutsu max.",
+        cost: 2,
+        prerequisites: [59649],
+        effects: [
+            StatBonus(target: Yokaijutsu, amount: 5),
+        ],
+    ),
+    (
+        id: 59652, // 0xE904
+        tree: HoujouSamurai,
+        tier: 2,
+        name: "Blood Discipline",
+        description: "Knows the second-wind drill the old guard used in the long siege. +8 Health, +1 Health per rest hour.",
+        cost: 2,
+        prerequisites: [59648, 59649],
+        effects: [
+            StatBonus(target: Health, amount: 8),
+            StatBonus(target: HealthRegen, amount: 1),
+        ],
+    ),
+    (
+        id: 59653, // 0xE905
+        tree: HoujouSamurai,
+        tier: 3,
+        name: "Honor Unbroken",
+        description: "The vow has stopped being a thing he says. It is a thing he is. +10 Lethality, +5 Morale, +3 Armor.",
+        cost: 3,
+        prerequisites: [59650, 59652],
+        effects: [
+            StatBonus(target: Lethality, amount: 10),
+            StatBonus(target: Morale, amount: 5),
+            StatBonus(target: Armor, amount: 3),
+        ],
+    ),
+]

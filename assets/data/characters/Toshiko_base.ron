@@ -55,6 +55,6 @@
     // Bound to Kuro: 40 extra HP that absorbs damage before normal HP.
     extra_hp: (current: 40, max: 40),
 
-    // Ability ids from src/abilities/AbilitiesExample.ron (level 0x0D).
+    // Ability ids from assets/data/abilities/AbilitiesExample.ron (level 0x0D).
     abilities: [3328, 3329, 3330, 3331, 3332, 3333],
 )
