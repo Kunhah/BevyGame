@@ -1066,8 +1066,11 @@ pub fn sync_player_combat_bound(
 /// resurrection pipeline (which queries `Bound` / `ResurrectionStanding` on
 /// the world entity) fires.
 pub fn bridge_player_death_to_world(
-    mut deaths: MessageReader<DeathEvent>,
-    mut world_deaths: MessageWriter<DeathEvent>,
+    // Reads `DeathEvent` and re-emits one targeting the world entity. Bevy 0.18
+    // forbids `Res<Messages<T>>` + `ResMut<Messages<T>>` in one system, so reader
+    // and writer share a `ParamSet`: collect the bridged event while reading,
+    // then write it once the read borrow is released.
+    mut deaths: ParamSet<(MessageReader<DeathEvent>, MessageWriter<DeathEvent>)>,
     participants_q: Query<
         (&BattleSide, &BattleWorldLink),
         (With<BattleParticipant>, With<PlayerControlled>),
@@ -1078,7 +1081,8 @@ pub fn bridge_player_death_to_world(
     mut turn_order: ResMut<TurnOrder>,
     mut game_state: ResMut<GameState>,
 ) {
-    for ev in deaths.read() {
+    let mut bridged: Option<DeathEvent> = None;
+    for ev in deaths.p0().read() {
         let Ok((side, link)) = participants_q.get(ev.entity) else {
             continue;
         };
@@ -1094,12 +1098,16 @@ pub fn bridge_player_death_to_world(
         battle_state.enemy_id = None;
         game_state.0 = Game_State::Exploring;
 
-        world_deaths.write(DeathEvent {
+        bridged = Some(DeathEvent {
             entity: link.world_entity,
             killer: ev.killer,
         });
+        break;
+    }
+
+    if let Some(ev) = bridged {
+        deaths.p1().write(ev);
         info!("bridge_player_death_to_world: player died in battle — bridged to world");
-        return;
     }
 }
 

@@ -47,10 +47,10 @@ fn spawn_exploration_hud(mut commands: Commands) {
                 padding: UiRect::all(Val::Px(spacing::MD)),
                 border: UiRect::all(Val::Px(1.0)),
                 min_width: Val::Px(220.0),
+                border_radius: BorderRadius::all(Val::Px(radius::MD)),
                 ..default()
             },
             BackgroundColor(palette::BG_PANEL),
-            BorderRadius::all(Val::Px(radius::MD)),
             BorderColor::all(palette::BORDER_SUBTLE),
             Visibility::Hidden,
             ExplorationHudRoot,

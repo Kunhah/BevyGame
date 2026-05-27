@@ -433,10 +433,8 @@ fn toggle_pause_state(
     input: Res<ButtonInput<KeyCode>>,
     mut game_state: ResMut<GameState>,
     mut resume_state: ResMut<ResumeState>,
-    pause_page: Res<PauseMenuPage>,
-    main_page: Res<MainMenuPage>,
-    mut next_pause_page: ResMut<PauseMenuPage>,
-    mut next_main_page: ResMut<MainMenuPage>,
+    mut pause_page: ResMut<PauseMenuPage>,
+    mut main_page: ResMut<MainMenuPage>,
 ) {
     if !input.just_pressed(KeyCode::Escape) {
         return;
@@ -446,12 +444,12 @@ fn toggle_pause_state(
         Game_State::MainMenu => {
             // ESC backs out of sub-pages on the title screen.
             if *main_page != MainMenuPage::Title {
-                *next_main_page = MainMenuPage::Title;
+                *main_page = MainMenuPage::Title;
             }
         }
         Game_State::Paused => {
             if *pause_page != PauseMenuPage::Main {
-                *next_pause_page = PauseMenuPage::Main;
+                *pause_page = PauseMenuPage::Main;
             } else {
                 game_state.0 = resume_state.0;
             }

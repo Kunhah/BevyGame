@@ -131,7 +131,36 @@ pub struct ConditionContext<'w> {
     pub merchants: Res<'w, Merchants>,
 }
 
-pub fn evaluate_condition(cond: &Condition, ctx: &ConditionContext) -> bool {
+/// A borrowed, plain-reference view of the resources needed to evaluate a
+/// [`Condition`]. Decoupling `evaluate_condition` from the `ConditionContext`
+/// system param lets a system that *mutates* these resources (the
+/// [`EffectDispatcher`]) also read them for condition checks through a single
+/// borrow — Bevy 0.18 rejects holding `Res<T>` and `ResMut<T>` in one system.
+pub struct ConditionView<'a> {
+    pub flags: &'a StoryFlags,
+    pub inventory: &'a PlayerInventory,
+    pub quest_log: &'a QuestLog,
+    pub reputation: &'a ReputationLedger,
+    pub current_area: &'a CurrentArea,
+    pub cities: &'a CityCatalog,
+    pub merchants: &'a Merchants,
+}
+
+impl<'w> ConditionContext<'w> {
+    pub fn view(&self) -> ConditionView<'_> {
+        ConditionView {
+            flags: &self.flags,
+            inventory: &self.inventory,
+            quest_log: &self.quest_log,
+            reputation: &self.reputation,
+            current_area: &self.current_area,
+            cities: &self.cities,
+            merchants: &self.merchants,
+        }
+    }
+}
+
+pub fn evaluate_condition(cond: &Condition, ctx: &ConditionView) -> bool {
     match cond {
         Condition::Flag(name) => ctx.flags.is_set(name),
         Condition::NotFlag(name) => !ctx.flags.is_set(name),
@@ -166,8 +195,8 @@ pub fn evaluate_condition(cond: &Condition, ctx: &ConditionContext) -> bool {
             let Some(resolved) = resolve_reputation_target(
                 target,
                 ctx.current_area.0,
-                &ctx.cities,
-                &ctx.merchants,
+                ctx.cities,
+                ctx.merchants,
             ) else {
                 return false;
             };
@@ -204,6 +233,8 @@ pub struct EffectDispatcher<'w, 's> {
     pub flags: ResMut<'w, StoryFlags>,
     pub inventory: ResMut<'w, PlayerInventory>,
     pub wallet: ResMut<'w, PlayerWallet>,
+    pub quest_log: Res<'w, QuestLog>,
+    pub reputation: Res<'w, ReputationLedger>,
     pub current_area: Res<'w, CurrentArea>,
     pub cities: Res<'w, CityCatalog>,
     pub merchants: Res<'w, Merchants>,
@@ -218,6 +249,21 @@ pub struct EffectDispatcher<'w, 's> {
 }
 
 impl<'w, 's> EffectDispatcher<'w, 's> {
+    /// Build a read-only [`ConditionView`] from this dispatcher's own resources,
+    /// so a system can evaluate conditions and apply effects through a single
+    /// set of borrows (avoids the `Res`/`ResMut` aliasing conflict).
+    pub fn condition_view(&self) -> ConditionView<'_> {
+        ConditionView {
+            flags: &self.flags,
+            inventory: &self.inventory,
+            quest_log: &self.quest_log,
+            reputation: &self.reputation,
+            current_area: &self.current_area,
+            cities: &self.cities,
+            merchants: &self.merchants,
+        }
+    }
+
     pub fn dispatch_all(&mut self, effects: &[Effect]) {
         for effect in effects {
             self.dispatch(effect);

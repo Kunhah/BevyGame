@@ -43,7 +43,6 @@ pub fn setup(
     cities: Res<CityCatalog>,
     merchants: Res<Merchants>,
     query: Query<&Collider>,
-    occ: Option<Res<crate::light_plugin::OcclusionTarget>>,
 ) {
     // The player spawns at the center of tile (0, 0). All the hardcoded test
     // entities below were authored relative to a 512-unit world, so we offset
@@ -406,18 +405,6 @@ pub fn setup(
         ));
     }
 
-    // Temporary debug: show the occlusion texture on screen to verify occluders render.
-    if let Some(occ) = occ {
-        commands.spawn((
-            Sprite {
-                image: occ.image.clone(),
-                custom_size: Some(Vec2::splat(128.0)),
-                ..default()
-            },
-            Transform::from_translation(origin3 + Vec3::new(0.0, 0.0, 50.0)),
-            Name::new("OcclusionDebugSprite"),
-        ));
-    }
 }
 
 fn first_tile_world_position_for_region(map: &MapTiles, region_id: u16) -> Option<Vec3> {

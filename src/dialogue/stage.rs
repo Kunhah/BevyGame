@@ -253,7 +253,14 @@ pub fn refresh_stage_visuals(
         (&StagePortraitName, &mut Text, &mut Visibility, &mut TextColor),
         Without<StagePortraitImage>,
     >,
-    mut bg_q: Query<(&mut ImageNode, &mut Visibility), With<DialogueBackgroundImage>>,
+    mut bg_q: Query<
+        (&mut ImageNode, &mut Visibility),
+        (
+            With<DialogueBackgroundImage>,
+            Without<StagePortraitImage>,
+            Without<StagePortraitName>,
+        ),
+    >,
 ) {
     for (StagePortraitImage(slot), mut image_node, mut vis) in img_q.iter_mut() {
         match stage.slots.get(slot) {

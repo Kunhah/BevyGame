@@ -9,8 +9,8 @@ use crate::quests::DialogueChoicePickedEvent;
 use crate::ui_style::{palette, radius, spacing};
 
 use super::runtime::{
-    ConditionContext, DialogueCatalog, DialogueRuntime, DialogueSelectedIndex, EffectDispatcher,
-    evaluate_condition,
+    ConditionContext, ConditionView, DialogueCatalog, DialogueRuntime, DialogueSelectedIndex,
+    EffectDispatcher, evaluate_condition,
 };
 use super::scene_player::{start_scene_playback_if_needed, ScenePlayback};
 use super::schema::{ChoiceNode, ChoiceOption, DialogueNode, LineNode, SceneNode, Speaker};
@@ -106,10 +106,10 @@ pub fn spawn_dialogue_box(
                         padding: UiRect::all(Val::Px(spacing::LG)),
                         border: UiRect::all(Val::Px(1.5)),
                         row_gap: Val::Px(spacing::SM),
+                        border_radius: BorderRadius::all(Val::Px(radius::LG)),
                         ..default()
                     },
                     BackgroundColor(palette::BG_PANEL),
-                    BorderRadius::all(Val::Px(radius::LG)),
                     BorderColor::all(palette::BORDER_ACCENT),
                     DialogueBox,
                 ))
@@ -147,7 +147,7 @@ pub fn create_first_dialogue(
         // dialogue box stays empty in that case until the timeline drops us
         // onto a Line/Choice.
         start_scene_playback_if_needed(&runtime, &catalog, &mut playback);
-        display_dialogue(&runtime, &catalog, &cond_ctx, index.0, &mut ui);
+        display_dialogue(&runtime, &catalog, &cond_ctx.view(), index.0, &mut ui);
         runtime.just_spawned = false;
     }
 }
@@ -181,7 +181,7 @@ pub fn gui_selection(
     let Some(DialogueNode::Choice(choice)) = runtime.current_node(&catalog) else {
         return;
     };
-    let visible = visible_options(&choice.options, &cond_ctx);
+    let visible = visible_options(&choice.options, &cond_ctx.view());
     if visible.is_empty() {
         return;
     }
@@ -199,7 +199,7 @@ pub fn gui_selection(
     };
     index.0 = Some(visible[next_visible_idx].0);
 
-    display_dialogue(&runtime, &catalog, &cond_ctx, index.0, &mut ui);
+    display_dialogue(&runtime, &catalog, &cond_ctx.view(), index.0, &mut ui);
 }
 
 // ---------------------------------------------------------------------------
@@ -221,7 +221,6 @@ pub fn interact(
     catalog: Res<DialogueCatalog>,
     mut index: ResMut<DialogueSelectedIndex>,
     mut playback: ResMut<ScenePlayback>,
-    cond_ctx: ConditionContext,
     mut effects: EffectDispatcher,
     mut events_dialogue_box: ResMut<Messages<DialogueBoxTriggerEvent>>,
     mut choice_picked: ResMut<Messages<DialogueChoicePickedEvent>>,
@@ -254,7 +253,6 @@ pub fn interact(
                 &catalog,
                 &mut index,
                 &mut playback,
-                &cond_ctx,
                 &mut effects,
                 &mut choice_picked,
                 &mut game_state,
@@ -300,7 +298,6 @@ fn advance_dialogue(
     catalog: &DialogueCatalog,
     index: &mut DialogueSelectedIndex,
     playback: &mut ScenePlayback,
-    cond_ctx: &ConditionContext,
     effects: &mut EffectDispatcher,
     choice_picked: &mut Messages<DialogueChoicePickedEvent>,
     game_state: &mut GameState,
@@ -316,7 +313,7 @@ fn advance_dialogue(
     let next_id = match node {
         DialogueNode::Line(LineNode { next, .. }) => next,
         DialogueNode::Choice(ChoiceNode { options, .. }) => {
-            let visible = visible_options(&options, cond_ctx);
+            let visible = visible_options(&options, &effects.condition_view());
             let Some(selected_visible) = find_visible_index(&visible, index.0) else {
                 return; // require a selection before advancing
             };
@@ -352,7 +349,7 @@ fn advance_dialogue(
         return;
     }
 
-    display_dialogue(runtime, catalog, cond_ctx, index.0, ui);
+    display_dialogue(runtime, catalog, &effects.condition_view(), index.0, ui);
 }
 
 // ---------------------------------------------------------------------------
@@ -375,13 +372,13 @@ pub fn redraw_when_runtime_changes(
     if !runtime.active || ui.box_query.iter().next().is_none() {
         return;
     }
-    display_dialogue(&runtime, &catalog, &cond_ctx, index.0, &mut ui);
+    display_dialogue(&runtime, &catalog, &cond_ctx.view(), index.0, &mut ui);
 }
 
 fn display_dialogue(
     runtime: &DialogueRuntime,
     catalog: &DialogueCatalog,
-    cond_ctx: &ConditionContext,
+    cond_ctx: &ConditionView,
     selected: Option<usize>,
     ui: &mut DialogueUiParams,
 ) {
@@ -443,7 +440,7 @@ fn render_choice_buttons(
     ui: &mut DialogueUiParams,
     box_entity: Entity,
     choice: &ChoiceNode,
-    cond_ctx: &ConditionContext,
+    cond_ctx: &ConditionView,
     selected: Option<usize>,
 ) {
     let visible = visible_options(&choice.options, cond_ctx);
@@ -463,6 +460,7 @@ fn render_choice_buttons(
                         padding: UiRect::horizontal(Val::Px(spacing::MD)),
                         justify_content: JustifyContent::Center,
                         align_items: AlignItems::Center,
+                        border_radius: BorderRadius::all(Val::Px(radius::MD)),
                         ..default()
                     },
                     BackgroundColor(if is_selected {
@@ -470,7 +468,6 @@ fn render_choice_buttons(
                     } else {
                         palette::BG_BUTTON
                     }),
-                    BorderRadius::all(Val::Px(radius::MD)),
                     ChoiceButton,
                 ))
                 .with_children(|btn| {
@@ -508,7 +505,7 @@ fn despawn_box(ui: &mut DialogueUiParams) {
 
 fn visible_options<'a>(
     options: &'a [ChoiceOption],
-    cond_ctx: &ConditionContext,
+    cond_ctx: &ConditionView,
 ) -> Vec<(usize, &'a ChoiceOption)> {
     options
         .iter()

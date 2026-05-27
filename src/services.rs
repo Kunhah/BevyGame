@@ -523,10 +523,10 @@ fn ensure_transport_ui_root(
                 bottom: Val::Percent(10.0),
                 padding: UiRect::all(Val::Px(spacing::LG)),
                 border: UiRect::all(Val::Px(1.5)),
+                border_radius: BorderRadius::all(Val::Px(radius::LG)),
                 ..default()
             },
             BackgroundColor(palette::BG_PANEL),
-            BorderRadius::all(Val::Px(radius::LG)),
             BorderColor::all(palette::BORDER_ACCENT),
             Text::new("Transport UI"),
             TextFont {

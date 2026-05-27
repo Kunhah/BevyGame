@@ -1377,10 +1377,10 @@ pub fn update_travel_ui(
                     top: Val::Px(spacing::XL),
                     padding: UiRect::all(Val::Px(spacing::MD)),
                     border: UiRect::all(Val::Px(1.0)),
+                    border_radius: BorderRadius::all(Val::Px(radius::MD)),
                     ..default()
                 },
                 BackgroundColor(palette::BG_PANEL),
-                BorderRadius::all(Val::Px(radius::MD)),
                 BorderColor::all(palette::BORDER_SUBTLE),
                 MapTravelUiText,
             ))

@@ -80,10 +80,10 @@ pub fn panel(width_px: f32) -> impl Bundle {
             row_gap: Val::Px(spacing::MD),
             padding: UiRect::all(Val::Px(spacing::XL)),
             border: UiRect::all(Val::Px(1.0)),
+            border_radius: BorderRadius::all(Val::Px(radius::LG)),
             ..default()
         },
         BackgroundColor(palette::BG_PANEL),
-        BorderRadius::all(Val::Px(radius::LG)),
         BorderColor::all(palette::BORDER_SUBTLE),
     )
 }
@@ -98,10 +98,10 @@ pub fn floating_panel(width_px: f32) -> impl Bundle {
             row_gap: Val::Px(spacing::SM),
             padding: UiRect::all(Val::Px(spacing::LG)),
             border: UiRect::all(Val::Px(1.0)),
+            border_radius: BorderRadius::all(Val::Px(radius::MD)),
             ..default()
         },
         BackgroundColor(palette::BG_PANEL),
-        BorderRadius::all(Val::Px(radius::MD)),
         BorderColor::all(palette::BORDER_ACCENT),
     )
 }
@@ -114,6 +114,7 @@ pub fn button_node(height_px: f32) -> Node {
         align_items: AlignItems::Center,
         padding: UiRect::all(Val::Px(spacing::SM)),
         border: UiRect::all(Val::Px(1.5)),
+        border_radius: BorderRadius::all(Val::Px(radius::MD)),
         ..default()
     }
 }
@@ -121,7 +122,6 @@ pub fn button_node(height_px: f32) -> Node {
 pub fn button_visual() -> impl Bundle {
     (
         BackgroundColor(palette::BG_BUTTON),
-        BorderRadius::all(Val::Px(radius::MD)),
         BorderColor::all(palette::BORDER),
     )
 }

@@ -20,7 +20,7 @@ use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::dialogue::{
-    ConditionContext, DialogueCatalog, DialogueRuntime, EffectDispatcher, evaluate_condition,
+    DialogueCatalog, DialogueRuntime, EffectDispatcher, evaluate_condition,
     Condition, Effect,
 };
 use crate::map::AreaChanged;
@@ -197,31 +197,36 @@ pub struct WorldRuleMutationParams<'w, 's> {
 pub fn evaluate_world_rules(
     catalog: Res<WorldRuleCatalog>,
     mut fire_log: ResMut<WorldRuleFireLog>,
-    mut readers: WorldRuleEventReaders,
-    cond_ctx: ConditionContext,
-    mut effects: EffectDispatcher,
+    // `EffectDispatcher` writes `FlagChangedEvent`, which the readers also read.
+    // Bevy 0.18 rejects `Res<Messages<T>>` + `ResMut<Messages<T>>` in one system,
+    // so they share a `ParamSet`: we drain triggers via `p0()` first, then fire
+    // effects via `p1()` — matching the "collect, then fire" design below.
+    mut io: ParamSet<(WorldRuleEventReaders, EffectDispatcher)>,
     mut mutations: WorldRuleMutationParams,
 ) {
     // Collect every incoming trigger this frame, in a single owned Vec so the
     // borrows on the message buffers can be released before we start firing
     // dialogue effects (which themselves reach back into Messages).
     let mut incoming: Vec<IncomingTrigger> = Vec::new();
-    for ev in readers.flags.read() {
-        incoming.push(if ev.set {
-            IncomingTrigger::FlagSet(ev.name.clone())
-        } else {
-            IncomingTrigger::FlagCleared(ev.name.clone())
-        });
-    }
-    for ev in readers.area.read() {
-        incoming.push(IncomingTrigger::AreaEntered { to: ev.to });
-    }
-    for ev in readers.choice.read() {
-        incoming.push(IncomingTrigger::DialogueChoicePicked { event_id: ev.event_id });
-    }
-    for ev in readers.quest.read() {
-        if matches!(ev.status, QuestStatus::Completed) {
-            incoming.push(IncomingTrigger::QuestCompleted { quest_id: ev.quest_id });
+    {
+        let mut readers = io.p0();
+        for ev in readers.flags.read() {
+            incoming.push(if ev.set {
+                IncomingTrigger::FlagSet(ev.name.clone())
+            } else {
+                IncomingTrigger::FlagCleared(ev.name.clone())
+            });
+        }
+        for ev in readers.area.read() {
+            incoming.push(IncomingTrigger::AreaEntered { to: ev.to });
+        }
+        for ev in readers.choice.read() {
+            incoming.push(IncomingTrigger::DialogueChoicePicked { event_id: ev.event_id });
+        }
+        for ev in readers.quest.read() {
+            if matches!(ev.status, QuestStatus::Completed) {
+                incoming.push(IncomingTrigger::QuestCompleted { quest_id: ev.quest_id });
+            }
         }
     }
 
@@ -229,6 +234,7 @@ pub fn evaluate_world_rules(
         return;
     }
 
+    let mut effects = io.p1();
     for rule in &catalog.rules {
         if rule.once && fire_log.0.contains(&rule.id) {
             continue;
@@ -241,7 +247,7 @@ pub fn evaluate_world_rules(
             continue;
         }
         if let Some(cond) = &rule.condition {
-            if !evaluate_condition(cond, &cond_ctx) {
+            if !evaluate_condition(cond, &effects.condition_view()) {
                 continue;
             }
         }

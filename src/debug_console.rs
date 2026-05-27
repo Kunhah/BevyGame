@@ -74,10 +74,10 @@ fn setup_console_ui(mut commands: Commands) {
                 position_type: PositionType::Absolute,
                 left: Val::Px(spacing::MD),
                 bottom: Val::Px(spacing::MD),
+                border_radius: BorderRadius::all(Val::Px(radius::MD)),
                 ..default()
             },
             BackgroundColor(palette::BG_PANEL_SUNK),
-            BorderRadius::all(Val::Px(radius::MD)),
             BorderColor::all(palette::BORDER_SUBTLE),
             DebugConsoleRoot,
             Visibility::Hidden,
