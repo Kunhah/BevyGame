@@ -327,7 +327,8 @@ fn handle_target_click(
     let Some((camera, camera_tf)) = camera_q.iter().next() else { return };
     let Some(window) = windows.iter().next() else { return };
     let Some(screen_pos) = window.cursor_position() else { return };
-    let Ok(cursor_world) = camera.viewport_to_world_2d(camera_tf, screen_pos) else {
+    let Some(cursor_world) = crate::render3d::cursor_to_ground(camera, camera_tf, screen_pos)
+    else {
         return;
     };
 

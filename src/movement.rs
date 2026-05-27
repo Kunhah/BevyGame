@@ -38,16 +38,16 @@ pub struct TravelTimeAccumulator {
     pub last_tile: Option<IVec2>,
 }
 
-pub fn fade_out_system(mut commands: Commands, time: Res<Time>, mut query: Query<(Entity, &mut FadeOutTimer, &mut Sprite)>) {
-    for (entity, mut timer, mut sprite) in query.iter_mut() {
-        timer.0.tick(time.delta());
-        if timer.0.just_finished() {
+pub fn fade_out_system(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut query: Query<(Entity, &mut FadeOutTimer)>,
+) {
+    // Path-preview markers are 3D meshes now (no sprite alpha to fade), so this
+    // just despawns them when their timer elapses.
+    for (entity, mut timer) in query.iter_mut() {
+        if timer.0.tick(time.delta()).just_finished() {
             commands.entity(entity).despawn();
-        } else {
-            // One srgba conversion instead of three.
-            let srgba = sprite.color.to_srgba();
-            let new_alpha = (srgba.alpha - 0.01).max(0.0);
-            sprite.color = Color::srgba(srgba.red, srgba.green, srgba.blue, new_alpha);
         }
     }
 }
@@ -98,20 +98,12 @@ pub fn player_movement(
         return;
     }
 
+    // WSAD now drives the camera (see render3d::drive_camera); the player moves
+    // by click-to-move pathfinding (exploration: MoveAlongPath; battle:
+    // CombatMoveTarget). `direction` is only populated from a battle move target
+    // below.
     let mut direction = Vec2::ZERO;
-
-    if input.pressed(KeyCode::KeyW) {
-        direction.y += 1.0;
-    }
-    if input.pressed(KeyCode::KeyS) {
-        direction.y -= 1.0;
-    }
-    if input.pressed(KeyCode::KeyD) {
-        direction.x += 1.0;
-    }
-    if input.pressed(KeyCode::KeyA) {
-        direction.x -= 1.0;
-    }
+    let _ = &input;
 
     let base_movement_speed = PLAYER_SPEED * time.delta_secs();
 
@@ -405,34 +397,8 @@ pub fn accumulate_manual_travel_time(
     ));
 }
 
-/// Continuous camera follow. Honors the existing camera-lock toggle (`L`):
-/// when `Global_Variables.camera_locked` is false the camera stays put for
-/// free-roam. Lerps with `CAMERA_FOLLOW_SPEED` so the camera doesn't snap.
-pub fn camera_follow_player(
-    time: Res<Time>,
-    globals: Res<Global_Variables>,
-    player_q: Query<&Transform, (With<Player>, Without<MainCamera>)>,
-    mut camera_q: Query<&mut Transform, With<MainCamera>>,
-) {
-    const CAMERA_FOLLOW_SPEED: f32 = 8.0;
-    if !globals.0.camera_locked {
-        return;
-    }
-    let Ok(player_tf) = player_q.single() else {
-        return;
-    };
-    let Ok(mut cam_tf) = camera_q.single_mut() else {
-        return;
-    };
-    // Isometric follow: the camera keeps a fixed offset/orientation and tracks a
-    // focus point on the XY ground under the player. Target the desired camera
-    // position (player ground point + fixed iso offset) directly and lerp toward
-    // it, so the focus can't drift off the player.
-    let focus = Vec3::new(player_tf.translation.x, player_tf.translation.y, 0.0);
-    let desired = focus + crate::render3d::iso_camera_offset();
-    let alpha = (time.delta_secs() * CAMERA_FOLLOW_SPEED).clamp(0.0, 1.0);
-    cam_tf.translation = cam_tf.translation.lerp(desired, alpha);
-}
+// `camera_follow_player` was replaced by `render3d::drive_camera`, which owns
+// the camera (follow + WSAD pan nudge + Q/E spin + R/F tilt + wheel zoom).
 
 pub fn toggle_camera_lock(
     mut param_set: ParamSet<(
@@ -497,7 +463,9 @@ pub fn mouse_click(
             let Some(screen_pos) = window.cursor_position() else {
                 return;
             };
-            let Ok(target_world) = camera.viewport_to_world_2d(camera_transform, screen_pos) else {
+            let Some(target_world) =
+                crate::render3d::cursor_to_ground(camera, camera_transform, screen_pos)
+            else {
                 return;
             };
             let remaining = mp_opt.as_ref().map(|mp| mp.remaining).unwrap_or(0.0);
@@ -653,14 +621,15 @@ fn find_path(
                     y: position.y,
                 };
 
-                let target_position = match camera.viewport_to_world_2d(camera_transform, screen_pos) {
-                    Ok(target_position) => target_position,
-                    Err(_) => return None,
+                let Some(target_world) =
+                    crate::render3d::cursor_to_ground(camera, camera_transform, screen_pos)
+                else {
+                    return None;
                 };
 
                 let target_position: Position = Position {
-                    x: target_position.x as i32,
-                    y: target_position.y as i32,
+                    x: target_world.x as i32,
+                    y: target_world.y as i32,
                 };
 
                 let path = pathfinding(&quad_tree, current_position, target_position, margin);
