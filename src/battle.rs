@@ -684,16 +684,9 @@ pub fn combat_movement_system(
             }
         }
     }
-        if camera_locked {
-            if let (Some(new_x), Some(new_y)) = (new_x_out, new_y_out) {
-                for mut transform_c in param_set.p1().iter_mut() {
-                    transform_c.translation.x = new_x;
-                    transform_c.translation.y = new_y;
-                }
-            } else {
-                warn!("Camera lock update skipped due to missing coordinates");
-            }
-        }
+        // Camera following is owned by `camera_follow_player` (iso offset); the
+        // old 2D snap-to-player here fought it and caused jitter.
+        let _ = (new_x_out, new_y_out, camera_locked);
     }
 }
 

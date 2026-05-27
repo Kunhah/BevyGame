@@ -849,9 +849,10 @@ fn travel_to_destination(
         warn!("travel_to_destination: player transform not found");
     }
 
+    // Snap the iso camera to the destination (ground focus + fixed offset) so a
+    // long-distance travel lands cleanly instead of panning across the world.
     if let Some(mut cam_tf) = camera_q.iter_mut().next() {
-        cam_tf.translation.x = world_center.x;
-        cam_tf.translation.y = world_center.y;
+        cam_tf.translation = world_center.extend(0.0) + crate::render3d::iso_camera_offset();
     } else {
         warn!("travel_to_destination: camera transform not found");
     }
@@ -1057,7 +1058,6 @@ pub fn handle_local_map_boundary_crossing(
     mut timestamp: ResMut<Timestamp>,
     mut area_changed: ResMut<Messages<AreaChanged>>,
     mut player_q: Query<&mut Transform, With<Player>>,
-    mut camera_q: Query<&mut Transform, (With<MainCamera>, Without<Player>)>,
 ) {
     if game_state.0 != Game_State::Exploring {
         return;
@@ -1103,10 +1103,6 @@ pub fn handle_local_map_boundary_crossing(
         let clamped = clamp_world_inside_tile(next_world, current_tile);
         player_tf.translation.x = clamped.x;
         player_tf.translation.y = clamped.y;
-        if let Ok(mut cam_tf) = camera_q.single_mut() {
-            cam_tf.translation.x = clamped.x;
-            cam_tf.translation.y = clamped.y;
-        }
         return;
     }
 
@@ -1118,10 +1114,6 @@ pub fn handle_local_map_boundary_crossing(
         let clamped = clamp_world_inside_tile(next_world, current_tile);
         player_tf.translation.x = clamped.x;
         player_tf.translation.y = clamped.y;
-        if let Ok(mut cam_tf) = camera_q.single_mut() {
-            cam_tf.translation.x = clamped.x;
-            cam_tf.translation.y = clamped.y;
-        }
         return;
     }
 
@@ -1146,11 +1138,6 @@ pub fn handle_local_map_boundary_crossing(
     let clamped = clamp_world_inside_tile(next_world, destination_tile);
     player_tf.translation.x = clamped.x;
     player_tf.translation.y = clamped.y;
-
-    if let Ok(mut cam_tf) = camera_q.single_mut() {
-        cam_tf.translation.x = clamped.x;
-        cam_tf.translation.y = clamped.y;
-    }
 
     if previous_area != current_area.0 {
         area_changed.write(AreaChanged {

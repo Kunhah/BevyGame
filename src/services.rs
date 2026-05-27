@@ -648,8 +648,7 @@ fn handle_transport_ui_input(
         tf.translation.y = world_center.y;
     }
     if let Ok(mut cam_tf) = camera_q.single_mut() {
-        cam_tf.translation.x = world_center.x;
-        cam_tf.translation.y = world_center.y;
+        cam_tf.translation = world_center.extend(0.0) + crate::render3d::iso_camera_offset();
     }
 
     state.open = false;

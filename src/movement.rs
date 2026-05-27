@@ -115,8 +115,6 @@ pub fn player_movement(
 
     let base_movement_speed = PLAYER_SPEED * time.delta_secs();
 
-    let camera_locked = param_set.p2().0.camera_locked;
-
     let battle_move = game_state.0 == Game_State::Battle;
 
     if direction.length() == 0.0 && battle_move {
@@ -326,16 +324,10 @@ pub fn player_movement(
                 }
             }
         }
-        if camera_locked {
-            if let (Some(new_x), Some(new_y)) = (new_x_out, new_y_out) {
-                for mut transform_c in param_set.p1().iter_mut() {
-                    transform_c.translation.x = new_x;
-                    transform_c.translation.y = new_y;
-                }
-            } else {
-                warn!("Camera lock update skipped due to missing coordinates");
-            }
-        }
+        // Camera following is owned solely by `camera_follow_player` (it applies
+        // the fixed isometric offset). The old 2D code snapped the camera onto
+        // the player's x/y here, which fought the iso follow and caused jitter.
+        let _ = (new_x_out, new_y_out);
     }
 }
 

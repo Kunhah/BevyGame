@@ -240,8 +240,8 @@ pub fn handle_save_requests(
                 }
                 if let Ok(mut cam_tf) = camera_q.single_mut() {
                     let loaded = Vec3::from(data.player_world);
-                    cam_tf.translation.x = loaded.x;
-                    cam_tf.translation.y = loaded.y;
+                    cam_tf.translation =
+                        Vec3::new(loaded.x, loaded.y, 0.0) + crate::render3d::iso_camera_offset();
                 }
 
                 game_state.0 = Game_State::Exploring;
