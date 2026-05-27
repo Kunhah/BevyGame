@@ -25,7 +25,7 @@ use serde::{Deserialize, Serialize};
 use crate::battle::EnemyEncounter;
 use crate::combat_plugin::{DeathEvent, Experience, Level};
 use crate::core::Player;
-use crate::dialogue::{Dialogue_State, Selected_Choice};
+use crate::dialogue::DialogueRuntime;
 use crate::governance::{ReputationChangeEvent, ReputationLedger, ReputationTarget};
 use crate::map::AreaChanged;
 
@@ -782,37 +782,47 @@ fn grant_reward(
 // ---------------------------------------------------------------------------
 
 fn watch_dialogue_completion(
-    dialogue_state: Res<Dialogue_State>,
-    mut last_id: Local<Option<String>>,
+    runtime: Res<DialogueRuntime>,
+    mut last_node: Local<Option<String>>,
     mut writer: MessageWriter<DialogueCompletedEvent>,
 ) {
-    let current = dialogue_state.0.current_id.clone();
-    if let (Some(prev), None) = (last_id.as_ref(), current.as_ref()) {
+    let current = runtime.current_node.clone();
+    if let (Some(prev), None) = (last_node.as_ref(), current.as_ref()) {
+        // Existing quest data targets the legacy node id (e.g. "The last
+        // goodbye 24"), which equals the current runtime node id since the
+        // compat shim preserves ids during conversion.
         writer.write(DialogueCompletedEvent {
             dialogue_id: prev.clone(),
         });
     }
-    *last_id = current;
-}
-
-fn watch_dialogue_choice(
-    selected: Res<Selected_Choice>,
-    mut last_event: Local<u32>,
-    mut writer: MessageWriter<DialogueChoicePickedEvent>,
-) {
-    // Selected_Choice is reset to default (event = 0) after a confirmation
-    // is processed. Fire when the event id transitions from 0 to non-zero —
-    // that's the frame on which the player just locked in a choice.
-    let current = selected.0.event;
-    if current != 0 && *last_event == 0 {
-        writer.write(DialogueChoicePickedEvent { event_id: current });
-    }
-    *last_event = current;
+    *last_node = current;
 }
 
 // ---------------------------------------------------------------------------
 // Hunts (Merchant-issued quests)
 // ---------------------------------------------------------------------------
+
+/// A constraint attached to a hunt. Each hunt carries a list of these so
+/// designers can author varied hunt rules — "kill exactly this yokai", "but
+/// don't trip the village alarm", "and finish before the next dawn".
+///
+/// The shipped `Hunt` already pins the primary `target_enemy_id` and
+/// `deadline_timestamp`; `HuntCondition` is for additional per-hunt rules
+/// beyond those defaults.
+#[derive(Debug, Clone)]
+#[allow(dead_code)] // NoFlag / DeadlineTicks wired progressively as content lands
+pub enum HuntCondition {
+    /// The hunt completes when this encounter id dies in battle. The hunt's
+    /// `target_enemy_id` is the implicit primary `KillEnemy`; additional
+    /// `KillEnemy` entries demand multi-target hunts.
+    KillEnemy { encounter_id: u32 },
+    /// Hunt fails if this story flag becomes set during the hunt window.
+    NoFlag(String),
+    /// Hunt fails if not completed by `Timestamp.0 == ticks`. Independent
+    /// of the `Hunt.deadline_timestamp` neglect deadline (which is a soft
+    /// "one week then forfeit" timer).
+    DeadlineTicks(u32),
+}
 
 /// Hunt-specific metadata layered on top of a regular Quest. The objective(s)
 /// live in the parent `Quest` (typically a `Kill` objective on the target
@@ -831,6 +841,14 @@ pub struct Hunt {
     /// Set to a specific bound character when the hunt is assigned to one;
     /// drives whose performance changes on completion / failure / neglect.
     pub assigned_to: Option<Entity>,
+    /// Optional dialogue-scene id played when the player approaches the
+    /// hunt target world entity. The cutscene runs first, then combat
+    /// starts via `start_pending_hunt_battle`. `None` means combat starts
+    /// directly on approach.
+    pub pre_battle_scene: Option<String>,
+    /// Per-hunt rules beyond the implicit "kill the target" + neglect
+    /// deadline. See [`HuntCondition`].
+    pub conditions: Vec<HuntCondition>,
 }
 
 #[derive(Resource, Default)]
@@ -902,6 +920,128 @@ pub fn process_hunt_deadlines(
                 assigned_to: hunt.assigned_to,
                 neglected: true,
             });
+        }
+    }
+}
+
+/// Detect when a hunt target dies in battle and emit `HuntCompletedEvent`.
+///
+/// The implicit completion rule is "the active battle's enemy id matches a
+/// `Hunt.target_enemy_id`". The `KillEnemy` entries in
+/// `Hunt.conditions` are the multi-target extension (any one matching id
+/// counts).
+///
+/// `NoFlag` and `DeadlineTicks` failure conditions are checked by their own
+/// systems (`fail_active_hunt_on_no_flag`, `fail_active_hunt_on_deadline`).
+pub fn detect_hunt_completion_on_enemy_death(
+    mut deaths: MessageReader<crate::combat_plugin::DeathEvent>,
+    participants_q: Query<
+        &crate::battle::BattleSide,
+        With<crate::battle::BattleParticipant>,
+    >,
+    battle_state: Res<crate::battle::BattleState>,
+    hunts: Res<HuntRegistry>,
+    log: Res<QuestLog>,
+    timestamp: Res<crate::core::Timestamp>,
+    mut writer: MessageWriter<HuntCompletedEvent>,
+) {
+    let Some(active_id) = battle_state.enemy_id else {
+        return;
+    };
+    for ev in deaths.read() {
+        let Ok(side) = participants_q.get(ev.entity) else {
+            continue;
+        };
+        if !matches!(side, crate::battle::BattleSide::Enemy) {
+            continue;
+        }
+        for hunt in hunts.0.values() {
+            let Some(quest) = log.quests.get(&hunt.quest_id) else {
+                continue;
+            };
+            if !matches!(quest.status, QuestStatus::Active) {
+                continue;
+            }
+            let primary_match = hunt.target_enemy_id == active_id;
+            let extra_match = hunt.conditions.iter().any(|c| {
+                matches!(
+                    c,
+                    HuntCondition::KillEnemy { encounter_id } if *encounter_id == active_id
+                )
+            });
+            if !(primary_match || extra_match) {
+                continue;
+            }
+            writer.write(HuntCompletedEvent {
+                quest_id: hunt.quest_id,
+                completer: ev.killer,
+                coin_reward: hunt.coin_reward,
+                completed_late: timestamp.0 > hunt.deadline_timestamp,
+            });
+        }
+    }
+}
+
+/// `NoFlag` condition: hunt fails if a forbidden flag becomes set during
+/// the hunt window.
+pub fn fail_active_hunt_on_no_flag(
+    mut events: MessageReader<crate::story_flags::FlagChangedEvent>,
+    hunts: Res<HuntRegistry>,
+    log: Res<QuestLog>,
+    mut writer: MessageWriter<HuntFailedEvent>,
+) {
+    for ev in events.read() {
+        if !ev.set {
+            continue;
+        }
+        for hunt in hunts.0.values() {
+            let Some(quest) = log.quests.get(&hunt.quest_id) else {
+                continue;
+            };
+            if !matches!(quest.status, QuestStatus::Active) {
+                continue;
+            }
+            for cond in &hunt.conditions {
+                if let HuntCondition::NoFlag(name) = cond {
+                    if name == &ev.name {
+                        writer.write(HuntFailedEvent {
+                            quest_id: hunt.quest_id,
+                            assigned_to: hunt.assigned_to,
+                            neglected: false,
+                        });
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// `DeadlineTicks` condition: hunt fails when `Timestamp` passes the
+/// per-condition deadline (independent of the soft neglect deadline).
+pub fn fail_active_hunt_on_deadline(
+    timestamp: Res<crate::core::Timestamp>,
+    hunts: Res<HuntRegistry>,
+    log: Res<QuestLog>,
+    mut writer: MessageWriter<HuntFailedEvent>,
+) {
+    let now = timestamp.0;
+    for hunt in hunts.0.values() {
+        let Some(quest) = log.quests.get(&hunt.quest_id) else {
+            continue;
+        };
+        if !matches!(quest.status, QuestStatus::Active) {
+            continue;
+        }
+        for cond in &hunt.conditions {
+            if let HuntCondition::DeadlineTicks(deadline) = cond {
+                if now >= *deadline {
+                    writer.write(HuntFailedEvent {
+                        quest_id: hunt.quest_id,
+                        assigned_to: hunt.assigned_to,
+                        neglected: false,
+                    });
+                }
+            }
         }
     }
 }
@@ -989,9 +1129,11 @@ impl Plugin for QuestPlugin {
                     trigger_on_death,
                     trigger_on_reach,
                     watch_dialogue_completion,
-                    watch_dialogue_choice,
                     fulfill_quest_rewards,
                     process_hunt_deadlines,
+                    detect_hunt_completion_on_enemy_death,
+                    fail_active_hunt_on_no_flag,
+                    fail_active_hunt_on_deadline,
                     handle_hunt_completion_system,
                     handle_hunt_failure_system,
                 ),

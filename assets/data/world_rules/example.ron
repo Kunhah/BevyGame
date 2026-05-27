@@ -1,0 +1,51 @@
+// Demo world-rule file. Each entry is a `WorldRule`. Authoring reference:
+//   triggers: list of trigger variants; rule fires if ANY matches an event
+//             that frame. Variants serialize as snake_case (e.g.
+//             `flag_set`, `any_area_entered`, `quest_completed`).
+//   condition: optional dialogue-style Condition AST (`flag` / `not_flag` /
+//              `has_item` / `quest_status` / `reputation_at_least` / `all` /
+//              `any` / `not`). AND-ed with the trigger.
+//   actions:  `effect(...)` wraps a dialogue effect (set_flag, reputation,
+//             give_item, play_music, ...). `despawn_named` /
+//             `set_sprite_image` / `start_dialogue_scene` are world
+//             mutations.
+//   once:     true → fires at most once per game session.
+
+[
+    // When the player crosses into any region for the first time, mark a
+    // flag that other rules / dialogues can branch on.
+    (
+        id: "first_arrival",
+        triggers: [any_area_entered],
+        condition: Some(not_flag("seen_first_region")),
+        actions: [
+            effect(set_flag("seen_first_region")),
+        ],
+        once: true,
+    ),
+
+    // Example: a "village destroyed" flag despawns the local merchant and
+    // swaps the shrine's sprite. Triggered by another flag the dialogue or
+    // quest system would set.
+    (
+        id: "village_falls",
+        triggers: [flag_set("village_destroyed")],
+        actions: [
+            despawn_named("village_merchant"),
+            set_sprite_image(name: "village_shrine", image: "props/shrine_burned.png"),
+        ],
+        once: true,
+    ),
+
+    // Completing a specific quest fires a follow-up dialogue scene.
+    (
+        id: "merchant_followup_after_first_hunt",
+        triggers: [quest_completed(quest_id: 1)],
+        condition: Some(not_flag("first_hunt_followup_played")),
+        actions: [
+            effect(set_flag("first_hunt_followup_played")),
+            start_dialogue_scene("interactable_demo"),
+        ],
+        once: true,
+    ),
+]

@@ -1,0 +1,38 @@
+// World-rule consequences for the vertical slice.
+//
+// `slice_intro_accepted` and `slice_intro_hesitated` are set by the choice
+// in `slice_merchant_intro.ron`. Wire downstream village/hunt content here
+// once the area exists.
+
+[
+    // Acknowledgement that the intro played at all — useful as a guard for
+    // later beats so they don't trip before the cutscene resolves.
+    (
+        id: "slice_intro_done",
+        triggers: [
+            flag_set("slice_intro_accepted"),
+            flag_set("slice_intro_hesitated"),
+        ],
+        actions: [
+            effect(set_flag("slice_intro_done")),
+        ],
+        once: true,
+    ),
+
+    // Placeholder for the "one consequence" of the slice. Fires when the
+    // hunt is completed. The actual hunt setup (encounter spawn, kill
+    // detection) is a follow-up — when wired, set "slice_yokai_killed" from
+    // the kill handler and this rule will react.
+    (
+        id: "slice_village_changed",
+        triggers: [flag_set("slice_yokai_killed")],
+        condition: Some(flag("slice_intro_done")),
+        actions: [
+            // TODO: replace with the real village mutations once the village
+            // is hand-built (despawn villagers who fled, swap shrine sprite,
+            // etc.). Demonstrating the wiring with a flag for now.
+            effect(set_flag("slice_village_post_hunt")),
+        ],
+        once: true,
+    ),
+]

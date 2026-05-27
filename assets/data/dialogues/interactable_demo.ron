@@ -1,0 +1,41 @@
+(
+    id: "interactable_demo",
+    background: None,
+    music: None,
+    start: "Interactable 1",
+    nodes: {
+        "Interactable 3": line((
+            speaker: (
+                name: "Gustav",
+                slot: slot1,
+                expression: None,
+            ),
+            text: "I hope yes",
+            on_enter: [],
+            condition: None,
+            next: None,
+        )),
+        "Interactable 2": line((
+            speaker: (
+                name: "Gustav",
+                slot: slot1,
+                expression: None,
+            ),
+            text: "Are you having fun?",
+            on_enter: [],
+            condition: None,
+            next: Some("Interactable 3"),
+        )),
+        "Interactable 1": line((
+            speaker: (
+                name: "Gustav",
+                slot: slot1,
+                expression: None,
+            ),
+            text: "Hello contractor",
+            on_enter: [],
+            condition: None,
+            next: Some("Interactable 2"),
+        )),
+    },
+)

@@ -2,8 +2,9 @@ use bevy::prelude::*;
 
 use crate::battle::{CombatMovePoints, EnemyEncounter, WorldAlly, WorldNpc, WorldYokai, YokaiKind};
 use crate::city_data::CityCatalog;
+use crate::combat_plugin::{Bound, CombatStats, ResurrectionPoint, ResurrectionStanding, StatPool};
 use crate::core::{MainCamera, Player, Position};
-use crate::dialogue::{load_dialogue, CachedInteractables, Dialogue_Data, Interactable};
+use crate::dialogue::{CachedInteractables, Interactable};
 use crate::economy::{MerchantNpc, Merchants};
 use crate::governance::GovernorNpc;
 use crate::light_plugin::Occluder;
@@ -59,9 +60,6 @@ pub fn setup(
 
     commands.insert_resource(QuadTree(quadtree));
 
-    let dialogue_data = load_dialogue();
-    commands.insert_resource(Dialogue_Data(dialogue_data));
-
     commands
         .spawn((
             Camera2d,
@@ -70,6 +68,8 @@ pub fn setup(
             Transform::from_xyz(world_origin.x, world_origin.y, MAIN_CAMERA_HEIGHT),
         ));
 
+    let mut player_stats = CombatStats::default();
+    player_stats.health = StatPool::<i32>::new(120);
     commands.spawn((
         Sprite {
             image: asset_server.load("character.png"),
@@ -78,10 +78,31 @@ pub fn setup(
         },
         Transform::from_translation(origin3),
         Player,
+        // The player has signed the Merchant's Contract; this drives
+        // resurrection eligibility (combat_plugin::enqueue_resurrection_on_death).
+        Bound,
+        ResurrectionStanding::default(),
+        player_stats,
         VisualOcclusionTarget,
         YSort { base_z: 0.0 },
         crate::light_plugin::LightSensitive { threshold: 0.15 },
         CombatMovePoints::default(),
+    ));
+
+    // Shrine: the player respawns at this location after the resurrection
+    // delay elapses. Spawned once at world setup; the
+    // `teleport_on_resurrection` system snaps any resurrected entity to the
+    // closest one.
+    commands.spawn((
+        Sprite {
+            image: asset_server.load("character.png"),
+            color: Color::srgb(0.55, 0.75, 0.95),
+            custom_size: Some(Vec2::new(40.0, 40.0)),
+            ..default()
+        },
+        Transform::from_translation(origin3 + Vec3::new(-12.0 * 32.0, 4.0 * 32.0, 0.0)),
+        ResurrectionPoint,
+        YSort { base_z: 0.0 },
     ));
 
     commands.spawn((

@@ -1,12 +1,16 @@
 use bevy::input::keyboard::KeyCode;
 use bevy::input::mouse::MouseButton;
 use bevy::prelude::*;
+use bevy::prelude::Messages;
 
 use crate::combat_plugin::{
-    Abilities, AccumulatedSpeed, CombatStats, Experience, GrowthAttributes, Level,
-    MagicDistribution, PendingPlayerAction, PlayerAction, PlayerActionEvent, PlayerControlled,
-    StatModifiers, StatPool, TurnManager, TurnOrder, TurnStartEvent,
+    Abilities, AccumulatedSpeed, Bound, CombatStats, DeathEvent, Experience, GrowthAttributes,
+    Level, MagicDistribution, PendingPlayerAction, PlayerAction, PlayerActionEvent,
+    PlayerControlled, ResurrectionStanding, StatModifiers, StatPool, TurnManager, TurnOrder,
+    TurnStartEvent,
 };
+use crate::dialogue::{DialogueBoxTriggerEvent, DialogueCatalog, DialogueRuntime};
+use crate::quests::HuntRegistry;
 use crate::constants::{DEFAULT_ACTION_POINTS, GRID_HEIGHT, GRID_WIDTH, PLAYER_SPEED};
 use crate::core::{GameState, Game_State, Global_Variables, MainCamera, Player, Position};
 use crate::economy::MerchantNpc;
@@ -138,7 +142,7 @@ pub fn battle_trigger_system(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn start_battle(
+pub fn start_battle(
     commands: &mut Commands,
     battle_state: &mut BattleState,
     tm: &mut TurnManager,
@@ -895,6 +899,207 @@ pub fn test_log_button(
             battle_state.participants.len(),
             pending.entity
         );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Hunt trigger pipeline
+// ---------------------------------------------------------------------------
+
+/// Marks a world enemy entity as the target of a specific hunt. The
+/// proximity-trigger system uses `hunt_id` to look up the hunt's
+/// `pre_battle_scene` + conditions in [`HuntRegistry`].
+#[derive(Component, Debug, Clone, Copy)]
+pub struct HuntTarget {
+    pub hunt_id: u32,
+}
+
+/// Tagged on a hunt target after its pre-battle cutscene has played to
+/// prevent re-triggering on the same approach.
+#[derive(Component)]
+pub struct HuntCutscenePlayed;
+
+/// Battle queued to start after the pre-battle cutscene closes.
+#[derive(Resource, Default)]
+pub struct PendingHuntBattle {
+    pub hunt_target: Option<Entity>,
+}
+
+const HUNT_PROXIMITY_RADIUS: f32 = 96.0;
+
+/// When the player walks within `HUNT_PROXIMITY_RADIUS` of a `HuntTarget`,
+/// look up the hunt's `pre_battle_scene`. If set, play the cutscene and
+/// queue the battle for after the cutscene closes; otherwise battle starts
+/// immediately on the next frame via `start_pending_hunt_battle`.
+pub fn hunt_proximity_trigger(
+    mut commands: Commands,
+    catalog: Res<DialogueCatalog>,
+    mut runtime: ResMut<DialogueRuntime>,
+    mut events_dialogue_box: ResMut<Messages<DialogueBoxTriggerEvent>>,
+    mut game_state: ResMut<GameState>,
+    mut pending: ResMut<PendingHuntBattle>,
+    hunts: Res<HuntRegistry>,
+    player_q: Query<&Transform, (With<Player>, Without<HuntTarget>)>,
+    target_q: Query<(Entity, &Transform, &HuntTarget), Without<HuntCutscenePlayed>>,
+) {
+    if !matches!(game_state.0, Game_State::Exploring) {
+        return;
+    }
+    if runtime.active || pending.hunt_target.is_some() {
+        return;
+    }
+    let Ok(player_tf) = player_q.single() else {
+        return;
+    };
+    let player_pos = player_tf.translation.truncate();
+    for (entity, tf, target) in target_q.iter() {
+        if player_pos.distance(tf.translation.truncate()) > HUNT_PROXIMITY_RADIUS {
+            continue;
+        }
+        commands.entity(entity).insert(HuntCutscenePlayed);
+        pending.hunt_target = Some(entity);
+        if let Some(hunt) = hunts.0.get(&target.hunt_id) {
+            if let Some(scene) = hunt.pre_battle_scene.as_ref() {
+                if catalog.scenes.contains_key(scene)
+                    && runtime.start(scene.clone(), &catalog)
+                {
+                    events_dialogue_box.write(DialogueBoxTriggerEvent);
+                    game_state.0 = Game_State::Interacting;
+                    info!(
+                        "hunt_proximity_trigger: scene '{scene}' for hunt {}",
+                        target.hunt_id
+                    );
+                    return;
+                }
+                warn!(
+                    "hunt_proximity_trigger: scene '{scene}' missing for hunt {}",
+                    target.hunt_id
+                );
+            }
+        } else {
+            warn!(
+                "hunt_proximity_trigger: HuntTarget hunt_id {} not in HuntRegistry",
+                target.hunt_id
+            );
+        }
+        info!(
+            "hunt_proximity_trigger: hunt {} battle queued (no cutscene)",
+            target.hunt_id
+        );
+        return;
+    }
+}
+
+/// When the queued cutscene closes (or there was no cutscene), kick the
+/// real battle against the hunt target.
+pub fn start_pending_hunt_battle(
+    mut commands: Commands,
+    mut pending: ResMut<PendingHuntBattle>,
+    runtime: Res<DialogueRuntime>,
+    mut battle_state: ResMut<BattleState>,
+    mut tm: ResMut<TurnManager>,
+    mut turn_order: ResMut<TurnOrder>,
+    mut game_state: ResMut<GameState>,
+    player_q: Query<(Entity, &Transform), With<Player>>,
+    hunt_q: Query<
+        (&Transform, &EnemyEncounter, Option<&WorldYokai>),
+        With<HuntTarget>,
+    >,
+) {
+    let Some(target) = pending.hunt_target else {
+        return;
+    };
+    if runtime.active || battle_state.active {
+        return;
+    }
+    let Ok((player_entity, player_tf)) = player_q.single() else {
+        return;
+    };
+    let Ok((hunt_tf, encounter, yokai)) = hunt_q.get(target) else {
+        // World entity gone (despawned by some other path). Drop the queue.
+        pending.hunt_target = None;
+        return;
+    };
+    game_state.0 = Game_State::Battle;
+    start_battle(
+        &mut commands,
+        &mut battle_state,
+        &mut tm,
+        &mut turn_order,
+        encounter.id,
+        None,
+        None,
+        yokai.map(|y| y.kind),
+        target,
+        player_entity,
+        player_tf.translation,
+        hunt_tf.translation,
+        Vec::new(),
+    );
+    pending.hunt_target = None;
+}
+
+/// Copy `Bound` + `ResurrectionStanding` from the world entity onto any
+/// freshly-spawned battle participant for the player. Without this the death
+/// pipeline would refuse to enqueue a resurrection (it queries those
+/// components on the dying entity), and player loss would dead-end.
+pub fn sync_player_combat_bound(
+    mut commands: Commands,
+    new_participants: Query<
+        (Entity, &BattleWorldLink),
+        (Added<PlayerControlled>, With<BattleParticipant>),
+    >,
+    world_q: Query<(&Bound, &ResurrectionStanding), With<Player>>,
+) {
+    for (entity, link) in new_participants.iter() {
+        if let Ok((_, standing)) = world_q.get(link.world_entity) {
+            commands
+                .entity(entity)
+                .insert((Bound, standing.clone()));
+        }
+    }
+}
+
+/// When a player-controlled battle participant dies, end the battle
+/// ourselves (the shipped `end_battle_on_death` only ends on Enemy death)
+/// and re-emit `DeathEvent` on the world player so the existing
+/// resurrection pipeline (which queries `Bound` / `ResurrectionStanding` on
+/// the world entity) fires.
+pub fn bridge_player_death_to_world(
+    mut deaths: MessageReader<DeathEvent>,
+    mut world_deaths: MessageWriter<DeathEvent>,
+    participants_q: Query<
+        (&BattleSide, &BattleWorldLink),
+        (With<BattleParticipant>, With<PlayerControlled>),
+    >,
+    mut commands: Commands,
+    mut battle_state: ResMut<BattleState>,
+    mut tm: ResMut<TurnManager>,
+    mut turn_order: ResMut<TurnOrder>,
+    mut game_state: ResMut<GameState>,
+) {
+    for ev in deaths.read() {
+        let Ok((side, link)) = participants_q.get(ev.entity) else {
+            continue;
+        };
+        if !matches!(side, BattleSide::Ally) {
+            continue;
+        }
+        for entity in battle_state.participants.drain(..) {
+            commands.entity(entity).despawn();
+        }
+        tm.participants.clear();
+        turn_order.queue.clear();
+        battle_state.active = false;
+        battle_state.enemy_id = None;
+        game_state.0 = Game_State::Exploring;
+
+        world_deaths.write(DeathEvent {
+            entity: link.world_entity,
+            killer: ev.killer,
+        });
+        info!("bridge_player_death_to_world: player died in battle — bridged to world");
+        return;
     }
 }
 

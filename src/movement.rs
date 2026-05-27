@@ -413,6 +413,33 @@ pub fn accumulate_manual_travel_time(
     ));
 }
 
+/// Continuous camera follow. Honors the existing camera-lock toggle (`L`):
+/// when `Global_Variables.camera_locked` is false the camera stays put for
+/// free-roam. Lerps with `CAMERA_FOLLOW_SPEED` so the camera doesn't snap.
+pub fn camera_follow_player(
+    time: Res<Time>,
+    globals: Res<Global_Variables>,
+    player_q: Query<&Transform, (With<Player>, Without<MainCamera>)>,
+    mut camera_q: Query<&mut Transform, With<MainCamera>>,
+) {
+    const CAMERA_FOLLOW_SPEED: f32 = 8.0;
+    if !globals.0.camera_locked {
+        return;
+    }
+    let Ok(player_tf) = player_q.single() else {
+        return;
+    };
+    let Ok(mut cam_tf) = camera_q.single_mut() else {
+        return;
+    };
+    let target = player_tf.translation.truncate();
+    let current = cam_tf.translation.truncate();
+    let alpha = (time.delta_secs() * CAMERA_FOLLOW_SPEED).clamp(0.0, 1.0);
+    let smoothed = current.lerp(target, alpha);
+    cam_tf.translation.x = smoothed.x;
+    cam_tf.translation.y = smoothed.y;
+}
+
 pub fn toggle_camera_lock(
     mut param_set: ParamSet<(
         Query<&mut Transform, With<Player>>,

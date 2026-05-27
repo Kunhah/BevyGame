@@ -1,0 +1,27 @@
+// Tiny "do a quest" beat for the slice. The village elder warns the player
+// where the yokai is, sets a flag the world rules / future content can
+// branch on. Triggered by walking up to the elder NPC and pressing E.
+(
+    id: "slice_village_elder",
+    background: None,
+    music: None,
+    start: "elder_1",
+    nodes: {
+        "elder_1": line((
+            speaker: (name: "Village Elder", slot: slot4, expression: None),
+            text: "Hunter. The yokai walks the eastern path again. The shrine bells will not stop ringing tonight.",
+            on_enter: [
+                set_flag("slice_village_elder_warned"),
+            ],
+            condition: None,
+            next: Some("elder_2"),
+        )),
+        "elder_2": line((
+            speaker: (name: "Village Elder", slot: slot4, expression: None),
+            text: "If you fall, the shrine will call you back. It always does. Whether the village still stands when you return — that is on you.",
+            on_enter: [],
+            condition: None,
+            next: None,
+        )),
+    },
+)

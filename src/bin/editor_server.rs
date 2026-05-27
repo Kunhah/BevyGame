@@ -8,12 +8,15 @@
 // Endpoints:
 //   GET  /api/abilities          → JSON array of abilities (parsed from RON file)
 //   POST /api/abilities          ← JSON body, written back as RON
-//   GET  /api/dialogues          → JSON array of dialogues
-//   POST /api/dialogues          ← JSON body, written back as RON
+//   GET  /api/scenes             → JSON array of DialogueScenes (one per file)
+//   POST /api/scenes             ← JSON body of scenes; one .ron per scene id
 //   GET  /                       → tools/editors/index.html
 //   GET  /<file>                 → static file under tools/editors/
 //
 // Run with: cargo run --bin editor_server  (defaults to 127.0.0.1:8000)
+
+#[path = "../dialogue/schema.rs"]
+mod dialogue_schema;
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -21,9 +24,11 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use tiny_http::{Header, Method, Response, Server, StatusCode};
 
+use dialogue_schema::DialogueScene;
+
 const DEFAULT_BIND: &str = "127.0.0.1:8000";
 const ABILITIES_PATH: &str = "assets/data/abilities/AbilitiesExample.ron";
-const DIALOGUES_PATH: &str = "assets/data/dialogues/example.ron";
+const DIALOGUES_DIR: &str = "assets/data/dialogues";
 const STATIC_ROOT: &str = "tools/editors";
 
 // ---------------- Ability data model (mirrors combat_ability::*) ----------------
@@ -86,23 +91,8 @@ pub struct Ability {
     pub targets: u8,
 }
 
-// ---------------- Dialogue data model ----------------
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct Choice {
-    pub event: u32,
-    pub text: String,
-    pub next: Option<String>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct Dialogue {
-    pub id: String,
-    pub speaker: String,
-    pub text: String,
-    pub next: Option<String>,
-    pub choices: Option<Vec<Choice>>,
-}
+// Dialogue data model lives in src/dialogue/schema.rs and is included via
+// `#[path]` above so the editor and the runtime never drift.
 
 // ---------------- Server ----------------
 
@@ -118,7 +108,7 @@ fn main() {
     println!("editor_server: serving http://{bind}/");
     println!("  → static root:  {STATIC_ROOT}/");
     println!("  → abilities:    {ABILITIES_PATH}");
-    println!("  → dialogues:    {DIALOGUES_PATH}");
+    println!("  → scenes dir:   {DIALOGUES_DIR}/");
 
     for mut request in server.incoming_requests() {
         let method = request.method().clone();
@@ -132,11 +122,11 @@ fn main() {
                 let _ = request.as_reader().read_to_string(&mut body);
                 save_typed::<Vec<Ability>>(ABILITIES_PATH, &body)
             }
-            (Method::Get, "/api/dialogues") => load_typed::<Vec<Dialogue>>(DIALOGUES_PATH),
-            (Method::Post, "/api/dialogues") => {
+            (Method::Get, "/api/scenes") => load_scenes(),
+            (Method::Post, "/api/scenes") => {
                 let mut body = String::new();
                 let _ = request.as_reader().read_to_string(&mut body);
-                save_typed::<Vec<Dialogue>>(DIALOGUES_PATH, &body)
+                save_scenes(&body)
             }
             (Method::Get, p) => serve_static(p),
             _ => http_error(405, "method not allowed"),
@@ -189,6 +179,121 @@ where
         return http_error(500, &format!("write {path}: {e}"));
     }
     json_response(200, "{\"ok\":true}".to_string())
+}
+
+// ---------------- Scene catalog handlers ----------------
+
+fn load_scenes() -> Response<std::io::Cursor<Vec<u8>>> {
+    let entries = match fs::read_dir(DIALOGUES_DIR) {
+        Ok(e) => e,
+        Err(err) => return http_error(500, &format!("read dir {DIALOGUES_DIR}: {err}")),
+    };
+    let mut scenes: Vec<DialogueScene> = Vec::new();
+    let mut errors: Vec<String> = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|s| s.to_str()) != Some("ron") {
+            continue;
+        }
+        let contents = match fs::read_to_string(&path) {
+            Ok(s) => s,
+            Err(err) => {
+                errors.push(format!("read {}: {err}", path.display()));
+                continue;
+            }
+        };
+        match ron::de::from_str::<DialogueScene>(&contents) {
+            Ok(scene) => scenes.push(scene),
+            Err(err) => errors.push(format!("parse {}: {err}", path.display())),
+        }
+    }
+    if !errors.is_empty() {
+        return http_error(500, &errors.join("; "));
+    }
+    scenes.sort_by(|a, b| a.id.cmp(&b.id));
+    let json = match serde_json::to_string(&scenes) {
+        Ok(s) => s,
+        Err(e) => return http_error(500, &format!("encode JSON: {e}")),
+    };
+    json_response(200, json)
+}
+
+fn save_scenes(body: &str) -> Response<std::io::Cursor<Vec<u8>>> {
+    let scenes: Vec<DialogueScene> = match serde_json::from_str(body) {
+        Ok(v) => v,
+        Err(e) => return http_error(400, &format!("parse JSON body: {e}")),
+    };
+
+    // Validate ids before touching the disk.
+    let mut ids = std::collections::HashSet::new();
+    for scene in &scenes {
+        if !is_safe_scene_id(&scene.id) {
+            return http_error(
+                400,
+                &format!(
+                    "invalid scene id '{}'; expected [a-zA-Z0-9_-]+ characters",
+                    scene.id
+                ),
+            );
+        }
+        if !ids.insert(scene.id.clone()) {
+            return http_error(400, &format!("duplicate scene id '{}'", scene.id));
+        }
+    }
+
+    // Determine which scene files currently exist; we'll delete any whose id
+    // doesn't appear in the incoming payload.
+    let dir = Path::new(DIALOGUES_DIR);
+    if !dir.exists() {
+        if let Err(e) = fs::create_dir_all(dir) {
+            return http_error(500, &format!("create {DIALOGUES_DIR}: {e}"));
+        }
+    }
+    let existing_files: Vec<PathBuf> = match fs::read_dir(dir) {
+        Ok(it) => it
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("ron"))
+            .collect(),
+        Err(e) => return http_error(500, &format!("read dir {DIALOGUES_DIR}: {e}")),
+    };
+
+    let pretty = ron::ser::PrettyConfig::new()
+        .depth_limit(8)
+        .indentor("    ".to_string())
+        .struct_names(false);
+    for scene in &scenes {
+        let path = dir.join(format!("{}.ron", scene.id));
+        let ron_text = match ron::ser::to_string_pretty(scene, pretty.clone()) {
+            Ok(s) => s,
+            Err(e) => return http_error(500, &format!("encode RON {}: {e}", path.display())),
+        };
+        if let Err(e) = fs::write(&path, ron_text) {
+            return http_error(500, &format!("write {}: {e}", path.display()));
+        }
+    }
+
+    for path in existing_files {
+        let stem = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or_default()
+            .to_string();
+        if !ids.contains(&stem) {
+            if let Err(e) = fs::remove_file(&path) {
+                eprintln!("editor_server: failed to delete orphan {}: {e}", path.display());
+            }
+        }
+    }
+
+    json_response(200, "{\"ok\":true}".to_string())
+}
+
+fn is_safe_scene_id(id: &str) -> bool {
+    !id.is_empty()
+        && id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
 }
 
 fn serve_static(url_path: &str) -> Response<std::io::Cursor<Vec<u8>>> {

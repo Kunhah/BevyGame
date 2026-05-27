@@ -1,0 +1,55 @@
+// Played after the player dies in the hunt and the resurrection pipeline
+// brings them back. The `enqueue_resurrection_on_death_system` already
+// applied the rating-appropriate debuff via `ApplyStatusEvent` before this
+// scene fires; this is the on-screen acknowledgement.
+(
+    id: "slice_merchant_resurrection",
+    background: None,
+    music: None,
+    start: "res_1",
+    nodes: {
+        "res_1": scene((
+            actions: [
+                fade_in(0.7),
+                wait(0.5),
+                enter_character(
+                    name: "Merchant",
+                    slot: slot7,
+                    expression: None,
+                    transition_secs: 0.0,
+                ),
+                wait(0.6),
+            ],
+            next: Some("res_line_1"),
+        )),
+        "res_line_1": line((
+            speaker: (name: "Merchant", slot: slot7, expression: None),
+            text: "Awake again. You took longer than the hunt allowed.",
+            on_enter: [],
+            condition: None,
+            next: Some("res_line_2"),
+        )),
+        "res_line_2": line((
+            speaker: (name: "Merchant", slot: slot7, expression: None),
+            text: "The village waits. The yokai waits. The contract does not.",
+            on_enter: [],
+            condition: None,
+            next: Some("res_line_3"),
+        )),
+        "res_line_3": line((
+            speaker: (name: "Merchant", slot: slot7, expression: None),
+            text: "Try again. There is little else for the bound to do.",
+            on_enter: [],
+            condition: None,
+            next: Some("res_close"),
+        )),
+        "res_close": scene((
+            actions: [
+                exit_character(name: "Merchant", transition_secs: 0.0),
+                fade_out(0.6),
+                wait(0.3),
+            ],
+            next: None,
+        )),
+    },
+)

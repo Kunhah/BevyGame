@@ -2764,6 +2764,47 @@ fn enqueue_resurrection_on_death_system(
     }
 }
 
+/// Marker for any map location where a resurrected Bound character returns.
+/// Spawn one (or more) at world setup; `teleport_on_resurrection` snaps the
+/// resurrected entity to the closest one.
+#[derive(Component)]
+pub struct ResurrectionPoint;
+
+/// On `ResurrectedEvent`, snap the resurrected entity's `Transform` to the
+/// closest `ResurrectionPoint` on the map. Without this, restored
+/// characters would wake up wherever they fell — which fights the design
+/// intent that resurrection is a return to a fixed sanctuary on the map.
+///
+/// Works for any entity that received `ResurrectedEvent` (player, party
+/// member, future bound NPC), not specifically the player.
+pub fn teleport_on_resurrection(
+    mut events: MessageReader<ResurrectedEvent>,
+    shrine_q: Query<&Transform, With<ResurrectionPoint>>,
+    mut transforms_q: Query<&mut Transform, Without<ResurrectionPoint>>,
+) {
+    for ev in events.read() {
+        let Ok(mut tf) = transforms_q.get_mut(ev.who) else {
+            continue;
+        };
+        let pos = tf.translation.truncate();
+        let target = shrine_q
+            .iter()
+            .min_by(|a, b| {
+                let da = a.translation.truncate().distance_squared(pos);
+                let db = b.translation.truncate().distance_squared(pos);
+                da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .map(|t| t.translation);
+        let Some(target_pos) = target else {
+            warn!("teleport_on_resurrection: no ResurrectionPoint exists in the world");
+            continue;
+        };
+        tf.translation.x = target_pos.x;
+        tf.translation.y = target_pos.y;
+        info!("teleport_on_resurrection: {:?} → {:?}", ev.who, target_pos);
+    }
+}
+
 /// Watches the global Timestamp and resurrects any `AwaitingResurrection`
 /// entity whose deadline has passed. Restores Health to base and emits a
 /// `ResurrectedEvent` so downstream systems (status effects, dialogue,
@@ -4563,6 +4604,7 @@ impl Plugin for CombatPlugin {
             .add_systems(Update, expand_rest_intent_system)
             .add_systems(Update, enqueue_resurrection_on_death_system)
             .add_systems(Update, process_resurrection_queue_system)
+            .add_systems(Update, teleport_on_resurrection.after(process_resurrection_queue_system))
             .add_systems(
                 Update,
                 forfeit_turn_on_status_system.after(on_turn_start_system),

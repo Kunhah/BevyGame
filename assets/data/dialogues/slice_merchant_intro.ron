@@ -1,0 +1,85 @@
+// Vertical-slice opening cutscene. Plays once at boot when running the
+// `slice` binary. Replace the placeholder text with the real Merchant
+// monologue once tone is locked in.
+(
+    id: "slice_merchant_intro",
+    background: None,
+    music: None,
+    start: "intro_1",
+    nodes: {
+        "intro_1": scene((
+            actions: [
+                fade_in(0.6),
+                wait(0.4),
+                enter_character(
+                    name: "Merchant",
+                    slot: slot7,
+                    expression: None,
+                    transition_secs: 0.0,
+                ),
+                wait(0.6),
+            ],
+            next: Some("intro_2"),
+        )),
+        "intro_2": line((
+            speaker: (name: "Merchant", slot: slot7, expression: None),
+            text: "You are awake. Good. We have a contract to discuss.",
+            on_enter: [],
+            condition: None,
+            next: Some("intro_3"),
+        )),
+        "intro_3": line((
+            speaker: (name: "Merchant", slot: slot7, expression: None),
+            text: "The yokai in the village to the south will not wait for your hesitation.",
+            on_enter: [],
+            condition: None,
+            next: Some("intro_choice"),
+        )),
+        "intro_choice": choice((
+            prompt: Some((name: "Merchant", slot: slot7, expression: None)),
+            prompt_text: Some("Will you take the hunt?"),
+            options: [
+                (
+                    text: "Yes — name the target.",
+                    condition: None,
+                    effects: [
+                        set_flag("slice_intro_accepted"),
+                    ],
+                    next: Some("intro_accept"),
+                    legacy_event_id: 0,
+                ),
+                (
+                    text: "I need a moment.",
+                    condition: None,
+                    effects: [
+                        set_flag("slice_intro_hesitated"),
+                    ],
+                    next: Some("intro_hesitate"),
+                    legacy_event_id: 0,
+                ),
+            ],
+        )),
+        "intro_accept": line((
+            speaker: (name: "Merchant", slot: slot7, expression: None),
+            text: "Then go. The world remembers what is finished, and what is left.",
+            on_enter: [],
+            condition: None,
+            next: Some("intro_close"),
+        )),
+        "intro_hesitate": line((
+            speaker: (name: "Merchant", slot: slot7, expression: None),
+            text: "A moment. Then a moment more. Then no village left to save.",
+            on_enter: [],
+            condition: None,
+            next: Some("intro_close"),
+        )),
+        "intro_close": scene((
+            actions: [
+                exit_character(name: "Merchant", transition_secs: 0.0),
+                fade_out(0.6),
+                wait(0.3),
+            ],
+            next: None,
+        )),
+    },
+)

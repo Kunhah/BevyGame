@@ -1,0 +1,50 @@
+// Pre-battle cutscene for the slice's hunt. Plays automatically when the
+// player walks within `HUNT_PROXIMITY_RADIUS` of the hunt target. When the
+// scene closes, `start_pending_hunt_battle` queues the actual combat
+// against the same target.
+(
+    id: "slice_hunt",
+    background: None,
+    music: None,
+    start: "hunt_intro",
+    nodes: {
+        "hunt_intro": scene((
+            actions: [
+                fade_in(0.5),
+                wait(0.3),
+                enter_character(
+                    name: "Yokai",
+                    slot: slot7,
+                    expression: None,
+                    transition_secs: 0.0,
+                ),
+                wait(0.6),
+                shake_screen(0.3),
+            ],
+            next: Some("hunt_line_1"),
+        )),
+        "hunt_line_1": line((
+            speaker: (name: "", slot: slot1, expression: None),
+            text: "*The yokai turns. Cracked mask, slow breath. The shrine bell rings somewhere far behind you.",
+            on_enter: [],
+            condition: None,
+            next: Some("hunt_line_2"),
+        )),
+        "hunt_line_2": line((
+            speaker: (name: "", slot: slot1, expression: None),
+            text: "*There is no time to choose twice. You draw the blade.",
+            on_enter: [],
+            condition: None,
+            next: Some("hunt_close"),
+        )),
+        "hunt_close": scene((
+            actions: [
+                exit_character(name: "Yokai", transition_secs: 0.0),
+                fade_out(0.4),
+                wait(0.2),
+                fade_in(0.3),
+            ],
+            next: None,
+        )),
+    },
+)
