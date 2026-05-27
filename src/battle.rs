@@ -869,12 +869,7 @@ pub fn transform_npc_to_enemy(
         if player_pos.distance(tf.translation.truncate()) <= 48.0 {
             commands.entity(entity).despawn();
             commands.spawn((
-                Sprite {
-                    image: asset_server.load("character.png"),
-                    color: Color::srgb(0.85, 0.2, 0.2),
-                    custom_size: Some(Vec2::new(32.0, 32.0)),
-                    ..default()
-                },
+                crate::render3d::PlaceholderVisual::character(Color::srgb(0.85, 0.2, 0.2)),
                 Transform::from_translation(tf.translation),
                 EnemyEncounter { id: npc.id },
             ));

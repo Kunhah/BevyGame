@@ -1599,11 +1599,11 @@ fn sync_caravan_visuals(
             commands.entity(entity).insert(Transform::from_xyz(pos.x, pos.y, 9.0));
         } else {
             commands.spawn((
-                Sprite {
-                    color: Color::srgb(0.92, 0.78, 0.34),
-                    custom_size: Some(Vec2::new(22.0, 22.0)),
-                    ..default()
-                },
+                crate::render3d::PlaceholderVisual::prop(
+                    Color::srgb(0.92, 0.78, 0.34),
+                    Vec2::splat(22.0),
+                    22.0,
+                ),
                 Transform::from_xyz(pos.x, pos.y, 9.0),
                 CaravanVisual {
                     caravan_id: caravan.id,

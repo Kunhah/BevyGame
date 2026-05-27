@@ -38,6 +38,7 @@ pub mod movement;
 pub mod pathfinding;
 pub mod quadtree;
 pub mod quests;
+pub mod render3d;
 pub mod save;
 pub mod services;
 pub mod settings;
@@ -65,7 +66,6 @@ use dialogue::DialoguePlugin;
 use economy::EconomyPlugin;
 use governance::GovernancePlugin;
 use hud::HudPlugin;
-use light_plugin::LightPlugin;
 use menu::MenuPlugin;
 use movement::{
     ally_follow_player_system, follow_path_system, mouse_click, player_movement,
@@ -94,7 +94,7 @@ use status_effects::StatusEffectsPlugin;
 use story_flags::StoryFlagsPlugin;
 use ui_style::UiStylePlugin;
 use ai_decision::AiDecisionPlugin;
-use world::{apply_y_sort, setup, update_cache, update_visual_occluders};
+use world::{setup, update_cache};
 use world_rules::WorldRulesPlugin;
 
 /// Boot the full game. Adds every plugin in the project.
@@ -133,7 +133,6 @@ fn full_game_app() -> App {
     app.add_plugins(base_default_plugins("Seirei Kuni"))
         .add_plugins(UiStylePlugin)
         .add_plugins(HudPlugin)
-        .add_plugins(LightPlugin)
         .add_plugins(CombatPlugin)
         .add_plugins(StatusEffectsPlugin)
         .add_plugins(ContractPlugin)
@@ -193,13 +192,7 @@ fn full_game_app() -> App {
         .add_systems(Update, toggle_camera_lock)
         .add_systems(Update, update_cache)
         .add_systems(Update, rebuild_terrain_slow_effect_index)
-        .add_systems(Update, apply_y_sort.after(player_movement))
-        .add_systems(
-            Update,
-            update_visual_occluders
-                .after(player_movement)
-                .run_if(graphics_setting_visual_occluder_fade),
-        )
+        .add_systems(Update, render3d::hydrate_placeholders)
         .add_systems(Update, mouse_click)
         .add_systems(Update, movement::camera_follow_player.after(player_movement))
         .add_systems(Update, battle_trigger_system)

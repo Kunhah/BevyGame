@@ -432,12 +432,14 @@ pub fn camera_follow_player(
     let Ok(mut cam_tf) = camera_q.single_mut() else {
         return;
     };
-    let target = player_tf.translation.truncate();
-    let current = cam_tf.translation.truncate();
+    // Isometric follow: the camera keeps a fixed offset/orientation and tracks a
+    // focus point on the XY ground under the player. Target the desired camera
+    // position (player ground point + fixed iso offset) directly and lerp toward
+    // it, so the focus can't drift off the player.
+    let focus = Vec3::new(player_tf.translation.x, player_tf.translation.y, 0.0);
+    let desired = focus + crate::render3d::iso_camera_offset();
     let alpha = (time.delta_secs() * CAMERA_FOLLOW_SPEED).clamp(0.0, 1.0);
-    let smoothed = current.lerp(target, alpha);
-    cam_tf.translation.x = smoothed.x;
-    cam_tf.translation.y = smoothed.y;
+    cam_tf.translation = cam_tf.translation.lerp(desired, alpha);
 }
 
 pub fn toggle_camera_lock(
@@ -627,11 +629,11 @@ pub fn mouse_click(
 
                 commands
                     .spawn((
-                        Sprite {
-                            image: asset_server.load("dot.png"),
-                            custom_size: Some(Vec2::new(10.0, 10.0)),
-                            ..default()
-                        },
+                        crate::render3d::PlaceholderVisual::prop(
+                            Color::srgb(0.9, 0.9, 0.3),
+                            Vec2::splat(10.0),
+                            10.0,
+                        ),
                         Transform::from_xyz(target_x, target_y, 0.0),
                     ))
                     .insert(FadeOutTimer(Timer::from_seconds(1.0, TimerMode::Once)));

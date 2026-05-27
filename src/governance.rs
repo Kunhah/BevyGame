@@ -936,12 +936,7 @@ fn sync_successor_npcs(
             .map(|s| format!("{} {}", s.title, s.name))
             .unwrap_or_else(|| city.governor_name.clone());
         commands.spawn((
-            Sprite {
-                image: asset_server.load("character.png"),
-                color: Color::srgb(0.95, 0.45, 0.12),
-                custom_size: Some(Vec2::new(32.0, 32.0)),
-                ..default()
-            },
+            crate::render3d::PlaceholderVisual::character(Color::srgb(0.95, 0.45, 0.12)),
             Transform::from_xyz(
                 anchor.x + TILE_WORLD_SIZE * 1.4,
                 anchor.y + TILE_WORLD_SIZE * 0.45,

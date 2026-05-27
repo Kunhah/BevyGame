@@ -868,7 +868,7 @@ fn travel_to_destination(
 pub fn update_active_tile_background(
     game_state: Res<GameState>,
     map: Res<MapTiles>,
-    asset_server: Res<AssetServer>,
+    placeholders: Res<crate::render3d::PlaceholderAssets>,
     mut commands: Commands,
     mut active_bgs: ResMut<ActiveMapBackgrounds>,
     mut content_cache: ResMut<TileContentCache>,
@@ -934,27 +934,16 @@ pub fn update_active_tile_background(
             continue;
         };
 
-        let texture = asset_server.load(tile.image_path.clone());
+        // Placeholder ground: a flat quad in the XY plane just below z = 0 so
+        // entities (at z >= 0) sit on top. Real tile textures return later via
+        // the glTF pipeline. The unit quad is scaled to one tile.
+        let center = tile_center_world(pos);
         let entity = commands
             .spawn((
-                Sprite {
-                    image: texture,
-                    custom_size: Some(Vec2::splat(TILE_WORLD_SIZE)),
-                    // Multiplicative tint that darkens the source image to
-                    // ~30% brightness. Keep alpha at 1.0 so the tile is fully
-                    // opaque — only the perceived luminance changes.
-                    color: Color::srgb(0.3, 0.3, 0.3),
-                    ..default()
-                },
-                // Push deeper than any y-sorted entity. With Y_SORT_SCALE = 0.001
-                // and tiles now 4096 units across, a player at very high `y`
-                // could reach z near -50 from y-sort alone, so we move the
-                // background out of that range entirely.
-                Transform::from_translation(Vec3::new(
-                    tile_center_world(pos).x,
-                    tile_center_world(pos).y,
-                    -1000.0,
-                )),
+                Mesh3d(placeholders.ground_quad.clone()),
+                MeshMaterial3d(placeholders.ground_mat.clone()),
+                Transform::from_translation(Vec3::new(center.x, center.y, -1.0))
+                    .with_scale(Vec3::new(TILE_WORLD_SIZE, TILE_WORLD_SIZE, 1.0)),
                 Name::new(format!("MapTileBackground({}, {})", pos.x, pos.y)),
             ))
             .id();
@@ -966,7 +955,7 @@ pub fn update_active_tile_background(
             .iter()
             .any(|(_, t)| t.coords.x == pos.x && t.coords.y == pos.y);
         if !has_spawn && should_spawn_tile_content(tile, pos, &mut content_cache) {
-            spawn_tile_content(&mut commands, pos, tile);
+            spawn_tile_content(&mut commands, &placeholders, pos, tile);
         }
     }
 
@@ -997,14 +986,13 @@ pub fn update_active_tile_background(
             ),
         ];
         for (translation, border_size) in border_defs {
+            // Flat strip just above the ground marking the tile boundary.
             let entity = commands
                 .spawn((
-                    Sprite {
-                        color: Color::srgba(0.02, 0.04, 0.08, 0.9),
-                        custom_size: Some(border_size),
-                        ..default()
-                    },
-                    Transform::from_translation(translation),
+                    Mesh3d(placeholders.ground_quad.clone()),
+                    MeshMaterial3d(placeholders.border_mat.clone()),
+                    Transform::from_translation(Vec3::new(translation.x, translation.y, 1.0))
+                        .with_scale(Vec3::new(border_size.x, border_size.y, 1.0)),
                     Name::new("LocalMapBorder"),
                 ))
                 .id();
@@ -1014,22 +1002,26 @@ pub fn update_active_tile_background(
 }
 
 /// Spawn placeholder content for a tile: an occluder/collider marker you can extend later.
-fn spawn_tile_content(commands: &mut Commands, coords: Position, tile: &MapTile) {
+fn spawn_tile_content(
+    commands: &mut Commands,
+    placeholders: &crate::render3d::PlaceholderAssets,
+    coords: Position,
+    _tile: &MapTile,
+) {
     let world_pos = tile_center_world(coords).extend(0.0);
 
     // Collider matching a small obstacle; adjust size/shape per tile data as needed.
     let bounds = Rect::from_center_size(world_pos.truncate(), Vec2::splat(32.0));
 
+    // Placeholder obstacle: a 32×32 footprint cube standing 48 tall on the
+    // ground (scaled shared unit cube, base at z = 0).
     commands.spawn((
-        Sprite {
-            color: Color::srgba(0.8, 0.1, 0.1, 0.4),
-            custom_size: Some(Vec2::splat(32.0)),
-            ..default()
-        },
-        Transform::from_translation(world_pos + Vec3::new(0.0, 0.0, 10.0)),
+        Mesh3d(placeholders.unit_cube.clone()),
+        MeshMaterial3d(placeholders.obstacle_mat.clone()),
+        Transform::from_translation(Vec3::new(world_pos.x, world_pos.y, 24.0))
+            .with_scale(Vec3::new(32.0, 32.0, 48.0)),
         Collider { bounds },
         Occluder::new(Vec2::splat(32.0)),
-        RenderLayers::layer(0),
         TileSpawn { coords },
         Name::new(format!("TileContent({}, {})", coords.x, coords.y)),
     ));

@@ -10,13 +10,8 @@ use crate::governance::GovernorNpc;
 use crate::light_plugin::Occluder;
 use crate::map::{tile_center_world, MapTiles, TILE_WORLD_SIZE};
 use crate::quadtree::{Collider, QuadTree, QuadtreeNode};
+use crate::render3d::{spawn_iso_camera, spawn_sun, PlaceholderAssets, PlaceholderVisual};
 use crate::services::{ServiceKind, ServiceNpc};
-use bevy::sprite::Anchor;
-use bevy_camera::{Camera2d, visibility::RenderLayers};
-
-const MAIN_CAMERA_HEIGHT: f32 = 700.0;
-const Y_SORT_SCALE: f32 = 0.001;
-const OCCLUSION_FADE_SPEED: f32 = 8.0;
 
 #[derive(Component, Clone, Copy, Debug)]
 pub struct YSort {
@@ -38,11 +33,12 @@ pub struct VisualOcclusionTarget;
 
 pub fn setup(
     mut commands: Commands,
-    asset_server: Res<AssetServer>,
     map: Res<MapTiles>,
     cities: Res<CityCatalog>,
     merchants: Res<Merchants>,
     query: Query<&Collider>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
     // The player spawns at the center of tile (0, 0). All the hardcoded test
     // entities below were authored relative to a 512-unit world, so we offset
@@ -50,6 +46,9 @@ pub fn setup(
     // `TILE_WORLD_SIZE` grows.
     let world_origin = tile_center_world(Position::default());
     let origin3 = world_origin.extend(0.0);
+
+    // Shared placeholder meshes/materials for spawn systems outside `setup`.
+    commands.insert_resource(PlaceholderAssets::build(&mut meshes, &mut materials));
 
     let mut quadtree = QuadtreeNode::new(Rect::from_center_size(Vec2::ZERO, Vec2::splat(2048.0)), 0);
 
@@ -59,22 +58,16 @@ pub fn setup(
 
     commands.insert_resource(QuadTree(quadtree));
 
-    commands
-        .spawn((
-            Camera2d,
-            RenderLayers::layer(0), // explicitly see layer 0 (light quad and world)
-            MainCamera,
-            Transform::from_xyz(world_origin.x, world_origin.y, MAIN_CAMERA_HEIGHT),
-        ));
+    // Isometric 3D camera (XY ground, +Z up) focused on the player spawn, plus
+    // a shadow-casting sun and an ambient fill so the dark scene reads.
+    let camera = spawn_iso_camera(&mut commands, origin3);
+    commands.entity(camera).insert(MainCamera);
+    spawn_sun(&mut commands);
 
     let mut player_stats = CombatStats::default();
     player_stats.health = StatPool::<i32>::new(120);
     commands.spawn((
-        Sprite {
-            image: asset_server.load("character.png"),
-            custom_size: Some(Vec2::new(32.0, 32.0)),
-            ..default()
-        },
+        PlaceholderVisual::character(Color::WHITE),
         Transform::from_translation(origin3),
         Player,
         // The player has signed the Merchant's Contract; this drives
@@ -93,24 +86,14 @@ pub fn setup(
     // `teleport_on_resurrection` system snaps any resurrected entity to the
     // closest one.
     commands.spawn((
-        Sprite {
-            image: asset_server.load("character.png"),
-            color: Color::srgb(0.55, 0.75, 0.95),
-            custom_size: Some(Vec2::new(40.0, 40.0)),
-            ..default()
-        },
+        PlaceholderVisual::prop(Color::srgb(0.55, 0.75, 0.95), Vec2::splat(40.0), 40.0),
         Transform::from_translation(origin3 + Vec3::new(-12.0 * 32.0, 4.0 * 32.0, 0.0)),
         ResurrectionPoint,
         YSort { base_z: 0.0 },
     ));
 
     commands.spawn((
-        Sprite {
-            image: asset_server.load("character.png"),
-            color: Color::srgb(0.3, 0.9, 0.3),
-            custom_size: Some(Vec2::new(32.0, 32.0)),
-            ..default()
-        },
+        PlaceholderVisual::character(Color::srgb(0.3, 0.9, 0.3)),
         Transform::from_translation(origin3 + Vec3::new(4.0 * 32.0, 0.0, 0.0)),
         EnemyEncounter { id: 1 },
         VisualOcclusionTarget,
@@ -150,12 +133,7 @@ pub fn setup(
     ];
     for (i, (kind, pos, color)) in yokai_seedlings.into_iter().enumerate() {
         commands.spawn((
-            Sprite {
-                image: asset_server.load("character.png"),
-                color,
-                custom_size: Some(Vec2::new(32.0, 32.0)),
-                ..default()
-            },
+            PlaceholderVisual::character(color),
             Transform::from_translation(origin3 + pos),
             // EnemyEncounter ids start at 100 to avoid colliding with the
             // generic id-1 enemy above and the city-governor encounters
@@ -172,12 +150,7 @@ pub fn setup(
     for merchant in merchants.0.values() {
         if let Some(spawn_pos) = first_tile_world_position_for_region(&map, merchant.region_id) {
             commands.spawn((
-                Sprite {
-                    image: asset_server.load("character.png"),
-                    color: Color::srgb(0.2, 0.6, 0.9),
-                    custom_size: Some(Vec2::new(32.0, 32.0)),
-                    ..default()
-                },
+                PlaceholderVisual::character(Color::srgb(0.2, 0.6, 0.9)),
                 Transform::from_translation(spawn_pos),
                 WorldNpc {
                     id: merchant.id as u32,
@@ -209,12 +182,7 @@ pub fn setup(
         if let Some(mut spawn_pos) = first_tile_world_position_for_region(&map, region_id) {
             spawn_pos.x += TILE_WORLD_SIZE * 0.75;
             commands.spawn((
-                Sprite {
-                    image: asset_server.load("character.png"),
-                    color: Color::srgb(0.85, 0.2, 0.2),
-                    custom_size: Some(Vec2::new(32.0, 32.0)),
-                    ..default()
-                },
+                PlaceholderVisual::character(Color::srgb(0.85, 0.2, 0.2)),
                 Transform::from_translation(spawn_pos),
                 WorldNpc {
                     id: 10_000 + city.id as u32,
@@ -261,12 +229,7 @@ pub fn setup(
             ];
             for (kind, color, offset, label) in service_defs {
                 commands.spawn((
-                    Sprite {
-                        image: asset_server.load("character.png"),
-                        color,
-                        custom_size: Some(Vec2::new(32.0, 32.0)),
-                        ..default()
-                    },
+                    PlaceholderVisual::character(color),
                     Transform::from_xyz(spawn_pos.x + offset.x, spawn_pos.y + offset.y, 0.0),
                     WorldNpc {
                         id: 30_000 + city.id as u32 * 10 + kind as u32,
@@ -297,12 +260,7 @@ pub fn setup(
     ];
     for (i, color) in ally_colors.into_iter().enumerate() {
         commands.spawn((
-            Sprite {
-                image: asset_server.load("character.png"),
-                color,
-                custom_size: Some(Vec2::new(32.0, 32.0)),
-                ..default()
-            },
+            PlaceholderVisual::character(color),
             Transform::from_translation(ally_spawn),
             WorldAlly,
             VisualOcclusionTarget,
@@ -320,18 +278,12 @@ pub fn setup(
         let world_pos = origin3 + offset;
         let size = Vec2::splat(48.0);
         commands.spawn((
-            Sprite {
-                image: asset_server.load("character.png"),
-                color,
-                custom_size: Some(size),
-                ..default()
-            },
+            PlaceholderVisual::prop(color, size, 48.0),
             Transform::from_translation(world_pos),
             Collider {
                 bounds: Rect::from_center_size(world_pos.truncate(), size),
             },
             Occluder::new(size),
-            RenderLayers::layer(0),
             YSort { base_z: 0.0 },
             Name::new(format!("TestObstacle{}", i)),
         ));
@@ -339,13 +291,7 @@ pub fn setup(
 
     let tower_base = origin3 + Vec3::new(6.0 * 32.0, 5.0 * 32.0, 0.0);
     commands.spawn((
-        Sprite {
-            image: asset_server.load("character.png"),
-            color: Color::srgb(0.62, 0.42, 0.22),
-            custom_size: Some(Vec2::new(96.0, 192.0)),
-            ..default()
-        },
-        Anchor::BOTTOM_CENTER,
+        PlaceholderVisual::prop(Color::srgb(0.62, 0.42, 0.22), Vec2::splat(96.0), 192.0),
         Transform::from_translation(tower_base),
         Collider {
             bounds: Rect::from_center_size(
@@ -353,14 +299,10 @@ pub fn setup(
                 Vec2::new(36.0, 20.0),
             ),
         },
-        Visibility::Visible,
-        InheritedVisibility::default(),
-        ViewVisibility::default(),
         // Shadow footprint is the tower's base — same rectangle as the
         // collider — so the cast shadow lines up with the trunk on the
-        // ground rather than the much-taller visible sprite.
+        // ground rather than the much-taller visible mesh.
         Occluder::with_offset(Vec2::new(36.0, 20.0), Vec2::new(0.0, 10.0)),
-        RenderLayers::layer(0),
         FadeWhenCovered,
         VisualOccluder {
             size: Vec2::new(120.0, 180.0),
@@ -387,12 +329,7 @@ pub fn setup(
     ];
     for (offset, color, label, dialogue_id) in test_interactables {
         commands.spawn((
-            Sprite {
-                image: asset_server.load("character.png"),
-                color,
-                custom_size: Some(Vec2::new(32.0, 32.0)),
-                ..default()
-            },
+            PlaceholderVisual::character(color),
             Transform::from_translation(origin3 + offset),
             Interactable {
                 name: label.to_string(),
@@ -492,46 +429,8 @@ pub fn update_cache(
     }
 }
 
-pub fn apply_y_sort(mut query: Query<(&mut Transform, &YSort)>) {
-    for (mut transform, y_sort) in &mut query {
-        transform.translation.z = y_sort.base_z - transform.translation.y * Y_SORT_SCALE;
-    }
-}
-
-pub fn update_visual_occluders(
-    time: Res<Time>,
-    targets: Query<&Transform, With<VisualOcclusionTarget>>,
-    mut occluders: Query<(&Transform, &VisualOccluder, &mut Sprite), With<FadeWhenCovered>>,
-    mut target_positions: Local<Vec<Vec2>>,
-) {
-    let delta = (time.delta_secs() * OCCLUSION_FADE_SPEED).clamp(0.0, 1.0);
-
-    // Precompute target positions once instead of re-iterating the targets
-    // query inside every occluder loop body (O(n²) → O(n + m)).
-    target_positions.clear();
-    target_positions.extend(targets.iter().map(|t| t.translation.truncate()));
-
-    for (transform, occluder, mut sprite) in &mut occluders {
-        let base = transform.translation.truncate();
-        let half_width = occluder.size.x * 0.5;
-        let min_x = base.x - half_width;
-        let max_x = base.x + half_width;
-        let min_y = base.y;
-        let max_y = base.y + occluder.size.y;
-
-        let should_fade = target_positions
-            .iter()
-            .any(|pos| pos.x >= min_x && pos.x <= max_x && pos.y >= min_y && pos.y <= max_y);
-
-        let target_alpha = if should_fade {
-            occluder.fade_alpha
-        } else {
-            occluder.solid_alpha
-        };
-        let color = sprite.color.to_srgba();
-        let next_alpha = color.alpha + (target_alpha - color.alpha) * delta;
-        if (next_alpha - color.alpha).abs() > f32::EPSILON {
-            sprite.color = Color::srgba(color.red, color.green, color.blue, next_alpha);
-        }
-    }
-}
+// `apply_y_sort` and `update_visual_occluders` were 2D-only (fake depth via z,
+// and sprite-alpha fade when covered). In 3D the depth buffer handles ordering
+// and these are removed. The `YSort` / `VisualOccluder` / `FadeWhenCovered` /
+// `VisualOcclusionTarget` marker types are kept (inert) so existing spawn sites
+// still compile; they'll be cleaned up as 3D occlusion is built out.
