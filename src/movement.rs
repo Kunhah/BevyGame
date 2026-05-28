@@ -400,33 +400,19 @@ pub fn accumulate_manual_travel_time(
 // `camera_follow_player` was replaced by `render3d::drive_camera`, which owns
 // the camera (follow + WSAD pan nudge + Q/E spin + R/F tilt + wheel zoom).
 
+/// `L` toggles camera follow-lock. Locked: the camera follows the player (WSAD
+/// nudges); unlocked: WSAD roams the camera freely (see `render3d::drive_camera`,
+/// which owns the camera transform — this only flips the flag).
 pub fn toggle_camera_lock(
-    mut param_set: ParamSet<(
-        Query<&mut Transform, With<Player>>,
-        Query<&mut Transform, With<MainCamera>>,
-        ResMut<Global_Variables>,
-    )>,
+    mut globals: ResMut<Global_Variables>,
     input: Res<ButtonInput<KeyCode>>,
 ) {
     if input.just_pressed(KeyCode::KeyL) {
-        if !param_set.p2().0.camera_locked {
-            param_set.p2().0.camera_locked = true;
-
-            let mut transform_x: f32 = 0.0;
-            let mut transform_y: f32 = 0.0;
-
-            for player_transform in param_set.p0().iter_mut() {
-                transform_x = player_transform.translation.x;
-                transform_y = player_transform.translation.y;
-            }
-
-            for mut camera_transform in param_set.p1().iter_mut() {
-                camera_transform.translation.x = transform_x;
-                camera_transform.translation.y = transform_y;
-            }
-        } else {
-            param_set.p2().0.camera_locked = false;
-        }
+        globals.0.camera_locked = !globals.0.camera_locked;
+        info!(
+            "camera {}",
+            if globals.0.camera_locked { "locked (follow)" } else { "unlocked (free roam)" }
+        );
     }
 }
 

@@ -101,7 +101,8 @@ pub fn battle_trigger_system(
         return;
     }
 
-    if !input.just_pressed(KeyCode::KeyE) {
+    // Engage an adjacent enemy. Moved off `E` (now camera spin) to Space.
+    if !input.just_pressed(KeyCode::Space) {
         return;
     }
 

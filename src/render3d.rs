@@ -77,15 +77,17 @@ pub fn cursor_to_ground(
 pub struct CameraRig {
     /// Azimuth around the vertical axis (radians) — Q/E spin.
     pub yaw: f32,
-    /// Elevation above the ground (radians) — R/F tilt.
+    /// Elevation above the ground (radians) — `[` / `]` tilt.
     pub pitch: f32,
     /// Offset magnitude from focus (orthographic, so clipping only).
     pub distance: f32,
     /// Orthographic viewport height (world units) — mouse-wheel zoom.
     pub zoom: f32,
-    /// Ground-plane nudge from the player focus; decays back to zero so the
-    /// camera re-centers on the player.
-    pub pan_offset: Vec2,
+    /// Ground point the camera looks at. When locked it tracks the player (WSAD
+    /// nudges it, then it drifts back); when unlocked WSAD roams it freely.
+    pub focus: Vec2,
+    /// Set once the focus has been seeded to the player position.
+    pub initialized: bool,
 }
 
 impl Default for CameraRig {
@@ -95,7 +97,8 @@ impl Default for CameraRig {
             pitch: ISO_ELEVATION_DEG.to_radians(),
             distance: ISO_DISTANCE,
             zoom: ISO_VIEWPORT_HEIGHT,
-            pan_offset: Vec2::ZERO,
+            focus: Vec2::ZERO,
+            initialized: false,
         }
     }
 }
@@ -109,100 +112,119 @@ pub fn rig_offset(rig: &CameraRig) -> Vec3 {
     )
 }
 
-/// Drives the isometric camera each frame: WSAD pans (nudge that drifts back so
-/// it re-centers on the player), Q/E spin (yaw), R/F tilt (pitch), mouse wheel
-/// zooms. The camera always follows the player; this is the sole owner of the
+/// Drives the isometric camera. In gameplay states (Exploring/Battle): WSAD pan,
+/// Q/E spin (yaw), `[` / `]` tilt (pitch), mouse-wheel zoom. `L` toggles
+/// follow-lock (see `movement::toggle_camera_lock`): when **locked** the camera
+/// follows the player and WSAD only nudges (drifts back); when **unlocked** WSAD
+/// roams freely and the camera stays put. Input is ignored outside gameplay so
+/// menus/dialogue/shop keep WSAD/Q/E/etc. This is the sole owner of the
 /// `MainCamera` transform + projection.
 pub fn drive_camera(
     time: Res<Time>,
     keys: Res<ButtonInput<KeyCode>>,
     mut wheel: bevy::ecs::message::MessageReader<bevy::input::mouse::MouseWheel>,
+    globals: Res<crate::core::Global_Variables>,
+    game_state: Res<crate::core::GameState>,
     mut rig: ResMut<CameraRig>,
     player_q: Query<&Transform, (With<crate::core::Player>, Without<crate::core::MainCamera>)>,
     mut cam_q: Query<(&mut Transform, &mut Projection), With<crate::core::MainCamera>>,
 ) {
-    const PAN_SPEED: f32 = 700.0;
-    const PAN_MAX: f32 = 1500.0;
-    const PAN_RECENTER: f32 = 3.0;
+    const PAN_SPEED: f32 = 1800.0;
     const YAW_SPEED: f32 = 1.8;
     const TILT_SPEED: f32 = 1.4;
     const PITCH_MIN: f32 = 0.26; // ~15°
-    const PITCH_MAX: f32 = 1.40; // ~80°
+    const PITCH_MAX: f32 = 1.31; // ~75°
     const ZOOM_STEP: f32 = 1.12;
     const ZOOM_MIN: f32 = 80.0;
     const ZOOM_MAX: f32 = 4000.0;
-    const FOLLOW_SPEED: f32 = 10.0;
+    const FOLLOW_SPEED: f32 = 8.0;
     const SNAP_DIST: f32 = 3000.0;
 
     let dt = time.delta_secs();
+    let locked = globals.0.camera_locked;
+    let gameplay = matches!(
+        game_state.0,
+        crate::core::Game_State::Exploring | crate::core::Game_State::Battle
+    );
 
-    // Spin (Q/E) and tilt (R/F).
-    if keys.pressed(KeyCode::KeyQ) {
-        rig.yaw += YAW_SPEED * dt;
-    }
-    if keys.pressed(KeyCode::KeyE) {
-        rig.yaw -= YAW_SPEED * dt;
-    }
-    if keys.pressed(KeyCode::KeyR) {
-        rig.pitch = (rig.pitch + TILT_SPEED * dt).min(PITCH_MAX);
-    }
-    if keys.pressed(KeyCode::KeyF) {
-        rig.pitch = (rig.pitch - TILT_SPEED * dt).max(PITCH_MIN);
-    }
-
-    // Zoom (mouse wheel): scroll up = zoom in (smaller viewport height).
-    let mut scroll = 0.0;
-    for ev in wheel.read() {
-        scroll += ev.y;
-    }
-    if scroll != 0.0 {
-        rig.zoom = (rig.zoom * ZOOM_STEP.powf(-scroll)).clamp(ZOOM_MIN, ZOOM_MAX);
-    }
-
-    // Pan (WSAD) in the ground plane, relative to the current yaw.
-    let forward = Vec2::new(-rig.yaw.cos(), -rig.yaw.sin());
-    let right = Vec2::new(-rig.yaw.sin(), rig.yaw.cos());
-    let mut pan = Vec2::ZERO;
-    if keys.pressed(KeyCode::KeyW) {
-        pan += forward;
-    }
-    if keys.pressed(KeyCode::KeyS) {
-        pan -= forward;
-    }
-    if keys.pressed(KeyCode::KeyD) {
-        pan += right;
-    }
-    if keys.pressed(KeyCode::KeyA) {
-        pan -= right;
-    }
-    if pan != Vec2::ZERO {
-        rig.pan_offset = (rig.pan_offset + pan.normalize() * PAN_SPEED * dt).clamp_length_max(PAN_MAX);
-    } else {
-        rig.pan_offset = rig
-            .pan_offset
-            .lerp(Vec2::ZERO, (PAN_RECENTER * dt).clamp(0.0, 1.0));
-    }
-
-    // Follow the player (+ pan nudge) and apply transform + zoom.
     let Ok(player_tf) = player_q.single() else {
         return;
     };
+    let player_xy = player_tf.translation.truncate();
+    if !rig.initialized {
+        rig.focus = player_xy;
+        rig.initialized = true;
+    }
+
+    // Camera control input is only read during gameplay, so menus/dialogue/shop
+    // keep their own WSAD/Q/E/etc. bindings.
+    let mut pan = Vec2::ZERO;
+    if gameplay {
+        if keys.pressed(KeyCode::KeyQ) {
+            rig.yaw += YAW_SPEED * dt;
+        }
+        if keys.pressed(KeyCode::KeyE) {
+            rig.yaw -= YAW_SPEED * dt;
+        }
+        if keys.pressed(KeyCode::BracketRight) {
+            rig.pitch = (rig.pitch + TILT_SPEED * dt).min(PITCH_MAX);
+        }
+        if keys.pressed(KeyCode::BracketLeft) {
+            rig.pitch = (rig.pitch - TILT_SPEED * dt).max(PITCH_MIN);
+        }
+
+        let mut scroll = 0.0;
+        for ev in wheel.read() {
+            scroll += ev.y;
+        }
+        if scroll != 0.0 {
+            rig.zoom = (rig.zoom * ZOOM_STEP.powf(-scroll)).clamp(ZOOM_MIN, ZOOM_MAX);
+        }
+
+        // Pan in the ground plane, relative to the current yaw.
+        let forward = Vec2::new(-rig.yaw.cos(), -rig.yaw.sin());
+        let right = Vec2::new(-rig.yaw.sin(), rig.yaw.cos());
+        if keys.pressed(KeyCode::KeyW) {
+            pan += forward;
+        }
+        if keys.pressed(KeyCode::KeyS) {
+            pan -= forward;
+        }
+        if keys.pressed(KeyCode::KeyD) {
+            pan += right;
+        }
+        if keys.pressed(KeyCode::KeyA) {
+            pan -= right;
+        }
+    }
+    let pan_delta = if pan != Vec2::ZERO {
+        pan.normalize() * PAN_SPEED * dt
+    } else {
+        Vec2::ZERO
+    };
+
+    // Update the focus point: locked follows the player (pan nudges, then it
+    // drifts back via the lerp); unlocked only moves by WSAD.
+    if locked {
+        let alpha = (FOLLOW_SPEED * dt).clamp(0.0, 1.0);
+        rig.focus = rig.focus.lerp(player_xy, alpha) + pan_delta;
+    } else {
+        rig.focus += pan_delta;
+    }
+
+    // Apply the transform + projection.
     let Ok((mut cam_tf, mut proj)) = cam_q.single_mut() else {
         return;
     };
-    let focus = Vec3::new(
-        player_tf.translation.x + rig.pan_offset.x,
-        player_tf.translation.y + rig.pan_offset.y,
-        0.0,
-    );
-    let desired = focus + rig_offset(&rig);
+    let focus3 = rig.focus.extend(0.0);
+    let desired = focus3 + rig_offset(&rig);
     if cam_tf.translation.distance(desired) > SNAP_DIST {
         cam_tf.translation = desired; // teleport: snap instead of long pan
     } else {
         let alpha = (FOLLOW_SPEED * dt).clamp(0.0, 1.0);
         cam_tf.translation = cam_tf.translation.lerp(desired, alpha);
     }
-    cam_tf.look_at(focus, Vec3::Z);
+    cam_tf.look_at(focus3, Vec3::Z);
 
     if let Projection::Orthographic(ortho) = proj.as_mut() {
         ortho.scaling_mode = ScalingMode::FixedVertical {
