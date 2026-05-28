@@ -37,6 +37,7 @@ pub mod map;
 pub mod movement;
 pub mod pathfinding;
 pub mod quadtree;
+pub mod post_fx;
 pub mod quests;
 pub mod render3d;
 pub mod save;
@@ -134,6 +135,7 @@ fn full_game_app() -> App {
         .add_plugins(bevy::pbr::MaterialPlugin::<render3d::ToonMaterial>::default())
         .add_plugins(bevy_mod_outline::OutlinePlugin)
         .add_plugins(bevy_mod_outline::AutoGenerateOutlineNormalsPlugin::default())
+        .add_plugins(post_fx::PostFxPlugin)
         .add_plugins(UiStylePlugin)
         .add_plugins(HudPlugin)
         .add_plugins(CombatPlugin)

@@ -529,6 +529,9 @@ pub fn spawn_iso_camera(commands: &mut Commands, focus: Vec3) -> Entity {
             Msaa::Off,
             DepthPrepass,
             NormalPrepass,
+            // Vignette + film-grain fullscreen pass (post_fx.rs); tasteful
+            // defaults for the dark-anime mood.
+            crate::post_fx::PostFxSettings::ANIME_DEFAULT,
         ))
         .id()
 }
