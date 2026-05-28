@@ -437,21 +437,27 @@ pub fn hydrate_placeholders(
     }
 }
 
-/// Emulate perspective outline thinning under the orthographic iso camera:
-/// scale each outline's (logical-pixel) width inversely with its distance from
-/// the camera, so farther entities get thinner ink lines.
+/// Emulate perspective outline thinning under the orthographic iso camera. Under
+/// ortho the absolute distance to the (far) camera barely varies across the
+/// scene, so a physically-accurate 1/d falloff is invisible. We use a steeper
+/// stylised exponent so the variation is clearly readable: farther entities
+/// get noticeably thinner ink lines, nearer ones thicker.
 pub fn scale_outline_width_by_distance(
     cam_q: Query<&GlobalTransform, With<crate::core::MainCamera>>,
     mut q: Query<(&GlobalTransform, &mut OutlineVolume)>,
 ) {
-    const BASE_WIDTH: f32 = 3.0;
+    const BASE_WIDTH: f32 = 4.0;
+    const FALLOFF: f32 = 5.0;
+    const WIDTH_MIN: f32 = 0.3;
+    const WIDTH_MAX: f32 = 10.0;
     let Ok(cam) = cam_q.single() else {
         return;
     };
     let cam_pos = cam.translation();
     for (gt, mut outline) in &mut q {
         let d = gt.translation().distance(cam_pos).max(1.0);
-        outline.width = (BASE_WIDTH * ISO_DISTANCE / d).clamp(0.8, 4.0);
+        let scale = (ISO_DISTANCE / d).powf(FALLOFF);
+        outline.width = (BASE_WIDTH * scale).clamp(WIDTH_MIN, WIDTH_MAX);
     }
 }
 
@@ -496,9 +502,11 @@ pub fn debug_screenshot_once(
     game_state.0 = crate::core::Game_State::Exploring;
     // Free-aim the camera at the isolated ToonTestSphere (north of spawn) so
     // nothing occludes it. world_origin = tile center (2048, 2048), sphere at +800 Y.
+    // Frame both the test capsule (north, closer to the camera) and the player
+    // cluster (south, farther) so distance-based outline thinning is comparable.
     globals.0.camera_locked = false;
-    rig.focus = Vec2::new(2048.0, 2848.0);
-    rig.zoom = 340.0;
+    rig.focus = Vec2::new(2048.0, 2448.0);
+    rig.zoom = 1100.0;
     rig.yaw = std::f32::consts::PI * 0.25; // default iso angle
     *elapsed += time.delta_secs();
     if *elapsed < 3.0 {
