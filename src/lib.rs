@@ -47,6 +47,7 @@ pub mod settings;
 pub mod skill_tree;
 pub mod status_effects;
 pub mod story_flags;
+pub mod tuning;
 pub mod ui_style;
 pub mod world;
 pub mod world_rules;
@@ -145,6 +146,8 @@ fn full_game_app() -> App {
         // Phase 5: data-driven cutscene sequencer. Press F1 to play
         // assets/cutscenes/intro.cutscene.ron.
         .add_plugins(cutscene::CutscenePlugin)
+        // Live tuning panel — press F2 to open sliders for toon/post/grading.
+        .add_plugins(tuning::RenderTuningPlugin)
         .add_plugins(UiStylePlugin)
         .add_plugins(HudPlugin)
         .add_plugins(CombatPlugin)
