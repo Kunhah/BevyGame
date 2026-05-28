@@ -437,27 +437,32 @@ pub fn hydrate_placeholders(
     }
 }
 
-/// Emulate perspective outline thinning under the orthographic iso camera. Under
-/// ortho the absolute distance to the (far) camera barely varies across the
-/// scene, so a physically-accurate 1/d falloff is invisible. We use a steeper
-/// stylised exponent so the variation is clearly readable: farther entities
-/// get noticeably thinner ink lines, nearer ones thicker.
+/// Set each outline's logical-pixel width from object size (sublinear: small
+/// things get small outlines, bigger things get only slightly bigger outlines)
+/// combined with a milder distance falloff (further entities = thinner).
 pub fn scale_outline_width_by_distance(
     cam_q: Query<&GlobalTransform, With<crate::core::MainCamera>>,
-    mut q: Query<(&GlobalTransform, &mut OutlineVolume)>,
+    mut q: Query<(&GlobalTransform, Option<&PlaceholderVisual>, &mut OutlineVolume)>,
 ) {
-    const BASE_WIDTH: f32 = 4.0;
-    const FALLOFF: f32 = 5.0;
-    const WIDTH_MIN: f32 = 0.3;
-    const WIDTH_MAX: f32 = 10.0;
+    const BASE_WIDTH: f32 = 2.0;
+    const SIZE_REF: f32 = 50.0; // typical character footprint scale
+    const SIZE_POWER: f32 = 0.30; // strongly sublinear — big things don't get big outlines
+    const DIST_POWER: f32 = 2.0; // moderate distance thinning
+    const WIDTH_MIN: f32 = 0.6;
+    const WIDTH_MAX: f32 = 4.0;
+
     let Ok(cam) = cam_q.single() else {
         return;
     };
     let cam_pos = cam.translation();
-    for (gt, mut outline) in &mut q {
+    for (gt, vis_opt, mut outline) in &mut q {
+        let size = vis_opt
+            .map(|v| v.size.x.min(v.size.y).min(v.size.z).max(8.0))
+            .unwrap_or(SIZE_REF);
+        let size_factor = (size / SIZE_REF).powf(SIZE_POWER);
         let d = gt.translation().distance(cam_pos).max(1.0);
-        let scale = (ISO_DISTANCE / d).powf(FALLOFF);
-        outline.width = (BASE_WIDTH * scale).clamp(WIDTH_MIN, WIDTH_MAX);
+        let dist_factor = (ISO_DISTANCE / d).powf(DIST_POWER);
+        outline.width = (BASE_WIDTH * size_factor * dist_factor).clamp(WIDTH_MIN, WIDTH_MAX);
     }
 }
 
