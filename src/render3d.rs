@@ -23,6 +23,8 @@ use bevy_camera::{OrthographicProjection, Projection, ScalingMode};
 #[derive(Clone, Copy, ShaderType, Debug, Reflect)]
 pub struct ToonParams {
     pub rim_color: Vec4,
+    /// rgb = multiplier on shadowed steps (cool/desaturated); a = strength.
+    pub shadow_tint: Vec4,
     pub bands: f32,
     pub rim_strength: f32,
     pub rim_power: f32,
@@ -32,11 +34,12 @@ pub struct ToonParams {
 impl Default for ToonParams {
     fn default() -> Self {
         Self {
-            rim_color: Vec4::new(0.55, 0.65, 0.95, 1.0), // cool anime rim
-            bands: 4.0,                                  // cel steps
-            rim_strength: 0.6,
-            rim_power: 3.0,
-            shade_floor: 0.12, // darkest step: moody, not black
+            rim_color: Vec4::new(0.5, 0.65, 1.0, 1.0), // cool anime rim
+            shadow_tint: Vec4::new(0.42, 0.48, 0.70, 0.85), // cool, deep shadows
+            bands: 4.0,                                // cel steps
+            rim_strength: 0.85,
+            rim_power: 2.5,
+            shade_floor: 0.06, // darkest step: deep, moody
         }
     }
 }
@@ -349,9 +352,10 @@ pub struct PlaceholderVisual {
 }
 
 impl PlaceholderVisual {
-    /// A standing character-sized box (old 32×32 sprite → 28×28 footprint).
+    /// A standing character-sized capsule (old 32×32 sprite → 28×28 footprint).
+    /// Characters are toon-shaded by default.
     pub fn character(color: Color) -> Self {
-        Self { color, size: Vec3::new(28.0, 28.0, CHAR_HEIGHT), grounded: true, toon: false, hydrated: false }
+        Self { color, size: Vec3::new(28.0, 28.0, CHAR_HEIGHT), grounded: true, toon: true, hydrated: false }
     }
     /// A prop/obstacle box with an explicit footprint; `height` is along +Z.
     pub fn prop(color: Color, footprint: Vec2, height: f32) -> Self {
@@ -377,13 +381,18 @@ pub fn hydrate_placeholders(
         if vis.hydrated {
             continue;
         }
-        // Toon placeholders use a sphere: cel banding + rim only read on curved
-        // surfaces (flat cube faces have a constant normal, so PBR already
-        // renders them as one flat shade and banding changes nothing). Real
-        // models in Phase 5 are curved, so they'll show the effect.
+        // Toon placeholders use a capsule standing along +Z (Capsule3d is
+        // Y-aligned, so rotate the mesh +90° about X). Cel banding + rim only
+        // read on curved surfaces — flat cube faces have a constant normal, so
+        // PBR already renders them flat and banding changes nothing. A cube-ish
+        // size (height ≈ footprint) yields a sphere (length 0). Real models in
+        // Phase 5 are curved, so they'll show the effect.
         let (mesh, z_off) = if vis.toon {
-            let r = vis.size.x.max(vis.size.y) * 0.65;
-            (meshes.add(Sphere::new(r)), r)
+            let radius = vis.size.x.min(vis.size.y) * 0.5;
+            let length = (vis.size.z - 2.0 * radius).max(0.0);
+            let m = Mesh::from(Capsule3d::new(radius, length))
+                .rotated_by(Quat::from_rotation_x(std::f32::consts::FRAC_PI_2));
+            (meshes.add(m), vis.size.z * 0.5)
         } else {
             (
                 meshes.add(Cuboid::new(vis.size.x, vis.size.y, vis.size.z)),
@@ -423,9 +432,11 @@ pub fn spawn_iso_camera(commands: &mut Commands, focus: Vec3) -> Entity {
             Camera3d::default(),
             iso_projection(),
             iso_camera_transform(focus),
-            // Ambient fill is per-camera in Bevy 0.18.
+            // Low, cool ambient fill so cel shadows read deep and moody (per-
+            // camera in Bevy 0.18). The directional sun provides the key light.
             AmbientLight {
-                brightness: 350.0,
+                color: Color::srgb(0.6, 0.7, 1.0),
+                brightness: 120.0,
                 ..default()
             },
         ))
@@ -456,7 +467,7 @@ pub fn debug_screenshot_once(
     // nothing occludes it. world_origin = tile center (2048, 2048), sphere at +800 Y.
     globals.0.camera_locked = false;
     rig.focus = Vec2::new(2048.0, 2848.0);
-    rig.zoom = 220.0;
+    rig.zoom = 340.0;
     rig.yaw = std::f32::consts::PI * 0.25; // default iso angle
     *elapsed += time.delta_secs();
     if *elapsed < 3.0 {
@@ -485,7 +496,10 @@ pub fn spawn_sun(commands: &mut Commands) {
             shadows_enabled: true,
             ..default()
         },
-        // Shine downward into the XY ground at an angle so boxes cast shadows.
-        Transform::default().looking_to(Vec3::new(-0.5, -0.6, -1.0).normalize(), Vec3::Z),
+        // Cross-light the scene: the key light comes from the side relative to
+        // the default iso camera (+x+y) so the shadow terminator falls across
+        // visible surfaces — that's where cel banding reads. (Frontlighting from
+        // the camera direction looks flat.)
+        Transform::default().looking_to(Vec3::new(-0.85, 0.4, -0.75).normalize(), Vec3::Z),
     ));
 }

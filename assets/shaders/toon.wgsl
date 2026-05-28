@@ -16,6 +16,9 @@
 
 struct ToonParams {
     rim_color: vec4<f32>,
+    // rgb = multiplier applied to shadowed steps (cool/desaturated for the
+    // adult-anime look); a = how strongly to apply it.
+    shadow_tint: vec4<f32>,
     bands: f32,
     rim_strength: f32,
     rim_power: f32,
@@ -40,6 +43,10 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
         let lum = max(dot(lit.rgb, vec3<f32>(0.299, 0.587, 0.114)), 1e-4);
         let stepped = max(floor(lum * toon.bands) / toon.bands, toon.shade_floor);
         var color = lit.rgb * (stepped / lum);
+
+        // Deepen + cool the shadowed steps (adult-anime signature).
+        let shadow_mix = (1.0 - smoothstep(0.0, 0.55, stepped)) * toon.shadow_tint.a;
+        color = mix(color, color * toon.shadow_tint.rgb, shadow_mix);
 
         // Rim / Fresnel light along the silhouette.
         let rim = pow(1.0 - saturate(dot(pbr_input.N, pbr_input.V)), toon.rim_power)

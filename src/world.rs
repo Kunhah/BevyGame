@@ -370,13 +370,13 @@ pub fn setup(
         }
     }
 
-    // Dedicated toon-shader reference: a big isolated sphere north of spawn so
-    // the cel bands + rim light are easy to see (cel shading only reads on
-    // curved surfaces). The ISO_SHOT dev capture aims the camera here.
+    // Dedicated toon-shader reference: a big isolated upright capsule north of
+    // spawn so the cel bands + rim light (and the capsule orientation) are easy
+    // to see. The ISO_SHOT dev capture aims the camera here.
     commands.spawn((
-        PlaceholderVisual::prop(Color::srgb(0.72, 0.52, 0.50), Vec2::splat(100.0), 100.0).toon(),
+        PlaceholderVisual::prop(Color::srgb(0.72, 0.52, 0.50), Vec2::splat(70.0), 180.0).toon(),
         Transform::from_translation((world_origin + Vec2::new(0.0, 800.0)).extend(0.0)),
-        Name::new("ToonTestSphere"),
+        Name::new("ToonTestCapsule"),
     ));
 
     // A walk-in building (open-topped room with a doorway) for testing how
