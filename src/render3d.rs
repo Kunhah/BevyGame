@@ -496,14 +496,14 @@ pub fn spawn_iso_camera(commands: &mut Commands, focus: Vec3) -> Entity {
             // Dark, cool atmospheric fog for depth/mood.
             DistanceFog {
                 color: Color::srgb(0.06, 0.08, 0.13),
-                falloff: FogFalloff::Exponential { density: 0.0009 },
+                falloff: FogFalloff::Exponential { density: 0.0005 },
                 ..default()
             },
             // Cool, desaturated shadows + a touch of midtone contrast — the
             // signature adult-anime grade. Tune the per-section values to taste.
             ColorGrading {
                 global: ColorGradingGlobal {
-                    exposure: -0.25,
+                    exposure: -0.05,
                     temperature: -0.06, // slightly cool overall
                     ..default()
                 },
