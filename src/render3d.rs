@@ -18,6 +18,14 @@ use bevy::render::render_resource::{AsBindGroup, ShaderType};
 use bevy::shader::ShaderRef;
 use bevy_camera::{OrthographicProjection, Projection, ScalingMode};
 use bevy_mod_outline::{OutlineMode, OutlineStencil, OutlineVolume};
+// Phase 4 post-processing components.
+use bevy::core_pipeline::{
+    prepass::{DepthPrepass, NormalPrepass},
+    tonemapping::Tonemapping,
+};
+use bevy::pbr::{DistanceFog, FogFalloff, ScreenSpaceAmbientOcclusion};
+use bevy::post_process::bloom::Bloom;
+use bevy::render::view::{ColorGrading, ColorGradingGlobal, ColorGradingSection, Msaa};
 
 /// Toon shading parameters — mirrors the `ToonParams` uniform in `toon.wgsl`
 /// (field order/layout must match).
@@ -474,13 +482,53 @@ pub fn spawn_iso_camera(commands: &mut Commands, focus: Vec3) -> Entity {
             Camera3d::default(),
             iso_projection(),
             iso_camera_transform(focus),
-            // Low, cool ambient fill so cel shadows read deep and moody (per-
-            // camera in Bevy 0.18). The directional sun provides the key light.
+            // Low, cool ambient fill so cel shadows read deep and moody.
             AmbientLight {
                 color: Color::srgb(0.6, 0.7, 1.0),
                 brightness: 120.0,
                 ..default()
             },
+            // ---------- Phase 4: post-processing stack ----------
+            // Filmic tonemap — crushes highlights and deepens shadows naturally.
+            Tonemapping::AgX,
+            // Restrained bloom around bright highlights / eventual emissives.
+            Bloom { intensity: 0.08, ..Bloom::NATURAL },
+            // Dark, cool atmospheric fog for depth/mood.
+            DistanceFog {
+                color: Color::srgb(0.06, 0.08, 0.13),
+                falloff: FogFalloff::Exponential { density: 0.0009 },
+                ..default()
+            },
+            // Cool, desaturated shadows + a touch of midtone contrast — the
+            // signature adult-anime grade. Tune the per-section values to taste.
+            ColorGrading {
+                global: ColorGradingGlobal {
+                    exposure: -0.25,
+                    temperature: -0.06, // slightly cool overall
+                    ..default()
+                },
+                shadows: ColorGradingSection {
+                    saturation: 0.55,
+                    contrast: 1.05,
+                    ..default()
+                },
+                midtones: ColorGradingSection {
+                    saturation: 0.90,
+                    contrast: 1.10,
+                    ..default()
+                },
+                highlights: ColorGradingSection {
+                    saturation: 0.85,
+                    contrast: 1.0,
+                    ..default()
+                },
+            },
+            // Contact shadows / AO crevices — adds depth and detail. SSAO
+            // requires MSAA off (it samples the depth buffer directly).
+            ScreenSpaceAmbientOcclusion::default(),
+            Msaa::Off,
+            DepthPrepass,
+            NormalPrepass,
         ))
         .id()
 }
