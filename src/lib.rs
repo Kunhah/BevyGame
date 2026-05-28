@@ -37,6 +37,7 @@ pub mod map;
 pub mod movement;
 pub mod pathfinding;
 pub mod quadtree;
+pub mod cutscene;
 pub mod post_fx;
 pub mod quests;
 pub mod render3d;
@@ -136,6 +137,14 @@ fn full_game_app() -> App {
         .add_plugins(bevy_mod_outline::OutlinePlugin)
         .add_plugins(bevy_mod_outline::AutoGenerateOutlineNormalsPlugin::default())
         .add_plugins(post_fx::PostFxPlugin)
+        // Phase 5: Blender->Bevy glTF component hydration. Components flagged
+        // in Blender (Skein addon) hydrate via Bevy reflection at scene load,
+        // provided the component derives Reflect and is registered via
+        // `app.register_type::<T>()` in its owning plugin.
+        .add_plugins(bevy_skein::SkeinPlugin::default())
+        // Phase 5: data-driven cutscene sequencer. Press F1 to play
+        // assets/cutscenes/intro.cutscene.ron.
+        .add_plugins(cutscene::CutscenePlugin)
         .add_plugins(UiStylePlugin)
         .add_plugins(HudPlugin)
         .add_plugins(CombatPlugin)

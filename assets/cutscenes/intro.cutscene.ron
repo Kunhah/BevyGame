@@ -1,0 +1,37 @@
+// Sample cutscene: a slow "camera tour" of the spawn area.
+//
+// Coordinates: world is tile-centred at (2048, 2048); the player spawns there,
+// the test capsule sits at (2048, 2848). Yaw is in radians around +Z; pitch is
+// elevation in radians (clamped 0.26..1.40 by drive_camera).
+
+(
+    steps: [
+        // 0s: glide toward the test capsule from above.
+        (at: 0.0, action: CameraTo(
+            focus:    Some((2048.0, 2848.0)),
+            yaw:      Some(0.78539816), // ~45 degrees (default iso angle)
+            pitch:    Some(1.10),       // looking down more
+            zoom:     Some(400.0),
+            duration: 2.5,
+        )),
+
+        // 3s: spin around it, drop the elevation a bit.
+        (at: 3.0, action: CameraTo(
+            yaw:      Some(3.14159265), // 180 degrees from start
+            pitch:    Some(0.62),       // closer to horizon
+            duration: 3.0,
+        )),
+
+        // 7s: pull back, recentre on the player cluster.
+        (at: 7.0, action: CameraTo(
+            focus:    Some((2048.0, 2048.0)),
+            yaw:      Some(0.78539816),
+            pitch:    Some(0.6156),     // default ~35.26 degrees
+            zoom:     Some(800.0),
+            duration: 3.0,
+        )),
+
+        // 11s: hand control back.
+        (at: 11.0, action: End),
+    ],
+)
