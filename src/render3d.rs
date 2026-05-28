@@ -12,8 +12,57 @@
 //! Note: glTF/Blender are Y-up, so models imported in a later phase get a single
 //! load-time +90° rotation about X to stand correctly in this Z-up world.
 
+use bevy::pbr::{ExtendedMaterial, MaterialExtension};
 use bevy::prelude::*;
+use bevy::render::render_resource::{AsBindGroup, ShaderType};
+use bevy::shader::ShaderRef;
 use bevy_camera::{OrthographicProjection, Projection, ScalingMode};
+
+/// Toon shading parameters — mirrors the `ToonParams` uniform in `toon.wgsl`
+/// (field order/layout must match).
+#[derive(Clone, Copy, ShaderType, Debug, Reflect)]
+pub struct ToonParams {
+    pub rim_color: Vec4,
+    pub bands: f32,
+    pub rim_strength: f32,
+    pub rim_power: f32,
+    pub shade_floor: f32,
+}
+
+impl Default for ToonParams {
+    fn default() -> Self {
+        Self {
+            rim_color: Vec4::new(0.55, 0.65, 0.95, 1.0), // cool anime rim
+            bands: 4.0,                                  // cel steps
+            rim_strength: 0.6,
+            rim_power: 3.0,
+            shade_floor: 0.12, // darkest step: moody, not black
+        }
+    }
+}
+
+/// `StandardMaterial` extension that bands the lit result into cel steps and
+/// adds a rim light. Keeps Bevy's real lighting + shadows underneath.
+#[derive(Asset, AsBindGroup, Reflect, Debug, Clone)]
+pub struct ToonExtension {
+    #[uniform(100)]
+    pub params: ToonParams,
+}
+
+impl Default for ToonExtension {
+    fn default() -> Self {
+        Self { params: ToonParams::default() }
+    }
+}
+
+impl MaterialExtension for ToonExtension {
+    fn fragment_shader() -> ShaderRef {
+        "shaders/toon.wgsl".into()
+    }
+}
+
+/// The toon material applied to characters.
+pub type ToonMaterial = ExtendedMaterial<StandardMaterial, ToonExtension>;
 
 /// True-isometric viewing angles for the camera rig.
 pub const ISO_AZIMUTH_DEG: f32 = 45.0;
@@ -292,6 +341,9 @@ pub struct PlaceholderVisual {
     /// When true the box rests on the ground (its base at z = 0); otherwise it
     /// is centered on the entity's translation.
     pub grounded: bool,
+    /// When true, hydrate with the toon [`ToonMaterial`] instead of a plain
+    /// `StandardMaterial`.
+    pub toon: bool,
     /// Set once hydrated so we don't re-offset the transform.
     hydrated: bool,
 }
@@ -299,11 +351,16 @@ pub struct PlaceholderVisual {
 impl PlaceholderVisual {
     /// A standing character-sized box (old 32×32 sprite → 28×28 footprint).
     pub fn character(color: Color) -> Self {
-        Self { color, size: Vec3::new(28.0, 28.0, CHAR_HEIGHT), grounded: true, hydrated: false }
+        Self { color, size: Vec3::new(28.0, 28.0, CHAR_HEIGHT), grounded: true, toon: false, hydrated: false }
     }
     /// A prop/obstacle box with an explicit footprint; `height` is along +Z.
     pub fn prop(color: Color, footprint: Vec2, height: f32) -> Self {
-        Self { color, size: footprint.extend(height), grounded: true, hydrated: false }
+        Self { color, size: footprint.extend(height), grounded: true, toon: false, hydrated: false }
+    }
+    /// Render this placeholder with the toon material.
+    pub fn toon(mut self) -> Self {
+        self.toon = true;
+        self
     }
 }
 
@@ -313,25 +370,48 @@ pub fn hydrate_placeholders(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut toon_materials: ResMut<Assets<ToonMaterial>>,
     mut q: Query<(Entity, &mut PlaceholderVisual, &mut Transform), Added<PlaceholderVisual>>,
 ) {
     for (entity, mut vis, mut transform) in &mut q {
         if vis.hydrated {
             continue;
         }
-        let mesh = meshes.add(Cuboid::new(vis.size.x, vis.size.y, vis.size.z));
-        let material = materials.add(StandardMaterial {
-            base_color: vis.color,
-            perceptual_roughness: 0.7,
-            ..default()
-        });
+        // Toon placeholders use a sphere: cel banding + rim only read on curved
+        // surfaces (flat cube faces have a constant normal, so PBR already
+        // renders them as one flat shade and banding changes nothing). Real
+        // models in Phase 5 are curved, so they'll show the effect.
+        let (mesh, z_off) = if vis.toon {
+            let r = vis.size.x.max(vis.size.y) * 0.65;
+            (meshes.add(Sphere::new(r)), r)
+        } else {
+            (
+                meshes.add(Cuboid::new(vis.size.x, vis.size.y, vis.size.z)),
+                vis.size.z * 0.5,
+            )
+        };
         if vis.grounded {
-            transform.translation.z += vis.size.z * 0.5;
+            transform.translation.z += z_off;
         }
         vis.hydrated = true;
-        commands
-            .entity(entity)
-            .insert((Mesh3d(mesh), MeshMaterial3d(material)));
+        let mut ent = commands.entity(entity);
+        ent.insert(Mesh3d(mesh));
+        if vis.toon {
+            ent.insert(MeshMaterial3d(toon_materials.add(ToonMaterial {
+                base: StandardMaterial {
+                    base_color: vis.color,
+                    perceptual_roughness: 0.6,
+                    ..default()
+                },
+                extension: ToonExtension::default(),
+            })));
+        } else {
+            ent.insert(MeshMaterial3d(materials.add(StandardMaterial {
+                base_color: vis.color,
+                perceptual_roughness: 0.7,
+                ..default()
+            })));
+        }
     }
 }
 
@@ -359,22 +439,36 @@ pub fn debug_screenshot_once(
     mut commands: Commands,
     time: Res<Time>,
     mut game_state: ResMut<crate::core::GameState>,
+    mut globals: ResMut<crate::core::Global_Variables>,
     mut rig: ResMut<CameraRig>,
+    player_q: Query<&Transform, With<crate::core::Player>>,
+    cam_q: Query<&Transform, (With<crate::core::MainCamera>, Without<crate::core::Player>)>,
     mut elapsed: Local<f32>,
     mut done: Local<bool>,
 ) {
     if *done {
         return;
     }
-    if *elapsed == 0.0 {
-        game_state.0 = crate::core::Game_State::Exploring;
-        rig.zoom = 1400.0; // wide view so placed structures are visible
-    }
+    // Force exploration + a fixed close zoom every frame (a stray wheel event in
+    // the headless capture can otherwise drift the zoom).
+    game_state.0 = crate::core::Game_State::Exploring;
+    // Free-aim the camera at the isolated ToonTestSphere (north of spawn) so
+    // nothing occludes it. world_origin = tile center (2048, 2048), sphere at +800 Y.
+    globals.0.camera_locked = false;
+    rig.focus = Vec2::new(2048.0, 2848.0);
+    rig.zoom = 220.0;
+    rig.yaw = std::f32::consts::PI * 0.25; // default iso angle
     *elapsed += time.delta_secs();
     if *elapsed < 3.0 {
         return;
     }
     *done = true;
+    let player = player_q.single().map(|t| t.translation).ok();
+    let cam = cam_q.single().map(|t| t.translation).ok();
+    info!(
+        "ISO_SHOT: zoom={} player={:?} cam={:?}",
+        rig.zoom, player, cam
+    );
     commands
         .spawn(bevy::render::view::screenshot::Screenshot::primary_window())
         .observe(bevy::render::view::screenshot::save_to_disk(

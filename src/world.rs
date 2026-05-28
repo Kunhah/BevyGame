@@ -67,7 +67,10 @@ pub fn setup(
     let mut player_stats = CombatStats::default();
     player_stats.health = StatPool::<i32>::new(120);
     commands.spawn((
-        PlaceholderVisual::character(Color::WHITE),
+        // Phase 2 toon-shader "hero": this box uses the toon ExtendedMaterial so
+        // it can be judged against the standard-shaded NPCs/enemies around it. A
+        // warm mid-tone reads the cel bands + cool rim clearly.
+        PlaceholderVisual::character(Color::srgb(0.72, 0.52, 0.50)).toon(),
         Transform::from_translation(origin3),
         Player,
         // The player has signed the Merchant's Contract; this drives
@@ -366,6 +369,15 @@ pub fn setup(
             e.insert(WorldYokai { kind });
         }
     }
+
+    // Dedicated toon-shader reference: a big isolated sphere north of spawn so
+    // the cel bands + rim light are easy to see (cel shading only reads on
+    // curved surfaces). The ISO_SHOT dev capture aims the camera here.
+    commands.spawn((
+        PlaceholderVisual::prop(Color::srgb(0.72, 0.52, 0.50), Vec2::splat(100.0), 100.0).toon(),
+        Transform::from_translation((world_origin + Vec2::new(0.0, 800.0)).extend(0.0)),
+        Name::new("ToonTestSphere"),
+    ));
 
     // A walk-in building (open-topped room with a doorway) for testing how
     // walls occlude a character standing inside, especially while rotating the
