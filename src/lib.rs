@@ -132,6 +132,8 @@ fn full_game_app() -> App {
     let mut app = App::new();
     app.add_plugins(base_default_plugins("Seirei Kuni"))
         .add_plugins(bevy::pbr::MaterialPlugin::<render3d::ToonMaterial>::default())
+        .add_plugins(bevy_mod_outline::OutlinePlugin)
+        .add_plugins(bevy_mod_outline::AutoGenerateOutlineNormalsPlugin::default())
         .add_plugins(UiStylePlugin)
         .add_plugins(HudPlugin)
         .add_plugins(CombatPlugin)

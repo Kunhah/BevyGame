@@ -391,8 +391,8 @@ pub fn setup(
 /// visible from above; the near walls test occlusion from the iso camera.
 fn spawn_house(commands: &mut Commands, center: Vec2) {
     const HALF: f32 = 130.0;
-    const THICK: f32 = 24.0;
-    const WALL_H: f32 = 110.0;
+    const THICK: f32 = 32.0;
+    const WALL_H: f32 = 180.0;
     const DOOR: f32 = 72.0;
     let color = Color::srgb(0.45, 0.40, 0.34);
     let seg = (2.0 * HALF - DOOR) * 0.5; // front-wall segment length on each side of the door
@@ -458,8 +458,21 @@ fn rebuild_interactable_cache(
 }
 
 fn rebuild_quad_tree(query: &Query<&Collider>, quad_tree: &mut QuadTree) {
-    let mut quadtree =
-        QuadtreeNode::new(Rect::from_center_size(Vec2::ZERO, Vec2::splat(2048.0)), 0);
+    // Enclose all colliders. The world is centered on the tile origin (~2048),
+    // far from (0,0), so the old fixed origin-centered root rect (±1024) missed
+    // every collider and collision never registered.
+    let mut min = Vec2::splat(f32::MAX);
+    let mut max = Vec2::splat(f32::MIN);
+    for collider in query.iter() {
+        min = min.min(collider.bounds.min);
+        max = max.max(collider.bounds.max);
+    }
+    let root = if min.x <= max.x {
+        Rect::from_corners(min - Vec2::splat(512.0), max + Vec2::splat(512.0))
+    } else {
+        Rect::from_center_size(Vec2::ZERO, Vec2::splat(2048.0))
+    };
+    let mut quadtree = QuadtreeNode::new(root, 0);
     for collider in query.iter() {
         quadtree.insert(collider.clone());
     }

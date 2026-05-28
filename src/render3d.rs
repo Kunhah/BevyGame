@@ -17,6 +17,7 @@ use bevy::prelude::*;
 use bevy::render::render_resource::{AsBindGroup, ShaderType};
 use bevy::shader::ShaderRef;
 use bevy_camera::{OrthographicProjection, Projection, ScalingMode};
+use bevy_mod_outline::{OutlineMode, OutlineVolume};
 
 /// Toon shading parameters — mirrors the `ToonParams` uniform in `toon.wgsl`
 /// (field order/layout must match).
@@ -406,14 +407,23 @@ pub fn hydrate_placeholders(
         let mut ent = commands.entity(entity);
         ent.insert(Mesh3d(mesh));
         if vis.toon {
-            ent.insert(MeshMaterial3d(toon_materials.add(ToonMaterial {
-                base: StandardMaterial {
-                    base_color: vis.color,
-                    perceptual_roughness: 0.6,
-                    ..default()
+            ent.insert((
+                MeshMaterial3d(toon_materials.add(ToonMaterial {
+                    base: StandardMaterial {
+                        base_color: vis.color,
+                        perceptual_roughness: 0.6,
+                        ..default()
+                    },
+                    extension: ToonExtension::default(),
+                })),
+                // Ink outline (inverted hull, constant screen-space width).
+                OutlineVolume {
+                    visible: true,
+                    width: 3.0,
+                    colour: Color::srgb(0.02, 0.02, 0.05),
                 },
-                extension: ToonExtension::default(),
-            })));
+                OutlineMode::ExtrudeFlat,
+            ));
         } else {
             ent.insert(MeshMaterial3d(materials.add(StandardMaterial {
                 base_color: vis.color,
