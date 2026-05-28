@@ -197,6 +197,7 @@ fn full_game_app() -> App {
         .add_systems(Update, update_cache)
         .add_systems(Update, rebuild_terrain_slow_effect_index)
         .add_systems(Update, render3d::hydrate_placeholders)
+        .add_systems(Update, render3d::scale_outline_width_by_distance)
         .add_systems(
             Update,
             render3d::debug_screenshot_once.run_if(|| std::env::var("ISO_SHOT").is_ok()),

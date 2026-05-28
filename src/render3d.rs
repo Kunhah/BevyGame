@@ -17,7 +17,7 @@ use bevy::prelude::*;
 use bevy::render::render_resource::{AsBindGroup, ShaderType};
 use bevy::shader::ShaderRef;
 use bevy_camera::{OrthographicProjection, Projection, ScalingMode};
-use bevy_mod_outline::{OutlineMode, OutlineVolume};
+use bevy_mod_outline::{OutlineMode, OutlineStencil, OutlineVolume};
 
 /// Toon shading parameters — mirrors the `ToonParams` uniform in `toon.wgsl`
 /// (field order/layout must match).
@@ -38,8 +38,8 @@ impl Default for ToonParams {
             rim_color: Vec4::new(0.5, 0.65, 1.0, 1.0), // cool anime rim
             shadow_tint: Vec4::new(0.42, 0.48, 0.70, 0.85), // cool, deep shadows
             bands: 4.0,                                // cel steps
-            rim_strength: 0.85,
-            rim_power: 2.5,
+            rim_strength: 0.30,                        // subtle (was washing out borders)
+            rim_power: 3.5,                            // tighter rim band
             shade_floor: 0.06, // darkest step: deep, moody
         }
     }
@@ -431,6 +431,27 @@ pub fn hydrate_placeholders(
                 ..default()
             })));
         }
+        // Every mesh writes the outline stencil so closer geometry occludes
+        // outlines behind it (an outline is hidden when something is in front).
+        ent.insert(OutlineStencil::default());
+    }
+}
+
+/// Emulate perspective outline thinning under the orthographic iso camera:
+/// scale each outline's (logical-pixel) width inversely with its distance from
+/// the camera, so farther entities get thinner ink lines.
+pub fn scale_outline_width_by_distance(
+    cam_q: Query<&GlobalTransform, With<crate::core::MainCamera>>,
+    mut q: Query<(&GlobalTransform, &mut OutlineVolume)>,
+) {
+    const BASE_WIDTH: f32 = 3.0;
+    let Ok(cam) = cam_q.single() else {
+        return;
+    };
+    let cam_pos = cam.translation();
+    for (gt, mut outline) in &mut q {
+        let d = gt.translation().distance(cam_pos).max(1.0);
+        outline.width = (BASE_WIDTH * ISO_DISTANCE / d).clamp(0.8, 4.0);
     }
 }
 
