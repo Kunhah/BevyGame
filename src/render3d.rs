@@ -129,7 +129,7 @@ pub fn drive_camera(
     player_q: Query<&Transform, (With<crate::core::Player>, Without<crate::core::MainCamera>)>,
     mut cam_q: Query<(&mut Transform, &mut Projection), With<crate::core::MainCamera>>,
 ) {
-    const PAN_SPEED: f32 = 1800.0;
+    const PAN_SPEED: f32 = 1300.0;
     const YAW_SPEED: f32 = 1.8;
     const TILT_SPEED: f32 = 1.4;
     const PITCH_MIN: f32 = 0.26; // ~15°
@@ -350,6 +350,37 @@ pub fn spawn_iso_camera(commands: &mut Commands, focus: Vec3) -> Entity {
             },
         ))
         .id()
+}
+
+/// Dev aid (only registered when the `ISO_SHOT` env var is set): after a short
+/// delay, jump to the exploration world at a wide zoom and save one framebuffer
+/// screenshot to `/tmp/iso_checkpoint.png`. No effect on normal runs.
+pub fn debug_screenshot_once(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut game_state: ResMut<crate::core::GameState>,
+    mut rig: ResMut<CameraRig>,
+    mut elapsed: Local<f32>,
+    mut done: Local<bool>,
+) {
+    if *done {
+        return;
+    }
+    if *elapsed == 0.0 {
+        game_state.0 = crate::core::Game_State::Exploring;
+        rig.zoom = 1400.0; // wide view so placed structures are visible
+    }
+    *elapsed += time.delta_secs();
+    if *elapsed < 3.0 {
+        return;
+    }
+    *done = true;
+    commands
+        .spawn(bevy::render::view::screenshot::Screenshot::primary_window())
+        .observe(bevy::render::view::screenshot::save_to_disk(
+            "/tmp/iso_checkpoint.png",
+        ));
+    info!("ISO_SHOT: saved /tmp/iso_checkpoint.png");
 }
 
 /// Insert the directional "sun" (shadow-casting) for the scene.

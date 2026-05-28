@@ -342,6 +342,65 @@ pub fn setup(
         ));
     }
 
+    // Extra enemies for testing (Space engages an adjacent one). A mix of
+    // generic encounters and a couple of yokai (which spawn species-specific
+    // combatants). Ids 200+ avoid the existing id-1 / 100+ / 10_000+ ranges.
+    let extra_enemies: [(Vec3, Color, u32, Option<YokaiKind>); 5] = [
+        (Vec3::new(6.0 * 32.0, 6.0 * 32.0, 0.0), Color::srgb(0.85, 0.25, 0.25), 200, None),
+        (Vec3::new(8.0 * 32.0, -2.0 * 32.0, 0.0), Color::srgb(0.80, 0.30, 0.30), 201, None),
+        (Vec3::new(-6.0 * 32.0, 7.0 * 32.0, 0.0), Color::srgb(0.90, 0.35, 0.20), 202, Some(YokaiKind::Onibi)),
+        (Vec3::new(-9.0 * 32.0, -5.0 * 32.0, 0.0), Color::srgb(0.30, 0.60, 0.45), 203, Some(YokaiKind::Kappa)),
+        (Vec3::new(10.0 * 32.0, 3.0 * 32.0, 0.0), Color::srgb(0.55, 0.30, 0.65), 204, Some(YokaiKind::Kasha)),
+    ];
+    for (offset, color, id, kind) in extra_enemies {
+        let mut e = commands.spawn((
+            PlaceholderVisual::character(color),
+            Transform::from_translation(origin3 + offset),
+            EnemyEncounter { id },
+            VisualOcclusionTarget,
+            YSort { base_z: 0.0 },
+            crate::light_plugin::LightSensitive { threshold: 0.15 },
+            Name::new(format!("TestEnemy{id}")),
+        ));
+        if let Some(kind) = kind {
+            e.insert(WorldYokai { kind });
+        }
+    }
+
+    // A walk-in building (open-topped room with a doorway) for testing how
+    // walls occlude a character standing inside, especially while rotating the
+    // camera (Q/E). Walls carry colliders; the front doorway is the way in.
+    spawn_house(&mut commands, world_origin + Vec2::new(9.0 * 32.0, -9.0 * 32.0));
+}
+
+/// Spawn a simple placeholder building: four tall walls forming a room with a
+/// gap in the front (low-Y) wall for a door. Each wall is a collider so the
+/// player is blocked except through the doorway. Open-topped so the interior is
+/// visible from above; the near walls test occlusion from the iso camera.
+fn spawn_house(commands: &mut Commands, center: Vec2) {
+    const HALF: f32 = 130.0;
+    const THICK: f32 = 24.0;
+    const WALL_H: f32 = 110.0;
+    const DOOR: f32 = 72.0;
+    let color = Color::srgb(0.45, 0.40, 0.34);
+    let seg = (2.0 * HALF - DOOR) * 0.5; // front-wall segment length on each side of the door
+    let walls: [(Vec2, Vec2); 5] = [
+        (Vec2::new(center.x, center.y + HALF), Vec2::new(2.0 * HALF + THICK, THICK)), // back
+        (Vec2::new(center.x - HALF, center.y), Vec2::new(THICK, 2.0 * HALF + THICK)), // left
+        (Vec2::new(center.x + HALF, center.y), Vec2::new(THICK, 2.0 * HALF + THICK)), // right
+        (Vec2::new(center.x - (DOOR * 0.5 + seg * 0.5), center.y - HALF), Vec2::new(seg, THICK)), // front-left
+        (Vec2::new(center.x + (DOOR * 0.5 + seg * 0.5), center.y - HALF), Vec2::new(seg, THICK)), // front-right
+    ];
+    for (i, (wall_center, footprint)) in walls.into_iter().enumerate() {
+        commands.spawn((
+            PlaceholderVisual::prop(color, footprint, WALL_H),
+            Transform::from_translation(wall_center.extend(0.0)),
+            Collider {
+                bounds: Rect::from_center_size(wall_center, footprint),
+            },
+            Name::new(format!("HouseWall{i}")),
+        ));
+    }
 }
 
 fn first_tile_world_position_for_region(map: &MapTiles, region_id: u16) -> Option<Vec3> {
