@@ -29,6 +29,7 @@ pub mod core;
 pub mod debug_console;
 pub mod dialogue;
 pub mod economy;
+pub mod effects;
 pub mod governance;
 pub mod hud;
 pub mod light_plugin;
@@ -148,6 +149,9 @@ fn full_game_app() -> App {
         .add_plugins(cutscene::CutscenePlugin)
         // Live tuning panel — press F2 to open sliders for toon/post/grading.
         .add_plugins(tuning::RenderTuningPlugin)
+        // Per-entity shader effects (HitFlash, Dissolve) — attach as
+        // components; F3 / F4 demo them on the test capsule.
+        .add_plugins(effects::EffectsPlugin)
         .add_plugins(UiStylePlugin)
         .add_plugins(HudPlugin)
         .add_plugins(CombatPlugin)

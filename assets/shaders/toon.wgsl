@@ -23,11 +23,36 @@ struct ToonParams {
     rim_strength: f32,
     rim_power: f32,
     shade_floor: f32,
+    // Per-entity effects, driven by `crate::effects`:
+    // 0 = none, >0 = additive white pulse (hit / damage / power-up).
+    hit_flash: f32,
+    // 0 = solid, 1 = fully dissolved away. Fragments below this threshold of a
+    // noise field discard; a thin band above it glows for the "burn edge".
+    dissolve: f32,
+    _pad: vec2<f32>,
 }
 @group(#{MATERIAL_BIND_GROUP}) @binding(100) var<uniform> toon: ToonParams;
 
+fn hash21(p: vec2<f32>) -> f32 {
+    var p3 = fract(vec3<f32>(p.x, p.y, p.x) * 0.1031);
+    p3 += dot(p3, p3.yzx + 33.33);
+    return fract((p3.x + p3.y) * p3.z);
+}
+
 @fragment
 fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
+    // Dissolve: discard fragments whose noise sample is below the dissolve
+    // amount. Sampled in mesh UV so the pattern is stable per-mesh.
+    var edge_glow = 0.0;
+    if (toon.dissolve > 0.0) {
+        let n = hash21(in.uv * vec2<f32>(48.0));
+        if (n < toon.dissolve) {
+            discard;
+        }
+        // Hot edge band just above the threshold.
+        edge_glow = 1.0 - smoothstep(toon.dissolve, toon.dissolve + 0.08, n);
+    }
+
     var pbr_input = pbr_input_from_standard_material(in, is_front);
     pbr_input.material.base_color =
         alpha_discard(pbr_input.material, pbr_input.material.base_color);
@@ -52,6 +77,12 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
         let rim = pow(1.0 - saturate(dot(pbr_input.N, pbr_input.V)), toon.rim_power)
             * toon.rim_strength;
         color += toon.rim_color.rgb * rim;
+
+        // Hit flash: brief additive warm-white pulse over the lit color.
+        color += toon.hit_flash * vec3<f32>(1.0, 0.95, 0.8);
+
+        // Dissolve edge glow — hot orange so it reads as "burning away".
+        color += edge_glow * vec3<f32>(1.4, 0.55, 0.15);
 
         out.color = vec4<f32>(color, lit.a);
     }

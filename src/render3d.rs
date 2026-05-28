@@ -38,6 +38,14 @@ pub struct ToonParams {
     pub rim_strength: f32,
     pub rim_power: f32,
     pub shade_floor: f32,
+    /// Per-entity effect driven by `crate::effects::HitFlash`: additive
+    /// warm-white pulse. 0 = none.
+    pub hit_flash: f32,
+    /// Per-entity effect driven by `crate::effects::Dissolve`: 0 = solid,
+    /// 1 = fully dissolved away (with an orange burn edge).
+    pub dissolve: f32,
+    /// Padding to keep the uniform block on a 16-byte boundary (std140).
+    pub _pad: Vec2,
 }
 
 impl Default for ToonParams {
@@ -49,6 +57,9 @@ impl Default for ToonParams {
             rim_strength: 0.30,                        // subtle (was washing out borders)
             rim_power: 3.5,                            // tighter rim band
             shade_floor: 0.06, // darkest step: deep, moody
+            hit_flash: 0.0,
+            dissolve: 0.0,
+            _pad: Vec2::ZERO,
         }
     }
 }
