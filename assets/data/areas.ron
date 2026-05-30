@@ -1,0 +1,137 @@
+// Named overland areas + the world-map travel graph (see src/areas.rs).
+//
+// `id` is the tile-block location_id (bx + by*8): a 4×3 grid of areas across
+// the top-left of the map — row 0 = 0,1,2,3 · row 1 = 8,9,10,11 · row 2 =
+// 16,17,18,19. `anchor` is the tile the party lands on (kept inside the
+// impassable border). `ui_x`/`ui_y` place the node on the world-map canvas
+// (normalised 0.0..=1.0): 4 columns at 0.13/0.38/0.63/0.88, 3 rows at
+// 0.18/0.50/0.82. `connections` are overland edges; `hours` is the in-game
+// travel time, made bidirectional when the graph is built, so only one
+// direction per edge needs listing here.
+(
+    areas: [
+        // --- Row 0 ---
+        (
+            id: 0,
+            name: "Greenford Village",
+            description: "Terraced rice paddies under the Mizuno banner; the road home.",
+            anchor: (x: 3, y: 3),
+            terrain: 1,
+            ui_x: 0.13,
+            ui_y: 0.18,
+            connections: [(to: 1, hours: 5), (to: 8, hours: 3)],
+        ),
+        (
+            id: 1,
+            name: "Ironpass Castle Town",
+            description: "A Takeda stronghold of forges and gates guarding the mountain pass.",
+            anchor: (x: 11, y: 3),
+            terrain: 3,
+            ui_x: 0.38,
+            ui_y: 0.18,
+            connections: [(to: 2, hours: 3), (to: 9, hours: 4)],
+        ),
+        (
+            id: 2,
+            name: "Saltmarsh Crossing",
+            description: "A reed-choked tidal ford where smugglers and pilgrims trade news.",
+            anchor: (x: 19, y: 3),
+            terrain: 1,
+            ui_x: 0.63,
+            ui_y: 0.18,
+            connections: [(to: 3, hours: 4), (to: 10, hours: 3)],
+        ),
+        (
+            id: 3,
+            name: "Tideport Harbor",
+            description: "A salt-bleached harbor of junk ships and foreign coin at the eastern shore.",
+            anchor: (x: 27, y: 3),
+            terrain: 1,
+            ui_x: 0.88,
+            ui_y: 0.18,
+            connections: [(to: 11, hours: 4)],
+        ),
+        // --- Row 1 ---
+        (
+            id: 8,
+            name: "Mistwood",
+            description: "A fog-bound old-growth forest; yokai are said to walk its deer trails.",
+            anchor: (x: 3, y: 11),
+            terrain: 2,
+            ui_x: 0.13,
+            ui_y: 0.50,
+            connections: [(to: 9, hours: 2), (to: 16, hours: 3)],
+        ),
+        (
+            id: 9,
+            name: "Kaze Shrine Vale",
+            description: "A wind-bell shrine in a quiet valley, sacred to the Kamishin rites.",
+            anchor: (x: 11, y: 11),
+            terrain: 1,
+            ui_x: 0.38,
+            ui_y: 0.50,
+            connections: [(to: 10, hours: 3), (to: 17, hours: 2)],
+        ),
+        (
+            id: 10,
+            name: "Oni's Hollow",
+            description: "A scarred hollow where the veil thins and the kegare runs deep.",
+            anchor: (x: 19, y: 11),
+            terrain: 2,
+            ui_x: 0.63,
+            ui_y: 0.50,
+            connections: [(to: 11, hours: 3), (to: 18, hours: 4)],
+        ),
+        (
+            id: 11,
+            name: "Cinderpeak Mine",
+            description: "Terraced ore galleries cut into a smoking peak; the Takeda's iron heart.",
+            anchor: (x: 27, y: 11),
+            terrain: 3,
+            ui_x: 0.88,
+            ui_y: 0.50,
+            connections: [(to: 19, hours: 3)],
+        ),
+        // --- Row 2 ---
+        (
+            id: 16,
+            name: "Reedlight Hamlet",
+            description: "A lamp-lit cluster of stilt houses where the marsh meets the southern road.",
+            anchor: (x: 3, y: 19),
+            terrain: 1,
+            ui_x: 0.13,
+            ui_y: 0.82,
+            connections: [(to: 17, hours: 3)],
+        ),
+        (
+            id: 17,
+            name: "Hollowfen",
+            description: "A drowned forest of black water and will-o'-wisps; few return by night.",
+            anchor: (x: 11, y: 19),
+            terrain: 2,
+            ui_x: 0.38,
+            ui_y: 0.82,
+            connections: [(to: 18, hours: 4)],
+        ),
+        (
+            id: 18,
+            name: "Thunder Terraces",
+            description: "Storm-wracked highland steps where mountain ascetics test the Kiho.",
+            anchor: (x: 19, y: 19),
+            terrain: 3,
+            ui_x: 0.63,
+            ui_y: 0.82,
+            connections: [(to: 19, hours: 3)],
+        ),
+        (
+            id: 19,
+            name: "Lantern Bay",
+            description: "A southern cove of paper lanterns and quiet tea-houses below the cliffs.",
+            anchor: (x: 27, y: 19),
+            terrain: 1,
+            ui_x: 0.88,
+            ui_y: 0.82,
+            connections: [],
+        ),
+    ],
+)

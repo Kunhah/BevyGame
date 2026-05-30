@@ -72,7 +72,7 @@
         prerequisites: [57346, 57347],
         effects: [
             StatBonus(target: Kiho, amount: 5),
-            UnlockAbility(ability_id: 4097), // 0x1001
+            UnlockAbility(ability_id: 32769), // 0x8001 (L16 s1)
         ],
     ),
     (
@@ -85,7 +85,7 @@
         prerequisites: [57345],
         effects: [
             StatBonus(target: Lethality, amount: 3),
-            UnlockAbility(ability_id: 5120), // 0x1400
+            UnlockAbility(ability_id: 40960), // 0xA000 (L20 s0)
         ],
     ),
     (
@@ -98,7 +98,7 @@
         prerequisites: [57350],
         effects: [
             StatBonus(target: Armor, amount: 5),
-            UnlockAbility(ability_id: 5122), // 0x1402
+            UnlockAbility(ability_id: 40962), // 0xA002 (L20 s2)
         ],
     ),
 ]

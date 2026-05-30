@@ -62,7 +62,7 @@ pub enum AbilityShape {
 pub enum MagicSchool {
     #[default]
     Kiho,
-    Chiseijutsu,
+    Onmyodo,
     Yokaijutsu,
     Kamishin,
 }
@@ -188,16 +188,22 @@ fn setup_system(mut r: ResMut<AbilitiesResource>) {
 }
 
 // ---------------- Helpers ----------------
-fn next_free_id(abilities: &Vec<Ability>, level: u8) -> u16 { // I COMPLETELY FORGOT THAT FIRST 8 BITS MUST BE THE LEVEL
-    let used: HashSet<u8> = abilities
+// Ids pack a level (high bits) + within-level sub-id (low bits). The split is
+// 5/11 — see `crate::combat_ability` for the canonical constants/helpers.
+const ID_BITS: u16 = 11;
+const SUB_ID_MASK: u16 = (1 << ID_BITS) - 1;
+const MAX_LEVEL: u8 = 30;
+
+fn next_free_id(abilities: &Vec<Ability>, level: u8) -> u16 {
+    // Sub-ids already taken at this level.
+    let used: HashSet<u16> = abilities
         .iter()
-        .filter(|a| (a.id >> 8) as u8 == level)
-        .map(|a| (a.id >> 8) as u8)  // This will always equal `level`
+        .filter(|a| (a.id >> ID_BITS) as u8 == level)
+        .map(|a| a.id & SUB_ID_MASK)
         .collect();
-    for i in 0u8..=u8::MAX {
-        let candidate = i;
+    for candidate in 0u16..=SUB_ID_MASK {
         if !used.contains(&candidate) {
-            return ((level as u16) << 8) | (candidate as u16);
+            return ((level.min(MAX_LEVEL) as u16) << ID_BITS) | candidate;
         }
     }
     0
@@ -370,7 +376,7 @@ fn ui_system(mut contexts: EguiContexts, mut r: ResMut<AbilitiesResource>) {
             ui.label("Magic:"); if ui.add(egui::DragValue::new(&mut tmp_m).speed(0.1)).changed() { edit_magic = Some(tmp_m); }
             egui::ComboBox::from_id_source("magic_school_combo").selected_text(format!("{:?}", tmp_magic_school)).show_ui(ui, |ui| {
                 ui.selectable_value(&mut tmp_magic_school, MagicSchool::Kiho, "Kiho");
-                ui.selectable_value(&mut tmp_magic_school, MagicSchool::Chiseijutsu, "Chiseijutsu");
+                ui.selectable_value(&mut tmp_magic_school, MagicSchool::Onmyodo, "Onmyodo");
                 ui.selectable_value(&mut tmp_magic_school, MagicSchool::Yokaijutsu, "Yokaijutsu");
                 ui.selectable_value(&mut tmp_magic_school, MagicSchool::Kamishin, "Kamishin");
             });

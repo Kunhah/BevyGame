@@ -2,13 +2,14 @@ use bevy::prelude::*;
 
 use crate::battle::{CombatMovePoints, EnemyEncounter, WorldAlly, WorldNpc, WorldYokai, YokaiKind};
 use crate::city_data::CityCatalog;
-use crate::combat_plugin::{Bound, CombatStats, ResurrectionPoint, ResurrectionStanding, StatPool};
-use crate::core::{MainCamera, Player, Position};
+use crate::combat_plugin::{Bound, ResurrectionPoint, ResurrectionStanding};
+use crate::characters::{CharacterKind, SelectedParty};
+use crate::core::{GameState, Game_State, MainCamera, Player};
 use crate::dialogue::{CachedInteractables, Interactable};
 use crate::economy::{MerchantNpc, Merchants};
 use crate::governance::GovernorNpc;
 use crate::light_plugin::Occluder;
-use crate::map::{tile_center_world, MapTiles, TILE_WORLD_SIZE};
+use crate::map::{tile_center_world, MapTiles, PLAYER_SPAWN_TILE, TILE_WORLD_SIZE};
 use crate::quadtree::{Collider, QuadTree, QuadtreeNode};
 use crate::render3d::{spawn_iso_camera, spawn_sun, PlaceholderAssets, PlaceholderVisual};
 use crate::services::{ServiceKind, ServiceNpc};
@@ -37,14 +38,16 @@ pub fn setup(
     cities: Res<CityCatalog>,
     merchants: Res<Merchants>,
     query: Query<&Collider>,
+    creatures: Res<crate::creatures::CreatureCatalog>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    // The player spawns at the center of tile (0, 0). All the hardcoded test
-    // entities below were authored relative to a 512-unit world, so we offset
-    // them by the same origin so they remain visible near the player as
-    // `TILE_WORLD_SIZE` grows.
-    let world_origin = tile_center_world(Position::default());
+    // The party spawns at the centre of `PLAYER_SPAWN_TILE`, kept inside the
+    // impassable map border so every direction has a loaded neighbour. All the
+    // hardcoded test entities below were authored relative to a 512-unit world,
+    // so we offset them by the same origin so they remain visible near the
+    // player as `TILE_WORLD_SIZE` grows.
+    let world_origin = tile_center_world(PLAYER_SPAWN_TILE);
     let origin3 = world_origin.extend(0.0);
 
     // Shared placeholder meshes/materials for spawn systems outside `setup`.
@@ -64,25 +67,10 @@ pub fn setup(
     commands.entity(camera).insert(MainCamera);
     spawn_sun(&mut commands);
 
-    let mut player_stats = CombatStats::default();
-    player_stats.health = StatPool::<i32>::new(120);
-    commands.spawn((
-        // Phase 2 toon-shader "hero": this box uses the toon ExtendedMaterial so
-        // it can be judged against the standard-shaded NPCs/enemies around it. A
-        // warm mid-tone reads the cel bands + cool rim clearly.
-        PlaceholderVisual::character(Color::srgb(0.72, 0.52, 0.50)).toon(),
-        Transform::from_translation(origin3),
-        Player,
-        // The player has signed the Merchant's Contract; this drives
-        // resurrection eligibility (combat_plugin::enqueue_resurrection_on_death).
-        Bound,
-        ResurrectionStanding::default(),
-        player_stats,
-        VisualOcclusionTarget,
-        YSort { base_z: 0.0 },
-        crate::light_plugin::LightSensitive { threshold: 0.15 },
-        CombatMovePoints::default(),
-    ));
+    // The player + party are NOT spawned here. `setup` runs at `Startup`,
+    // before the player has chosen their roster on the party-selection screen,
+    // so the avatar + companions are spawned later by `spawn_party` (below) the
+    // first time a gameplay state is entered, reading the `SelectedParty`.
 
     // Shrine: the player respawns at this location after the resurrection
     // delay elapses. Spawned once at world setup; the
@@ -148,6 +136,35 @@ pub fn setup(
             crate::light_plugin::LightSensitive { threshold: 0.15 },
             Name::new(format!("WorldYokai({} #{})", kind.label(), i)),
         ));
+    }
+
+    // Data-driven creatures (see `assets/data/creatures.ron`). Each carries a
+    // disposition that `crate::creatures::drive_creatures` reads every frame:
+    // hostile ones chase + start fights, territorial ones guard a home, the
+    // skittish hare flees, the tanuki wanders, the shrine fox stands guard.
+    // The encounter id is supplied here at placement time (not in the
+    // template): the aggressive ones get ids in the 300+ range for quest/hunt
+    // matching, the ambient critters get `None`.
+    let creature_seedlings: [(&str, Vec3, Option<u32>); 6] = [
+        ("wild_onibi", Vec3::new(9.0 * 32.0, -2.0 * 32.0, 0.0), Some(300)),
+        ("river_kappa", Vec3::new(-7.0 * 32.0, 7.0 * 32.0, 0.0), Some(301)),
+        ("kasha_stalker", Vec3::new(5.0 * 32.0, 8.0 * 32.0, 0.0), Some(302)),
+        ("skittish_hare", Vec3::new(3.0 * 32.0, 5.0 * 32.0, 0.0), None),
+        ("wandering_tanuki", Vec3::new(-3.0 * 32.0, -7.0 * 32.0, 0.0), None),
+        ("shrine_fox", Vec3::new(-11.0 * 32.0, 5.0 * 32.0, 0.0), None),
+    ];
+    for (template_id, offset, encounter_id) in creature_seedlings {
+        if crate::creatures::spawn_creature(
+            &mut commands,
+            &creatures,
+            template_id,
+            origin3 + offset,
+            encounter_id,
+        )
+        .is_none()
+        {
+            warn!("creature template '{template_id}' not found in catalog");
+        }
     }
 
     for merchant in merchants.0.values() {
@@ -229,6 +246,12 @@ pub fn setup(
                     Vec2::new(TILE_WORLD_SIZE * 2.6, TILE_WORLD_SIZE * 0.7),
                     "Castle Gate Guard",
                 ),
+                (
+                    ServiceKind::Shrine,
+                    Color::srgb(0.92, 0.86, 0.55),
+                    Vec2::new(TILE_WORLD_SIZE * 1.2, TILE_WORLD_SIZE * 1.3),
+                    "Shrine Maiden",
+                ),
             ];
             for (kind, color, offset, label) in service_defs {
                 commands.spawn((
@@ -255,23 +278,7 @@ pub fn setup(
         }
     }
 
-    let ally_spawn = origin3 + Vec3::new(-2.0 * 32.0, -2.0 * 32.0, 0.0);
-    let ally_colors = [
-        Color::srgb(0.9, 0.8, 0.2),
-        Color::srgb(0.9, 0.6, 0.2),
-        Color::srgb(0.5, 0.85, 0.4),
-    ];
-    for (i, color) in ally_colors.into_iter().enumerate() {
-        commands.spawn((
-            PlaceholderVisual::character(color),
-            Transform::from_translation(ally_spawn),
-            WorldAlly,
-            VisualOcclusionTarget,
-            YSort { base_z: 0.0 },
-            crate::light_plugin::LightSensitive { threshold: 0.15 },
-            Name::new(format!("Ally{}", i)),
-        ));
-    }
+    // (Party companions are spawned by `spawn_party`, driven by `SelectedParty`.)
 
     let test_obstacles = [
         (Vec3::new(2.0 * 32.0, -3.0 * 32.0, 0.0), Color::srgb(0.55, 0.55, 0.55)),
@@ -511,6 +518,73 @@ pub fn update_cache(
     if colliders_dirty {
         rebuild_quad_tree(&collider_query, &mut quad_tree);
     }
+}
+
+/// Spawn the player avatar (party leader) and companion allies from the chosen
+/// [`SelectedParty`], exactly once, the first time a gameplay state is entered.
+///
+/// Deferred out of [`setup`] (a `Startup` system) because the roster isn't known
+/// until the party-selection screen has run. This runs every frame but no-ops
+/// while still in the menus and after it has spawned once.
+pub fn spawn_party(
+    mut commands: Commands,
+    game_state: Res<GameState>,
+    selected: Res<SelectedParty>,
+    mut spawned: Local<bool>,
+) {
+    if *spawned {
+        return;
+    }
+    // Hold until the player has left the menus into actual gameplay.
+    if matches!(game_state.0, Game_State::MainMenu | Game_State::PartySelection) {
+        return;
+    }
+
+    let origin3 = tile_center_world(PLAYER_SPAWN_TILE).extend(0.0);
+
+    // Leader → the overworld Player avatar. SelectedParty defaults non-empty, so
+    // the fallback is purely defensive.
+    let leader = selected.leader().unwrap_or(CharacterKind::Rina);
+    commands.spawn((
+        // Toon-shaded hero capsule, tinted to the leader's colour.
+        PlaceholderVisual::character(leader.color()).toon(),
+        Transform::from_translation(origin3),
+        Player,
+        leader, // CharacterKind tag — drives the leader's in-battle identity.
+        // The player has signed the Merchant's Contract; this drives resurrection
+        // eligibility (combat_plugin::enqueue_resurrection_on_death).
+        Bound,
+        ResurrectionStanding::default(),
+        leader.combat_stats(),
+        VisualOcclusionTarget,
+        YSort { base_z: 0.0 },
+        crate::light_plugin::LightSensitive { threshold: 0.15 },
+        CombatMovePoints::default(),
+    ));
+
+    // Companions → WorldAlly entities, fanned out beside the leader so they
+    // don't stack on one tile.
+    let ally_base = origin3 + Vec3::new(-2.0 * 32.0, -2.0 * 32.0, 0.0);
+    let companions = selected.companions();
+    for (i, kind) in companions.iter().copied().enumerate() {
+        commands.spawn((
+            PlaceholderVisual::character(kind.color()),
+            Transform::from_translation(ally_base + Vec3::new(i as f32 * 32.0, 0.0, 0.0)),
+            WorldAlly,
+            kind,
+            VisualOcclusionTarget,
+            YSort { base_z: 0.0 },
+            crate::light_plugin::LightSensitive { threshold: 0.15 },
+            Name::new(kind.display_name()),
+        ));
+    }
+
+    *spawned = true;
+    info!(
+        "Spawned party: leader {:?} + {} companion(s)",
+        leader,
+        companions.len()
+    );
 }
 
 // `apply_y_sort` and `update_visual_occluders` were 2D-only (fake depth via z,

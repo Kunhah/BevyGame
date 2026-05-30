@@ -3,11 +3,12 @@ use bevy::input::mouse::MouseButton;
 use bevy::prelude::*;
 use bevy::prelude::Messages;
 
+use crate::characters::CharacterKind;
 use crate::combat_plugin::{
     Abilities, AccumulatedSpeed, Bound, CombatStats, DeathEvent, Experience, GrowthAttributes,
     Level, MagicDistribution, PendingPlayerAction, PlayerAction, PlayerActionEvent,
-    PlayerControlled, ResurrectionStanding, StatModifiers, StatPool, TurnManager, TurnOrder,
-    TurnStartEvent,
+    PlayerControlled, ResurrectionStanding, StatModifiers, StatPool, SummonEvent, TurnEndEvent,
+    TurnManager, TurnOrder, TurnStartEvent,
 };
 use crate::dialogue::{DialogueBoxTriggerEvent, DialogueCatalog, DialogueRuntime};
 use crate::quests::HuntRegistry;
@@ -17,7 +18,7 @@ use crate::economy::MerchantNpc;
 use crate::governance::{
     CastleAssaultStartedEvent, GovernorCombatant, GovernorNpc, SuccessorCombatant, SuccessorNpc,
 };
-use crate::combat_ability::MagicSchool;
+use crate::combat_ability::{MagicSchool, SummonKind};
 use crate::pathfinding::is_walkable_move;
 use crate::quadtree::QuadTree;
 use crate::skill_tree::{LearnedSkills, MagicCostMultipliers, SkillPoints, SkillTreeAccess};
@@ -64,6 +65,15 @@ pub struct CombatMovePoints {
     pub max: f32,
 }
 
+/// Marks a summoned, temporary combatant (e.g. a shikigami). Decremented at the
+/// end of each of the unit's own turns by `tick_summon_lifetime_system`; at
+/// zero the unit is despawned and `register_participants_system` drops it from
+/// turn order on the next tick.
+#[derive(Component, Clone, Copy, Debug)]
+pub struct SummonLifetime {
+    pub remaining_turns: u8,
+}
+
 #[derive(Component, Clone, Copy, Debug)]
 pub struct CombatMoveTarget {
     pub target: Vec2,
@@ -84,7 +94,7 @@ pub fn battle_trigger_system(
     mut turn_order: ResMut<TurnOrder>,
     mut assault_starts: MessageWriter<CastleAssaultStartedEvent>,
     input: Res<ButtonInput<KeyCode>>,
-    player_q: Query<(Entity, &Transform), With<Player>>,
+    player_q: Query<(Entity, &Transform, Option<&CharacterKind>), With<Player>>,
     enemy_q: Query<
         (
             Entity,
@@ -95,7 +105,7 @@ pub fn battle_trigger_system(
             Option<&WorldYokai>,
         ),
     >,
-    ally_q: Query<(Entity, &Transform), With<WorldAlly>>,
+    ally_q: Query<(Entity, &Transform, Option<&CharacterKind>), With<WorldAlly>>,
 ) {
     if game_state.0 != Game_State::Exploring || battle_state.active {
         return;
@@ -106,9 +116,10 @@ pub fn battle_trigger_system(
         return;
     }
 
-    let Ok((player_entity, player_tf)) = player_q.single() else {
+    let Ok((player_entity, player_tf, player_kind)) = player_q.single() else {
         return;
     };
+    let player_kind = player_kind.copied();
 
     let player_pos = player_tf.translation.truncate();
     for (enemy_entity, enemy_tf, encounter, governor_opt, successor_opt, yokai_opt) in
@@ -135,7 +146,8 @@ pub fn battle_trigger_system(
                 player_entity,
                 player_tf.translation,
                 enemy_tf.translation,
-                ally_q.iter().map(|(e, t)| (e, t.clone())).collect(),
+                ally_q.iter().map(|(e, t, k)| (e, *t, k.copied())).collect(),
+                player_kind,
             );
             break;
         }
@@ -156,15 +168,16 @@ pub fn start_battle(
     player_world_entity: Entity,
     player_world_pos: Vec3,
     enemy_world_pos: Vec3,
-    allies_world: Vec<(Entity, Transform)>,
+    allies_world: Vec<(Entity, Transform, Option<CharacterKind>)>,
+    player_kind: Option<CharacterKind>,
 ) {
     battle_state.active = true;
     battle_state.enemy_id = Some(enemy_id);
 
-    let player = spawn_player_combat(commands, player_world_entity, player_world_pos);
+    let player = spawn_player_combat(commands, player_world_entity, player_world_pos, player_kind);
     let mut participants = vec![player];
-    for (ally_entity, ally_tf) in allies_world {
-        let ally = spawn_ally_combat(commands, ally_entity, ally_tf.translation);
+    for (ally_entity, ally_tf, ally_kind) in allies_world {
+        let ally = spawn_ally_combat(commands, ally_entity, ally_tf.translation, ally_kind);
         participants.push(ally);
     }
     // Yokai-tagged encounters use the species-specific spawn (wires
@@ -194,21 +207,42 @@ pub fn start_battle(
     );
 }
 
-fn spawn_player_combat(commands: &mut Commands, world_entity: Entity, world_pos: Vec3) -> Entity {
+fn spawn_player_combat(
+    commands: &mut Commands,
+    world_entity: Entity,
+    world_pos: Vec3,
+    kind: Option<CharacterKind>,
+) -> Entity {
     let mut e = commands.spawn_empty();
-    e.insert(Name::new("PlayerCombat"));
+    let name = kind
+        .map(|k| k.display_name().to_string())
+        .unwrap_or_else(|| "PlayerCombat".to_string());
+    e.insert(Name::new(name));
     e.insert(BattleParticipant);
     e.insert(BattleSide::Ally);
     e.insert(PlayerControlled);
     e.insert(BattleWorldLink { world_entity });
     e.insert(Transform::from_translation(world_pos));
+    e.insert(Experience(0));
+    e.insert(Level(1));
+    e.insert(AccumulatedSpeed(0));
+    e.insert(StatModifiers(Vec::new()));
+    e.insert(CombatMovePoints::default());
+
+    // The leader fights as their chosen protagonist; with no selection (e.g. a
+    // legacy/skipped flow) fall back to the original generalist block.
+    if let Some(k) = kind {
+        k.insert_combat_components(&mut e);
+        return e.id();
+    }
+
     e.insert(CombatStats {
         health: <StatPool<i32>>::new(120),
         morale: <StatPool<i32>>::new(90),
         action_points: <StatPool<i32>>::new(DEFAULT_ACTION_POINTS),
         movement: <StatPool<i32>>::new(5),
         kiho: <StatPool<f32>>::new(2.0),
-        chiseijutsu: <StatPool<f32>>::new(2.0),
+        onmyodo: <StatPool<f32>>::new(2.0),
         yokaijutsu: <StatPool<f32>>::new(1.0),
         kamishin: <StatPool<f32>>::new(1.0),
         lethality: <StatPool<i32>>::new(14),
@@ -220,7 +254,7 @@ fn spawn_player_combat(commands: &mut Commands, world_entity: Entity, world_pos:
         health_per_rest_hour: 2,
         morale_per_rest_hour: 5,
         kiho_per_rest_hour: 0.4,
-        chiseijutsu_per_rest_hour: 0.4,
+        onmyodo_per_rest_hour: 0.4,
         yokaijutsu_per_rest_hour: 0.2,
         kamishin_per_rest_hour: 0.2,
     });
@@ -237,17 +271,12 @@ fn spawn_player_combat(commands: &mut Commands, world_entity: Entity, world_pos:
         // Generalist player: spirit=10 → 30 points, balanced split.
         magic_distribution: MagicDistribution {
             kiho: 8,
-            chiseijutsu: 8,
+            onmyodo: 8,
             yokaijutsu: 7,
             kamishin: 7,
         },
     });
     e.insert(Abilities(vec![]));
-    e.insert(Experience(0));
-    e.insert(Level(1));
-    e.insert(AccumulatedSpeed(0));
-    e.insert(StatModifiers(Vec::new()));
-    e.insert(CombatMovePoints::default());
     e.insert(SkillPoints::default());
     e.insert(LearnedSkills::default());
     e.insert(MagicCostMultipliers::default());
@@ -258,7 +287,7 @@ fn spawn_player_combat(commands: &mut Commands, world_entity: Entity, world_pos:
             .with_universal()
             .with_magic([
                 MagicSchool::Kiho,
-                MagicSchool::Chiseijutsu,
+                MagicSchool::Onmyodo,
                 MagicSchool::Yokaijutsu,
                 MagicSchool::Kamishin,
             ]),
@@ -290,7 +319,7 @@ fn spawn_enemy_combat(
         action_points: <StatPool<i32>>::new(DEFAULT_ACTION_POINTS),
         movement: <StatPool<i32>>::new(4),
         kiho: <StatPool<f32>>::new(1.0),
-        chiseijutsu: <StatPool<f32>>::new(0.5),
+        onmyodo: <StatPool<f32>>::new(0.5),
         yokaijutsu: <StatPool<f32>>::new(0.5),
         kamishin: <StatPool<f32>>::new(0.0),
         lethality: <StatPool<i32>>::new(lethality),
@@ -302,7 +331,7 @@ fn spawn_enemy_combat(
         health_per_rest_hour: 1,
         morale_per_rest_hour: 3,
         kiho_per_rest_hour: 0.25,
-        chiseijutsu_per_rest_hour: 0.1,
+        onmyodo_per_rest_hour: 0.1,
         yokaijutsu_per_rest_hour: 0.1,
         kamishin_per_rest_hour: 0.0,
     });
@@ -319,7 +348,7 @@ fn spawn_enemy_combat(
         // Generic enemy: spirit=6 → 18 points, yokai-leaning.
         magic_distribution: MagicDistribution {
             kiho: 4,
-            chiseijutsu: 4,
+            onmyodo: 4,
             yokaijutsu: 8,
             kamishin: 2,
         },
@@ -345,7 +374,7 @@ fn spawn_enemy_combat(
 /// The yokai species that the GDD-flavored content authors. Each variant
 /// carries the stat block, the ability ids it knows, and the BT profile name
 /// so a single helper can spawn it as a battle participant.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum YokaiKind {
     /// Onibi — will-o'-wisp. Fast, fragile, fire-leaning.
     Onibi,
@@ -376,9 +405,10 @@ impl YokaiKind {
     /// Ability ids granted to this yokai (match `AbilitiesExample.ron`).
     fn abilities(self) -> Vec<u16> {
         match self {
-            YokaiKind::Onibi => vec![3840],
-            YokaiKind::Kappa => vec![3841],
-            YokaiKind::Kasha => vec![3842],
+            // Packed ids: level 15 (0x78 << ... ), sub 0/1/2 → 5/11 split.
+            YokaiKind::Onibi => vec![30720], // 0x7800 (L15 s0)
+            YokaiKind::Kappa => vec![30721], // 0x7801 (L15 s1)
+            YokaiKind::Kasha => vec![30722], // 0x7802 (L15 s2)
         }
     }
 }
@@ -412,7 +442,7 @@ pub fn spawn_yokai_combatant(
         action_points: <StatPool<i32>>::new(DEFAULT_ACTION_POINTS),
         movement: <StatPool<i32>>::new(5),
         kiho: <StatPool<f32>>::new(0.0),
-        chiseijutsu: <StatPool<f32>>::new(if matches!(kind, YokaiKind::Kappa) { 4.0 } else { 0.0 }),
+        onmyodo: <StatPool<f32>>::new(if matches!(kind, YokaiKind::Kappa) { 4.0 } else { 0.0 }),
         yokaijutsu: <StatPool<f32>>::new(yokai_pool),
         kamishin: <StatPool<f32>>::new(0.0),
         lethality: <StatPool<i32>>::new(lethality),
@@ -424,7 +454,7 @@ pub fn spawn_yokai_combatant(
         health_per_rest_hour: 0,
         morale_per_rest_hour: 0,
         kiho_per_rest_hour: 0.0,
-        chiseijutsu_per_rest_hour: 0.0,
+        onmyodo_per_rest_hour: 0.0,
         yokaijutsu_per_rest_hour: 0.0,
         kamishin_per_rest_hour: 0.0,
     });
@@ -442,21 +472,164 @@ pub fn spawn_yokai_combatant(
     e.id()
 }
 
-fn spawn_ally_combat(commands: &mut Commands, world_entity: Entity, world_pos: Vec3) -> Entity {
+/// Spawn an in-battle ally combatant. When the world ally carries a
+/// [`CharacterKind`], its authored stat block / growth / abilities / skill-tree
+/// access are materialised so the named protagonist actually plays as itself;
+/// otherwise a generic support block is used (ambient/test allies).
+fn spawn_ally_combat(
+    commands: &mut Commands,
+    world_entity: Entity,
+    world_pos: Vec3,
+    kind: Option<CharacterKind>,
+) -> Entity {
     let mut e = commands.spawn_empty();
-    e.insert(Name::new("AllyCombat"));
+    let name = kind
+        .map(|k| k.display_name().to_string())
+        .unwrap_or_else(|| "AllyCombat".to_string());
+    e.insert(Name::new(name));
     e.insert(BattleParticipant);
     e.insert(BattleSide::Ally);
     e.insert(PlayerControlled);
     e.insert(BattleWorldLink { world_entity });
     e.insert(Transform::from_translation(world_pos));
+    e.insert(Experience(0));
+    e.insert(Level(1));
+    e.insert(AccumulatedSpeed(0));
+    e.insert(StatModifiers(Vec::new()));
+    e.insert(CombatMovePoints::default());
+
+    match kind {
+        // Named protagonist: full authored identity (stats, abilities, skills,
+        // equipment, signature mechanics).
+        Some(k) => k.insert_combat_components(&mut e),
+        // Ambient/test ally: generic support block, universal trees only.
+        None => {
+            e.insert(generic_ally_stats());
+            e.insert(generic_ally_growth());
+            e.insert(Abilities(vec![]));
+            e.insert(SkillPoints::default());
+            e.insert(LearnedSkills::default());
+            e.insert(MagicCostMultipliers::default());
+            e.insert(SkillTreeAccess::new().with_universal());
+        }
+    }
+    e.id()
+}
+
+/// Spawn a temporary summoned combatant (currently only the onmyōji's
+/// shikigami) as an autonomous ally at `world_pos`. It carries the "aggressive"
+/// BT profile so `crate::ai_decision::evaluate_behavior_tree_system` drives its
+/// turns against the enemy side, and a [`SummonLifetime`] so it leaves the
+/// field after a few turns.
+pub fn spawn_summoned_combatant(
+    commands: &mut Commands,
+    kind: SummonKind,
+    world_pos: Vec3,
+    lifetime_turns: u8,
+) -> Entity {
+    use crate::combat_plugin::Reactions;
+
+    // Stat block per summon kind. The shikigami is a fragile, fast striker
+    // that lands hits reliably and carries no magic pools of its own.
+    let (name, hp, lethality, hit, armor, speed, mind) = match kind {
+        SummonKind::Shikigami => ("Shikigami", 22, 16, 72, 3, 17, 4),
+    };
+
+    let mut e = commands.spawn_empty();
+    e.insert(Name::new(name));
+    e.insert(BattleParticipant);
+    e.insert(BattleSide::Ally);
+    e.insert(Transform::from_translation(world_pos));
     e.insert(CombatStats {
+        health: <StatPool<i32>>::new(hp),
+        morale: <StatPool<i32>>::new(50),
+        action_points: <StatPool<i32>>::new(DEFAULT_ACTION_POINTS),
+        movement: <StatPool<i32>>::new(5),
+        kiho: <StatPool<f32>>::new(0.0),
+        onmyodo: <StatPool<f32>>::new(0.0),
+        yokaijutsu: <StatPool<f32>>::new(0.0),
+        kamishin: <StatPool<f32>>::new(0.0),
+        lethality: <StatPool<i32>>::new(lethality),
+        hit: <StatPool<i32>>::new(hit),
+        armor: <StatPool<i32>>::new(armor),
+        speed: <StatPool<i32>>::new(speed),
+        evasion: <StatPool<i32>>::new(speed),
+        mind: <StatPool<i32>>::new(mind),
+        health_per_rest_hour: 0,
+        morale_per_rest_hour: 0,
+        kiho_per_rest_hour: 0.0,
+        onmyodo_per_rest_hour: 0.0,
+        yokaijutsu_per_rest_hour: 0.0,
+        kamishin_per_rest_hour: 0.0,
+    });
+    e.insert(GrowthAttributes::default());
+    e.insert(Abilities(vec![])); // basic-attacks only, driven by the BT
+    e.insert(Experience(0));
+    e.insert(Level(1));
+    e.insert(AccumulatedSpeed(0));
+    e.insert(StatModifiers(Vec::new()));
+    e.insert(Reactions::default());
+    e.insert(CombatMovePoints::default());
+    e.insert(crate::ai_decision::BehaviorTreeProfile("aggressive".to_string()));
+    e.insert(SummonLifetime {
+        remaining_turns: lifetime_turns.max(1),
+    });
+    e.id()
+}
+
+/// Consumes [`SummonEvent`]s: spawns the requested combatant beside its summoner
+/// and registers it for end-of-battle cleanup. Turn-order inclusion is automatic
+/// — `register_participants_system` re-scans every `CombatStats` entity each
+/// frame, so the new unit enters the order on the next tick.
+pub fn resolve_summon_system(
+    mut commands: Commands,
+    mut events: MessageReader<SummonEvent>,
+    mut battle_state: ResMut<BattleState>,
+    transforms: Query<&Transform>,
+) {
+    for ev in events.read() {
+        let base = transforms
+            .get(ev.summoner)
+            .map(|t| t.translation)
+            .unwrap_or(Vec3::ZERO);
+        // Offset slightly so the familiar doesn't spawn exactly on its caster.
+        let pos = base + Vec3::new(1.0, 1.0, 0.0);
+        let summoned = spawn_summoned_combatant(&mut commands, ev.kind, pos, ev.lifetime_turns);
+        battle_state.participants.push(summoned);
+        info!("Summoned {:?} (lifetime {} turns)", ev.kind, ev.lifetime_turns);
+    }
+}
+
+/// At the end of a summoned unit's *own* turn, decrement its lifetime; when it
+/// runs out, despawn the unit and drop it from the battle roster (so
+/// `end_battle_on_death` won't try to despawn it again).
+pub fn tick_summon_lifetime_system(
+    mut commands: Commands,
+    mut turn_ends: MessageReader<TurnEndEvent>,
+    mut battle_state: ResMut<BattleState>,
+    mut lifetimes: Query<&mut SummonLifetime>,
+) {
+    for ev in turn_ends.read() {
+        let Ok(mut life) = lifetimes.get_mut(ev.who) else {
+            continue;
+        };
+        life.remaining_turns = life.remaining_turns.saturating_sub(1);
+        if life.remaining_turns == 0 {
+            commands.entity(ev.who).despawn();
+            battle_state.participants.retain(|&e| e != ev.who);
+        }
+    }
+}
+
+/// Generic (unnamed) ally combat stat block.
+fn generic_ally_stats() -> CombatStats {
+    CombatStats {
         health: <StatPool<i32>>::new(100),
         morale: <StatPool<i32>>::new(85),
         action_points: <StatPool<i32>>::new(DEFAULT_ACTION_POINTS),
         movement: <StatPool<i32>>::new(5),
         kiho: <StatPool<f32>>::new(1.0),
-        chiseijutsu: <StatPool<f32>>::new(1.5),
+        onmyodo: <StatPool<f32>>::new(1.5),
         yokaijutsu: <StatPool<f32>>::new(1.0),
         kamishin: <StatPool<f32>>::new(0.5),
         lethality: <StatPool<i32>>::new(12),
@@ -468,11 +641,14 @@ fn spawn_ally_combat(commands: &mut Commands, world_entity: Entity, world_pos: V
         health_per_rest_hour: 2,
         morale_per_rest_hour: 4,
         kiho_per_rest_hour: 0.25,
-        chiseijutsu_per_rest_hour: 0.4,
+        onmyodo_per_rest_hour: 0.4,
         yokaijutsu_per_rest_hour: 0.25,
         kamishin_per_rest_hour: 0.15,
-    });
-    e.insert(GrowthAttributes {
+    }
+}
+
+fn generic_ally_growth() -> GrowthAttributes {
+    GrowthAttributes {
         vitality: 10,
         endurance: 9,
         spirit: 8,
@@ -482,21 +658,14 @@ fn spawn_ally_combat(commands: &mut Commands, world_entity: Entity, world_pos: V
         reflex: 9,
         insight: 8,
         resolve: 10,
-        // Ally combatant: spirit=8 → 24 points, nature-leaning support.
+        // Generic ally: spirit=8 → 24 points, nature-leaning support.
         magic_distribution: MagicDistribution {
             kiho: 6,
-            chiseijutsu: 10,
+            onmyodo: 10,
             yokaijutsu: 4,
             kamishin: 4,
         },
-    });
-    e.insert(Abilities(vec![]));
-    e.insert(Experience(0));
-    e.insert(Level(1));
-    e.insert(AccumulatedSpeed(0));
-    e.insert(StatModifiers(Vec::new()));
-    e.insert(CombatMovePoints::default());
-    e.id()
+    }
 }
 
 pub fn setup_player_turns(
@@ -989,7 +1158,7 @@ pub fn start_pending_hunt_battle(
     mut tm: ResMut<TurnManager>,
     mut turn_order: ResMut<TurnOrder>,
     mut game_state: ResMut<GameState>,
-    player_q: Query<(Entity, &Transform), With<Player>>,
+    player_q: Query<(Entity, &Transform, Option<&CharacterKind>), With<Player>>,
     hunt_q: Query<
         (&Transform, &EnemyEncounter, Option<&WorldYokai>),
         With<HuntTarget>,
@@ -1001,9 +1170,10 @@ pub fn start_pending_hunt_battle(
     if runtime.active || battle_state.active {
         return;
     }
-    let Ok((player_entity, player_tf)) = player_q.single() else {
+    let Ok((player_entity, player_tf, player_kind)) = player_q.single() else {
         return;
     };
+    let player_kind = player_kind.copied();
     let Ok((hunt_tf, encounter, yokai)) = hunt_q.get(target) else {
         // World entity gone (despawned by some other path). Drop the queue.
         pending.hunt_target = None;
@@ -1024,6 +1194,7 @@ pub fn start_pending_hunt_battle(
         player_tf.translation,
         hunt_tf.translation,
         Vec::new(),
+        player_kind,
     );
     pending.hunt_target = None;
 }

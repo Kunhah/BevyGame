@@ -7,9 +7,19 @@ use serde::{Deserialize, Serialize};
 
 use crate::combat_plugin::{
     ActionCause, AttackIntentEvent, ApplyBuffEvent, DamageQueue, DamageTag, DamageType, HealEvent,
-    QueuedDamage, Stat,
+    QueuedDamage, Stat, SummonEvent,
 };
 use crate::status_effects::{ApplyStatusEvent, RemoveStatusEvent, ResourceKind, StatusKind};
+
+/// Which kind of temporary combatant a [`AbilityEffect::Summon`] brings onto
+/// the field. The concrete stat block / side / AI profile for each is built in
+/// `crate::battle::spawn_summoned_combatant`.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub enum SummonKind {
+    /// The onmyōji's paper familiar — a fragile, fast ally-side striker that
+    /// acts on its own and expires after a few turns.
+    Shikigami,
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum AbilityEffect {
@@ -40,6 +50,11 @@ pub enum AbilityEffect {
     },
     /// Strip a specific status off each target (Sayaka's Cleanse, etc.).
     RemoveStatus { kind: StatusKind },
+    /// Bring a temporary combatant onto the field beside the caster. Resolved
+    /// out-of-band via [`SummonEvent`] (this fn has no `Commands`); the spawn /
+    /// turn-order / expiry wiring lives in `crate::battle`. Fired once per cast,
+    /// not per target.
+    Summon { kind: SummonKind, lifetime_turns: u8 },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -54,7 +69,7 @@ pub enum AbilityShape {
 pub enum MagicSchool {
     #[default]
     Kiho,
-    Chiseijutsu,
+    Onmyodo,
     Yokaijutsu,
     Kamishin,
 }
@@ -78,14 +93,49 @@ pub struct Ability {
     pub targets: u8,
 }
 
+// ---------------------------------------------------------------------------
+// Ability id packing
+// ---------------------------------------------------------------------------
+//
+// An ability id is a `u16` split into a level (high bits) and a within-level
+// sub-id (low bits): `id = (level << ID_BITS) | sub_id`. The split used to be
+// 8/8 (256 levels, 256 ids/level); it is now 5/11 — 32 representable levels
+// (capped at [`MAX_LEVEL`] = 30) and 2048 abilities per level. Packing the
+// level into the high bits keeps the BST naturally grouped by level, which is
+// what [`AbilityTree::find_all_level`] relies on.
+
+/// Bits reserved for the level in a packed ability id.
+pub const LEVEL_BITS: u16 = 5;
+/// Bits reserved for the within-level sub-id.
+pub const ID_BITS: u16 = 11;
+/// Hard cap on character / ability levels. 5 level bits can represent 0..=31;
+/// game logic clamps to 30.
+pub const MAX_LEVEL: u8 = 30;
+/// Largest representable sub-id (`2^ID_BITS - 1`).
+pub const MAX_SUB_ID: u16 = (1 << ID_BITS) - 1;
+
+const SUB_ID_MASK: u16 = (1 << ID_BITS) - 1;
+const LEVEL_MASK: u16 = ((1 << LEVEL_BITS) - 1) << ID_BITS;
+
+/// Pack a `(level, sub_id)` pair into an ability id. The level is clamped to
+/// [`MAX_LEVEL`] and the sub-id to [`MAX_SUB_ID`] so the result always round-
+/// trips through [`unpack_ability_id`].
+pub fn pack_ability_id(level: u8, sub_id: u16) -> u16 {
+    let level = (level.min(MAX_LEVEL) as u16) << ID_BITS;
+    level | (sub_id & SUB_ID_MASK)
+}
+
+/// Split a packed ability id back into `(level, sub_id)`.
+pub fn unpack_ability_id(id: u16) -> (u8, u16) {
+    (((id & LEVEL_MASK) >> ID_BITS) as u8, id & SUB_ID_MASK)
+}
+
 impl Ability {
     pub fn get_level(&self) -> u8 {
-        // high byte of the packed id
-        ((self.id & 0xFF00) >> 8) as u8
+        ((self.id & LEVEL_MASK) >> ID_BITS) as u8
     }
-    pub fn get_sub_id(&self) -> u8 {
-        // low byte of the packed id
-        (self.id & 0x00FF) as u8
+    pub fn get_sub_id(&self) -> u16 {
+        self.id & SUB_ID_MASK
     }
 }
 
@@ -265,8 +315,9 @@ pub fn handle_ability(
     buff_events: &mut MessageWriter<ApplyBuffEvent>,
     apply_status_events: &mut MessageWriter<ApplyStatusEvent>,
     remove_status_events: &mut MessageWriter<RemoveStatusEvent>,
+    summon_events: &mut MessageWriter<SummonEvent>,
 ) {
-    for &target in affected {
+    for (target_index, &target) in affected.iter().enumerate() {
         let cause = ActionCause::Ability { id: ability.id };
         for effect in &ability.effects {
             match effect {
@@ -349,7 +400,69 @@ pub fn handle_ability(
                         kind: *kind,
                     });
                 }
+                AbilityEffect::Summon { kind, lifetime_turns } => {
+                    // Caster-centric, not per-target: emit once per cast so a
+                    // multi-target ability doesn't conjure a familiar per foe.
+                    if target_index == 0 {
+                        summon_events.write(SummonEvent {
+                            summoner: caster,
+                            kind: *kind,
+                            lifetime_turns: *lifetime_turns,
+                        });
+                    }
+                }
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pack_unpack_round_trips() {
+        for level in 0..=MAX_LEVEL {
+            for sub in [0u16, 1, 7, 255, 1000, MAX_SUB_ID] {
+                let id = pack_ability_id(level, sub);
+                assert_eq!(unpack_ability_id(id), (level, sub));
+            }
+        }
+    }
+
+    #[test]
+    fn level_is_clamped_to_max() {
+        // 5 bits can encode 31, but the cap is 30.
+        assert_eq!(unpack_ability_id(pack_ability_id(31, 0)).0, MAX_LEVEL);
+        assert_eq!(unpack_ability_id(pack_ability_id(200, 5)), (MAX_LEVEL, 5));
+    }
+
+    #[test]
+    fn sub_id_does_not_bleed_into_level() {
+        // Over-large sub-ids are masked, never corrupting the level field.
+        let id = pack_ability_id(12, MAX_SUB_ID + 9);
+        let (level, sub) = unpack_ability_id(id);
+        assert_eq!(level, 12);
+        assert!(sub <= MAX_SUB_ID);
+    }
+
+    /// The shipped ability data must deserialise and every id must decode to a
+    /// level within the cap — guards the 5/11 re-mint against regressions.
+    #[test]
+    fn shipped_ability_data_parses_and_respects_cap() {
+        let text = std::fs::read_to_string("assets/data/abilities/AbilitiesExample.ron")
+            .expect("AbilitiesExample.ron exists");
+        let abilities: Vec<Ability> =
+            ron::de::from_str(&text).expect("AbilitiesExample.ron deserialises into Vec<Ability>");
+        assert!(!abilities.is_empty());
+        for a in &abilities {
+            assert!(
+                a.get_level() <= MAX_LEVEL,
+                "ability {} ('{}') decodes to level {} > {MAX_LEVEL}",
+                a.id,
+                a.name,
+                a.get_level(),
+            );
         }
     }
 }

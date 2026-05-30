@@ -29,14 +29,20 @@ pub struct RenderTuning {
     pub sun_dir: [f32; 3],
     pub sun_illuminance: f32,
 
-    // Toon material
-    pub toon_bands: f32,
+    // Toon material — 3-stop anime ramp
     pub toon_rim_strength: f32,
     pub toon_rim_power: f32,
     pub toon_rim_color: [f32; 3],
+    /// Deep-shadow end of the ramp.
     pub toon_shadow_tint: [f32; 3],
-    pub toon_shadow_tint_strength: f32,
-    pub toon_shade_floor: f32,
+    /// Warm "core shadow" mid-stop.
+    pub toon_core_shadow_color: [f32; 3],
+    /// Deep→core transition position along lit-luminance (0..1).
+    pub toon_ramp_t_shadow: f32,
+    /// Core→lit transition position (0..1).
+    pub toon_ramp_t_lit: f32,
+    /// Smoothstep half-width — small = hard cel edges, large = smooth.
+    pub toon_ramp_softness: f32,
 
     // Post-FX (vignette + grain)
     pub vignette_strength: f32,
@@ -71,17 +77,18 @@ impl Default for RenderTuning {
             sun_dir: [-0.85, 0.4, -0.75],
             sun_illuminance: 10_000.0,
 
-            toon_bands: 4.0,
             toon_rim_strength: 0.30,
             toon_rim_power: 3.5,
             toon_rim_color: [0.5, 0.65, 1.0],
-            toon_shadow_tint: [0.42, 0.48, 0.70],
-            toon_shadow_tint_strength: 0.85,
-            toon_shade_floor: 0.06,
+            toon_shadow_tint: [0.22, 0.24, 0.36],
+            toon_core_shadow_color: [0.62, 0.45, 0.50],
+            toon_ramp_t_shadow: 0.18,
+            toon_ramp_t_lit: 0.45,
+            toon_ramp_softness: 0.04,
 
             vignette_strength: 0.55,
             vignette_softness: 0.35,
-            grain_strength: 0.03,
+            grain_strength: 0.005,
 
             bloom_intensity: 0.08,
 
@@ -179,7 +186,6 @@ pub fn apply_render_tuning(
     // sees the updated uniform next frame.
     for (_id, mat) in toon_materials.iter_mut() {
         let p = &mut mat.extension.params;
-        p.bands = tuning.toon_bands;
         p.rim_strength = tuning.toon_rim_strength;
         p.rim_power = tuning.toon_rim_power;
         p.rim_color = Vec4::new(
@@ -192,9 +198,17 @@ pub fn apply_render_tuning(
             tuning.toon_shadow_tint[0],
             tuning.toon_shadow_tint[1],
             tuning.toon_shadow_tint[2],
-            tuning.toon_shadow_tint_strength,
+            1.0,
         );
-        p.shade_floor = tuning.toon_shade_floor;
+        p.core_shadow_color = Vec4::new(
+            tuning.toon_core_shadow_color[0],
+            tuning.toon_core_shadow_color[1],
+            tuning.toon_core_shadow_color[2],
+            1.0,
+        );
+        p.ramp_t_shadow = tuning.toon_ramp_t_shadow;
+        p.ramp_t_lit = tuning.toon_ramp_t_lit;
+        p.ramp_softness = tuning.toon_ramp_softness;
     }
 }
 
@@ -227,20 +241,26 @@ pub fn render_tuning_panel(mut ctx: EguiContexts, mut tuning: ResMut<RenderTunin
                     ui.add(egui::Slider::new(&mut tuning.sun_dir[2], -1.0..=1.0).text("z"));
                 });
 
-                ui.collapsing("Toon shader", |ui| {
-                    ui.add(egui::Slider::new(&mut tuning.toon_bands, 1.0..=12.0).text("cel bands"));
+                ui.collapsing("Toon shader (anime ramp)", |ui| {
+                    ui.label("3-stop ramp: deep shadow → warm core → lit");
+                    ui.horizontal(|ui| {
+                        ui.label("deep shadow");
+                        ui.color_edit_button_rgb(&mut tuning.toon_shadow_tint);
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("core shadow");
+                        ui.color_edit_button_rgb(&mut tuning.toon_core_shadow_color);
+                    });
+                    ui.add(egui::Slider::new(&mut tuning.toon_ramp_t_shadow, 0.0..=1.0).text("ramp t: deep→core"));
+                    ui.add(egui::Slider::new(&mut tuning.toon_ramp_t_lit, 0.0..=1.0).text("ramp t: core→lit"));
+                    ui.add(egui::Slider::new(&mut tuning.toon_ramp_softness, 0.001..=0.3).text("ramp softness (small = hard cel)").logarithmic(true));
+                    ui.separator();
                     ui.add(egui::Slider::new(&mut tuning.toon_rim_strength, 0.0..=2.0).text("rim strength"));
                     ui.add(egui::Slider::new(&mut tuning.toon_rim_power, 0.5..=8.0).text("rim power (tighter = higher)"));
                     ui.horizontal(|ui| {
                         ui.label("rim color");
                         ui.color_edit_button_rgb(&mut tuning.toon_rim_color);
                     });
-                    ui.horizontal(|ui| {
-                        ui.label("shadow tint");
-                        ui.color_edit_button_rgb(&mut tuning.toon_shadow_tint);
-                    });
-                    ui.add(egui::Slider::new(&mut tuning.toon_shadow_tint_strength, 0.0..=1.0).text("shadow tint strength"));
-                    ui.add(egui::Slider::new(&mut tuning.toon_shade_floor, 0.0..=0.5).text("shade floor (darkest step)"));
                 });
 
                 ui.collapsing("Post-FX (vignette + grain)", |ui| {

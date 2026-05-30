@@ -207,7 +207,7 @@ fn magic_school_short(school: crate::combat_ability::MagicSchool) -> &'static st
     use crate::combat_ability::MagicSchool;
     match school {
         MagicSchool::Kiho => "Ki",
-        MagicSchool::Chiseijutsu => "Chi",
+        MagicSchool::Onmyodo => "Chi",
         MagicSchool::Yokaijutsu => "Yo",
         MagicSchool::Kamishin => "Kami",
     }

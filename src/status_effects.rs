@@ -1259,7 +1259,7 @@ pub fn recompute_resource_caps_system(
         let mag_mult = magic_max_multiplier(se);
         for school in [
             MagicSchool::Kiho,
-            MagicSchool::Chiseijutsu,
+            MagicSchool::Onmyodo,
             MagicSchool::Yokaijutsu,
             MagicSchool::Kamishin,
         ] {
@@ -1293,14 +1293,18 @@ pub fn recompute_resource_caps_system(
 pub fn rest_regen_system(
     mut reader: MessageReader<BeforeRestEvent>,
     mut writer: MessageWriter<AfterRestEvent>,
-    mut q: Query<(&mut CombatStats, Option<&StatusEffects>)>,
+    mut q: Query<(
+        &mut CombatStats,
+        Option<&StatusEffects>,
+        Option<&crate::kegare::Defilement>,
+    )>,
 ) {
     for ev in reader.read() {
         let hours = ev.hours as f32;
         if hours <= 0.0 {
             continue;
         }
-        let Ok((mut stats, se)) = q.get_mut(ev.target) else {
+        let Ok((mut stats, se, defilement)) = q.get_mut(ev.target) else {
             continue;
         };
 
@@ -1333,13 +1337,24 @@ pub fn rest_regen_system(
             stats.morale.current = (stats.morale.current - loss).max(0);
         }
 
-        let kiho_gain = stats.kiho_per_rest_hour * m_mult * hours;
+        // Kegare tilts per-school magic recovery: Kamishin restores slowly when
+        // defiled, Yokaijutsu quickly. No-op when the entity isn't in the
+        // kegare system or for Kiho/Onmyodo (both return 1.0).
+        let kegare_mult = |school| {
+            defilement
+                .map(|d| crate::kegare::regen_multiplier(*d, school))
+                .unwrap_or(1.0)
+        };
+        let kiho_gain = stats.kiho_per_rest_hour * m_mult * hours * kegare_mult(MagicSchool::Kiho);
         stats.kiho.restore_to_base(kiho_gain);
-        let chi_gain = stats.chiseijutsu_per_rest_hour * m_mult * hours;
-        stats.chiseijutsu.restore_to_base(chi_gain);
-        let yo_gain = stats.yokaijutsu_per_rest_hour * m_mult * hours;
+        let chi_gain =
+            stats.onmyodo_per_rest_hour * m_mult * hours * kegare_mult(MagicSchool::Onmyodo);
+        stats.onmyodo.restore_to_base(chi_gain);
+        let yo_gain =
+            stats.yokaijutsu_per_rest_hour * m_mult * hours * kegare_mult(MagicSchool::Yokaijutsu);
         stats.yokaijutsu.restore_to_base(yo_gain);
-        let kami_gain = stats.kamishin_per_rest_hour * m_mult * hours;
+        let kami_gain =
+            stats.kamishin_per_rest_hour * m_mult * hours * kegare_mult(MagicSchool::Kamishin);
         stats.kamishin.restore_to_base(kami_gain);
 
         writer.write(AfterRestEvent {

@@ -18,7 +18,7 @@
         action_points: (current: 8,   base: 8),
         movement:      (current: 5,   base: 5),
         kiho:          (current: 0.0, base: 0.0),
-        chiseijutsu:   (current: 0.0, base: 0.0),
+        onmyodo:   (current: 0.0, base: 0.0),
         yokaijutsu:    (current: 5.0, base: 5.0),
         kamishin:      (current: 0.0, base: 0.0),
 
@@ -34,7 +34,7 @@
         health_per_rest_hour:       1,
         morale_per_rest_hour:       3,
         kiho_per_rest_hour:         0.0,
-        chiseijutsu_per_rest_hour:  0.0,
+        onmyodo_per_rest_hour:  0.0,
         yokaijutsu_per_rest_hour:   0.5,
         kamishin_per_rest_hour:     0.0,
     ),
@@ -49,7 +49,7 @@
         reflex: 0,
         insight: 0,
         resolve: 0,
-        magic_distribution: (kiho: 0, chiseijutsu: 0, yokaijutsu: 0, kamishin: 0),
+        magic_distribution: (kiho: 0, onmyodo: 0, yokaijutsu: 0, kamishin: 0),
     ),
 
     // Bound to Kuro: 40 extra HP that absorbs damage before normal HP.

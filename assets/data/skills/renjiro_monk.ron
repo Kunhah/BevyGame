@@ -1,0 +1,88 @@
+// Renjiro — Monk. A yamabushi (Shugendō mountain ascetic) who fights with the
+// iron-shod shakujō staff and breath-trained inner force rather than armor: a
+// mobile Kiho striker, the front-line counterpart to Houjou's bushido tank.
+// Where Houjou stands and endures, Renjiro flows and strikes. IDs: 0xEBXX.
+//
+// WIRING (later): register `SkillTreeKind::RenjiroMonk` in src/skill_tree.rs
+// and add this path to `SKILL_RON_FILES`. Capstone is pure stat (no dangling
+// ability id); pair it with a 0x0E** staff/ki ability set when those exist.
+[
+    (
+        id: 60160, // 0xEB00
+        tree: RenjiroMonk,
+        tier: 1,
+        name: "Centered Stance",
+        description: "Staff planted, weight low, shoulders quiet — ready to be anywhere but here. +5 Speed.",
+        cost: 1,
+        prerequisites: [],
+        effects: [
+            StatBonus(target: Speed, amount: 5),
+        ],
+    ),
+    (
+        id: 60161, // 0xEB01
+        tree: RenjiroMonk,
+        tier: 1,
+        name: "Inner Furnace",
+        description: "Breath stoked into something that warms the whole body. +1 Kiho per rest hour, +3 Kiho max.",
+        cost: 1,
+        prerequisites: [],
+        effects: [
+            MagicRegenBonus(school: Kiho, amount: 1.0),
+            StatBonus(target: Kiho, amount: 3),
+        ],
+    ),
+    (
+        id: 60162, // 0xEB02
+        tree: RenjiroMonk,
+        tier: 2,
+        name: "Flowing Step",
+        description: "The strike that was meant for him lands where he no longer is. +8 Evasion, +3 Speed.",
+        cost: 2,
+        prerequisites: [60160],
+        effects: [
+            StatBonus(target: Evasion, amount: 8),
+            StatBonus(target: Speed, amount: 3),
+        ],
+    ),
+    (
+        id: 60163, // 0xEB03
+        tree: RenjiroMonk,
+        tier: 2,
+        name: "Ringing Strike",
+        description: "The shakujō's iron rings sing once, and the staff finds the one place a body forgets how to keep standing. +6 Lethality, +3 Hit.",
+        cost: 2,
+        prerequisites: [60161],
+        effects: [
+            StatBonus(target: Lethality, amount: 6),
+            StatBonus(target: Hit, amount: 3),
+        ],
+    ),
+    (
+        id: 60164, // 0xEB04
+        tree: RenjiroMonk,
+        tier: 2,
+        name: "Tempered Body",
+        description: "Years of waterfall austerities and standing through mountain winters, paid back as toughness. +8 Health, +1 Health per rest hour.",
+        cost: 2,
+        prerequisites: [60160, 60161],
+        effects: [
+            StatBonus(target: Health, amount: 8),
+            StatBonus(target: HealthRegen, amount: 1),
+        ],
+    ),
+    (
+        id: 60165, // 0xEB05
+        tree: RenjiroMonk,
+        tier: 3,
+        name: "One Hundred Breaths",
+        description: "Counts to a hundred between two of an ordinary man's heartbeats. +10 Lethality, +5 Kiho max, +5 Speed.",
+        cost: 3,
+        prerequisites: [60163, 60164],
+        effects: [
+            StatBonus(target: Lethality, amount: 10),
+            StatBonus(target: Kiho, amount: 5),
+            StatBonus(target: Speed, amount: 5),
+        ],
+    ),
+]

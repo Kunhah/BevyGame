@@ -28,38 +28,56 @@ use bevy::post_process::bloom::Bloom;
 use bevy::render::view::{ColorGrading, ColorGradingGlobal, ColorGradingSection, Msaa};
 
 /// Toon shading parameters — mirrors the `ToonParams` uniform in `toon.wgsl`
-/// (field order/layout must match).
+/// (field order/layout must match exactly: std140, 80 bytes, 16-aligned).
+///
+/// **Shading model:** a 3-stop "anime ramp" sampled at the lit luminance. The
+/// ramp maps `t = saturate(lit_luminance)` → an RGB multiplier:
+///   `t < ramp_t_shadow`  → `shadow_tint.rgb` (deep cool/desaturated)
+///   `t ≈ ramp_t_core`    → `core_shadow_color.rgb` (warm "core shadow" band)
+///   `t > ramp_t_lit`     → white (the fully-lit end)
+/// `ramp_softness` controls how sharp the transitions are (small = hard cel
+/// edges, large = smooth gradient). The shader's `anime_ramp(t)` helper is a
+/// drop-in replacement point for a future `textureSample(ramp, ...)` when an
+/// artist-painted ramp PNG arrives — same call signature, same output.
 #[derive(Clone, Copy, ShaderType, Debug, Reflect)]
 pub struct ToonParams {
+    /// Silhouette rim/Fresnel color (rgb) and strength multiplier (a, unused).
     pub rim_color: Vec4,
-    /// rgb = multiplier on shadowed steps (cool/desaturated); a = strength.
+    /// Deep-shadow end of the ramp (rgb). `a` reserved.
     pub shadow_tint: Vec4,
-    pub bands: f32,
+    /// Warm "core shadow" mid-stop of the ramp (rgb). `a` reserved.
+    pub core_shadow_color: Vec4,
     pub rim_strength: f32,
     pub rim_power: f32,
-    pub shade_floor: f32,
-    /// Per-entity effect driven by `crate::effects::HitFlash`: additive
-    /// warm-white pulse. 0 = none.
+    /// Position of the deep→core transition along `t` (typical: 0.15..0.30).
+    pub ramp_t_shadow: f32,
+    /// Position of the core→lit transition along `t` (typical: 0.40..0.60).
+    pub ramp_t_lit: f32,
+    /// Smoothstep half-width at each transition. Small = hard cel edges
+    /// (anime), large = smooth gradient (toon).
+    pub ramp_softness: f32,
+    /// `crate::effects::HitFlash` uniform — additive warm-white pulse.
     pub hit_flash: f32,
-    /// Per-entity effect driven by `crate::effects::Dissolve`: 0 = solid,
-    /// 1 = fully dissolved away (with an orange burn edge).
+    /// `crate::effects::Dissolve` uniform — 0 = solid, 1 = fully dissolved.
     pub dissolve: f32,
-    /// Padding to keep the uniform block on a 16-byte boundary (std140).
-    pub _pad: Vec2,
+    /// Pad to 80 bytes (multiple of 16, std140 struct size).
+    pub _pad: f32,
 }
 
 impl Default for ToonParams {
     fn default() -> Self {
         Self {
-            rim_color: Vec4::new(0.5, 0.65, 1.0, 1.0), // cool anime rim
-            shadow_tint: Vec4::new(0.42, 0.48, 0.70, 0.85), // cool, deep shadows
-            bands: 4.0,                                // cel steps
-            rim_strength: 0.30,                        // subtle (was washing out borders)
-            rim_power: 3.5,                            // tighter rim band
-            shade_floor: 0.06, // darkest step: deep, moody
+            rim_color: Vec4::new(0.5, 0.65, 1.0, 1.0),       // cool anime rim
+            shadow_tint: Vec4::new(0.22, 0.24, 0.36, 1.0),   // deep cool shadow
+            core_shadow_color: Vec4::new(0.62, 0.45, 0.50, 1.0), // warm rust core
+            rim_strength: 0.30,
+            rim_power: 3.5,
+            ramp_t_shadow: 0.18, // deep→core sits low — most of the dark side stays deep
+            ramp_t_lit: 0.45,    // core→lit edge near classic anime "terminator"
+            ramp_softness: 0.04, // sharp cel transitions
             hit_flash: 0.0,
             dissolve: 0.0,
-            _pad: Vec2::ZERO,
+            _pad: 0.0,
         }
     }
 }

@@ -29,9 +29,30 @@ pub const ITEM_ACTION_POINT_COST: i32 = 4;
 pub const WALKING_LIMIT: usize = 600 / PATH_DRAW_MARGIN as usize;
 
 // Canonical world-time conversion for Timestamp.
-pub const TIMESTAMP_SECONDS_PER_TICK: u32 = 9;
-pub const TIMESTAMP_TICKS_PER_MINUTE: u32 = 60 / TIMESTAMP_SECONDS_PER_TICK;
-pub const TIMESTAMP_TICKS_PER_HOUR: u32 = 60 * TIMESTAMP_TICKS_PER_MINUTE;
+//
+// One tick is 2^3 = 8 seconds, chosen as a power of two so seconds<->ticks is a
+// pure bit shift: `seconds = ticks << 3`, `ticks = seconds >> 3`. Keep
+// `TIMESTAMP_SECONDS_PER_TICK` defined via the shift so the two never drift.
+pub const TIMESTAMP_TICK_SHIFT: u32 = 3;
+pub const TIMESTAMP_SECONDS_PER_TICK: u32 = 1 << TIMESTAMP_TICK_SHIFT; // 8
+
+/// Real seconds -> ticks (right shift by `TIMESTAMP_TICK_SHIFT`).
+#[inline]
+pub const fn seconds_to_ticks(seconds: u32) -> u32 {
+    seconds >> TIMESTAMP_TICK_SHIFT
+}
+
+/// Ticks -> real seconds (left shift by `TIMESTAMP_TICK_SHIFT`).
+#[inline]
+pub const fn ticks_to_seconds(ticks: u32) -> u32 {
+    ticks << TIMESTAMP_TICK_SHIFT
+}
+
+// 8 does not divide 60 evenly, so `TICKS_PER_MINUTE` truncates (7.5 -> 7) and
+// must NOT be used to build `TICKS_PER_HOUR`; the hour is taken from 3600 s
+// directly (3600 >> 3 = 450 ticks/hour, exact).
+pub const TIMESTAMP_TICKS_PER_MINUTE: u32 = seconds_to_ticks(60);
+pub const TIMESTAMP_TICKS_PER_HOUR: u32 = seconds_to_ticks(3600);
 pub const DEFAULT_MAGIC_REGEN_PER_TICK: f32 =
     1.0 / ((4.0 * 60.0 * 60.0) / TIMESTAMP_SECONDS_PER_TICK as f32);
 

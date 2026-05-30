@@ -4,11 +4,16 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Game_State {
     MainMenu,
+    /// Pre-game roster screen: pick the four-character party for this run.
+    PartySelection,
     Exploring,
     Interacting,
     Shopping,
     Battle,
     MapOpen,
+    /// The world-map overlay listing named areas as a node graph; pick a
+    /// destination to begin overland travel. Opened with `M`.
+    WorldMapOpen,
     Traveling,
     Paused,
 }

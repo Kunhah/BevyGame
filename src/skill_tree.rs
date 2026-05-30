@@ -3,7 +3,7 @@
 //! Each tree is authored as a RON file under `assets/data/skills/`. Trees come in
 //! three groups:
 //!
-//! - **Magic-source** (`Kiho`, `Chiseijutsu`, `Yokaijutsu`, `Kamishin`): one
+//! - **Magic-source** (`Kiho`, `Onmyodo`, `Yokaijutsu`, `Kamishin`): one
 //!   per spell source. Tier-3 capstones unlock the per-school abilities at
 //!   the bottom of `assets/data/abilities/AbilitiesExample.ron` (ids 0x1001/0x1101/
 //!   0x1201/0x1301).
@@ -99,7 +99,7 @@ pub struct SkillNode {
 pub enum SkillTreeKind {
     // Magic-source trees (one per spell source).
     Kiho,
-    Chiseijutsu,
+    Onmyodo,
     Yokaijutsu,
     Kamishin,
     // Universal non-magic trees.
@@ -111,6 +111,9 @@ pub enum SkillTreeKind {
     SayakaCleric,
     HoujouSamurai,
     ToshikoVessel,
+    RenjiroMonk,
+    MidoriWildkeeper,
+    KanzoExorcist,
 }
 
 impl SkillTreeKind {
@@ -118,7 +121,7 @@ impl SkillTreeKind {
     pub fn as_magic_school(self) -> Option<MagicSchool> {
         match self {
             SkillTreeKind::Kiho => Some(MagicSchool::Kiho),
-            SkillTreeKind::Chiseijutsu => Some(MagicSchool::Chiseijutsu),
+            SkillTreeKind::Onmyodo => Some(MagicSchool::Onmyodo),
             SkillTreeKind::Yokaijutsu => Some(MagicSchool::Yokaijutsu),
             SkillTreeKind::Kamishin => Some(MagicSchool::Kamishin),
             _ => None,
@@ -128,7 +131,7 @@ impl SkillTreeKind {
     pub fn from_magic_school(school: MagicSchool) -> Self {
         match school {
             MagicSchool::Kiho => SkillTreeKind::Kiho,
-            MagicSchool::Chiseijutsu => SkillTreeKind::Chiseijutsu,
+            MagicSchool::Onmyodo => SkillTreeKind::Onmyodo,
             MagicSchool::Yokaijutsu => SkillTreeKind::Yokaijutsu,
             MagicSchool::Kamishin => SkillTreeKind::Kamishin,
         }
@@ -221,7 +224,7 @@ impl SkillTreeAccess {
     }
 
     /// Convenience: take a list of magic schools and add the matching
-    /// `SkillTreeKind::Kiho`/`Chiseijutsu`/etc. variants.
+    /// `SkillTreeKind::Kiho`/`Onmyodo`/etc. variants.
     pub fn with_magic(mut self, schools: impl IntoIterator<Item = MagicSchool>) -> Self {
         for s in schools {
             self = self.with(SkillTreeKind::from_magic_school(s));
@@ -249,14 +252,14 @@ impl SkillTreeAccess {
 #[derive(Component, Debug, Clone, Copy)]
 pub struct MagicCostMultipliers {
     pub kiho: f32,
-    pub chiseijutsu: f32,
+    pub onmyodo: f32,
     pub yokaijutsu: f32,
     pub kamishin: f32,
 }
 
 impl Default for MagicCostMultipliers {
     fn default() -> Self {
-        Self { kiho: 1.0, chiseijutsu: 1.0, yokaijutsu: 1.0, kamishin: 1.0 }
+        Self { kiho: 1.0, onmyodo: 1.0, yokaijutsu: 1.0, kamishin: 1.0 }
     }
 }
 
@@ -264,7 +267,7 @@ impl MagicCostMultipliers {
     pub fn for_school(&self, school: MagicSchool) -> f32 {
         match school {
             MagicSchool::Kiho => self.kiho,
-            MagicSchool::Chiseijutsu => self.chiseijutsu,
+            MagicSchool::Onmyodo => self.onmyodo,
             MagicSchool::Yokaijutsu => self.yokaijutsu,
             MagicSchool::Kamishin => self.kamishin,
         }
@@ -274,7 +277,7 @@ impl MagicCostMultipliers {
         let factor = (1.0 - percent.clamp(0.0, 1.0)).max(0.0);
         let slot = match school {
             MagicSchool::Kiho => &mut self.kiho,
-            MagicSchool::Chiseijutsu => &mut self.chiseijutsu,
+            MagicSchool::Onmyodo => &mut self.onmyodo,
             MagicSchool::Yokaijutsu => &mut self.yokaijutsu,
             MagicSchool::Kamishin => &mut self.kamishin,
         };
@@ -309,7 +312,7 @@ const SKILL_POINTS_PER_LEVEL: u32 = 1;
 const SKILL_RON_FILES: &[(SkillTreeKind, &str)] = &[
     // Magic-source trees.
     (SkillTreeKind::Kiho, "assets/data/skills/kiho.ron"),
-    (SkillTreeKind::Chiseijutsu, "assets/data/skills/chiseijutsu.ron"),
+    (SkillTreeKind::Onmyodo, "assets/data/skills/onmyodo.ron"),
     (SkillTreeKind::Yokaijutsu, "assets/data/skills/yokaijutsu.ron"),
     (SkillTreeKind::Kamishin, "assets/data/skills/kamishin.ron"),
     // Universal non-magic trees.
@@ -321,6 +324,9 @@ const SKILL_RON_FILES: &[(SkillTreeKind, &str)] = &[
     (SkillTreeKind::SayakaCleric, "assets/data/skills/sayaka_cleric.ron"),
     (SkillTreeKind::HoujouSamurai, "assets/data/skills/houjou_samurai.ron"),
     (SkillTreeKind::ToshikoVessel, "assets/data/skills/toshiko_vessel.ron"),
+    (SkillTreeKind::RenjiroMonk, "assets/data/skills/renjiro_monk.ron"),
+    (SkillTreeKind::MidoriWildkeeper, "assets/data/skills/midori_wildkeeper.ron"),
+    (SkillTreeKind::KanzoExorcist, "assets/data/skills/kanzo_exorcist.ron"),
 ];
 
 fn load_skill_trees_system(mut tree: ResMut<SkillTreeData>) {
@@ -449,7 +455,7 @@ fn apply_skill_effect(
         }
         SkillEffect::MagicRegenBonus { school, amount } => match school {
             MagicSchool::Kiho => stats.kiho_per_rest_hour += amount,
-            MagicSchool::Chiseijutsu => stats.chiseijutsu_per_rest_hour += amount,
+            MagicSchool::Onmyodo => stats.onmyodo_per_rest_hour += amount,
             MagicSchool::Yokaijutsu => stats.yokaijutsu_per_rest_hour += amount,
             MagicSchool::Kamishin => stats.kamishin_per_rest_hour += amount,
         },
@@ -492,7 +498,7 @@ fn apply_stat_bonus(stats: &mut CombatStats, target: GrowthTarget, amount: i32) 
         GrowthTarget::Mind => stats.mind.add_to_base(amount),
         GrowthTarget::Movement => stats.movement.add_to_base(amount),
         GrowthTarget::Kiho => stats.kiho.add_to_base(amount_f),
-        GrowthTarget::Chiseijutsu => stats.chiseijutsu.add_to_base(amount_f),
+        GrowthTarget::Onmyodo => stats.onmyodo.add_to_base(amount_f),
         GrowthTarget::Yokaijutsu => stats.yokaijutsu.add_to_base(amount_f),
         GrowthTarget::Kamishin => stats.kamishin.add_to_base(amount_f),
     }
@@ -564,7 +570,7 @@ mod tests {
         // Other magic sources rejected unless explicitly added.
         assert!(!access.allows(SkillTreeKind::Yokaijutsu));
         assert!(!access.allows(SkillTreeKind::Kamishin));
-        assert!(!access.allows(SkillTreeKind::Chiseijutsu));
+        assert!(!access.allows(SkillTreeKind::Onmyodo));
 
         // Class trees require the matching protagonist.
         assert!(!access.allows(SkillTreeKind::RinaRogue));
@@ -610,7 +616,7 @@ mod tests {
         // `with_universal` and `with_magic` must never include any class tree.
         let baseline = SkillTreeAccess::new().with_universal().with_magic([
             MagicSchool::Kiho,
-            MagicSchool::Chiseijutsu,
+            MagicSchool::Onmyodo,
             MagicSchool::Yokaijutsu,
             MagicSchool::Kamishin,
         ]);

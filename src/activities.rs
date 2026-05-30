@@ -1,7 +1,7 @@
 //! Magic-source restoration activities (GDD Part 2 — "Restoration Tasks").
 //!
 //! Each magic school in the GDD has a list of in-fiction activities that
-//! restore it: meditation for Kiho, foraging for Chiseijutsu, night rituals
+//! restore it: meditation for Kiho, foraging for Onmyodo, night rituals
 //! for Yokaijutsu, prayer for Kamishin. This module turns that taxonomy into
 //! a single event (`PerformActivityEvent`) with an enum of activity kinds, a
 //! mapping from each kind to the school it restores, and a per-hour
@@ -25,7 +25,7 @@ pub enum ActivityKind {
     KataPractice,
     SparringDrills,
     ShrineFocus,
-    // Chiseijutsu — earth, place-bound practice.
+    // Onmyodo — earth, place-bound practice.
     NatureSpiritInteraction,
     TendSacredGrove,
     Forage,
@@ -43,6 +43,9 @@ pub enum ActivityKind {
     FormalRite,
     Pilgrimage,
     TempleBlessing,
+    // Purification (harae / misogi) — does not restore magic; strips kegare.
+    Misogi,
+    Harae,
 }
 
 impl ActivityKind {
@@ -58,7 +61,7 @@ impl ActivityKind {
             | ActivityKind::TendSacredGrove
             | ActivityKind::Forage
             | ActivityKind::CraftTalisman
-            | ActivityKind::RestFertileTerrain => MagicSchool::Chiseijutsu,
+            | ActivityKind::RestFertileTerrain => MagicSchool::Onmyodo,
 
             ActivityKind::NightRitual
             | ActivityKind::SpiritOffering
@@ -71,6 +74,20 @@ impl ActivityKind {
             | ActivityKind::FormalRite
             | ActivityKind::Pilgrimage
             | ActivityKind::TempleBlessing => MagicSchool::Kamishin,
+
+            // Purification is the onmyoji's craft; categorize under Onmyodo
+            // even though it restores no magic (see `restoration_per_hour`).
+            ActivityKind::Misogi | ActivityKind::Harae => MagicSchool::Onmyodo,
+        }
+    }
+
+    /// The purification rite this activity performs, if any. Purification
+    /// activities reduce the performer's kegare instead of restoring magic.
+    pub fn purification(self) -> Option<crate::kegare::Purification> {
+        match self {
+            ActivityKind::Misogi => Some(crate::kegare::Purification::Misogi),
+            ActivityKind::Harae => Some(crate::kegare::Purification::Harae),
+            _ => None,
         }
     }
 
@@ -104,6 +121,9 @@ impl ActivityKind {
             ActivityKind::FormalRite => 1.4,
             ActivityKind::Pilgrimage => 2.0,
             ActivityKind::TempleBlessing => 1.6,
+
+            // Purification restores no magic — its effect is the kegare strip.
+            ActivityKind::Misogi | ActivityKind::Harae => 0.0,
         }
     }
 
@@ -132,18 +152,41 @@ pub struct PerformActivityEvent {
 /// because each event yields a single pool delta.
 pub fn apply_activity_restoration_system(
     mut reader: MessageReader<PerformActivityEvent>,
-    mut q: Query<&mut CombatStats>,
+    mut q: Query<(&mut CombatStats, Option<&crate::kegare::Defilement>)>,
+    mut purify_writer: MessageWriter<crate::kegare::PurifyEvent>,
 ) {
     for ev in reader.read() {
         if ev.hours == 0 {
             continue;
         }
-        let Ok(mut stats) = q.get_mut(ev.performer) else {
+
+        // Purification rites strip kegare instead of restoring a magic pool.
+        // Discrete by design (one rite = one strip), so `hours` only gates that
+        // the rite happened, it doesn't scale the strip.
+        if let Some(method) = ev.activity.purification() {
+            purify_writer.write(crate::kegare::PurifyEvent {
+                target: ev.performer,
+                method,
+            });
+            info!(
+                "activity: {:?} performer={:?} -> purify {:?}",
+                ev.activity, ev.performer, method
+            );
+            continue;
+        }
+
+        let Ok((mut stats, defilement)) = q.get_mut(ev.performer) else {
             continue;
         };
 
         let school = ev.activity.school();
-        let gain = ev.activity.restoration_per_hour() * ev.hours as f32;
+        // Kegare tilts how much the activity gives back: a defiled supplicant
+        // recovers little Kamishin at a shrine; a steeped one draws Yokaijutsu
+        // readily from a night rite. No-op outside the kegare system.
+        let kegare_mult = defilement
+            .map(|d| crate::kegare::regen_multiplier(*d, school))
+            .unwrap_or(1.0);
+        let gain = ev.activity.restoration_per_hour() * ev.hours as f32 * kegare_mult;
         if gain > 0.0 {
             stats.pool_mut(school).restore_to_base(gain);
         }

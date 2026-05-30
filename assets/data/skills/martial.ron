@@ -89,8 +89,8 @@
         prerequisites: [58371],
         effects: [
             StatBonus(target: Lethality, amount: 3),
-            UnlockAbility(ability_id: 6144), // 0x1800 Sweeping Strike
-            UnlockAbility(ability_id: 6145), // 0x1801 Brace
+            UnlockAbility(ability_id: 49152), // 0xC000 (L24 s0)
+            UnlockAbility(ability_id: 49153), // 0xC001 (L24 s1)
         ],
     ),
     (
@@ -103,8 +103,8 @@
         prerequisites: [58372],
         effects: [
             StatBonus(target: Hit, amount: 3),
-            UnlockAbility(ability_id: 6146), // 0x1802 Aimed Shot
-            UnlockAbility(ability_id: 6147), // 0x1803 Disengage
+            UnlockAbility(ability_id: 49154), // 0xC002 (L24 s2)
+            UnlockAbility(ability_id: 49155), // 0xC003 (L24 s3)
         ],
     ),
 ]

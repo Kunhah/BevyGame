@@ -8,7 +8,9 @@
 //! Add a new effect by extending the WGSL `ToonParams` block, adding a field
 //! to the Rust `ToonParams`, and writing a tick system here.
 //!
-//! Demo hotkeys (target the `ToonTestCapsule` north of spawn):
+//! Demo hotkeys — applied to **every toon-shaded entity in the scene** (player
+//! + enemies + the test capsule) so the effect is visible regardless of where
+//! the camera is pointed:
 //! - **F3** — `HitFlash` (brief warm-white pulse).
 //! - **F4** — `Dissolve` (1-second burn-away with hot edge, then re-forms so
 //!   the demo is repeatable).
@@ -77,13 +79,23 @@ pub fn tick_hit_flash(
 ) {
     let dt = time.delta_secs();
     for (entity, mut flash, mat) in &mut q {
+        let first_tick = flash.elapsed == 0.0;
         flash.elapsed += dt;
         let t = (flash.elapsed / flash.duration).clamp(0.0, 1.0);
         // Quick rise then linear fade for a sharp "pop".
         let curve = (1.0 - t) * (1.0 - t);
         let value = flash.intensity * curve;
-        if let Some(m) = materials.get_mut(&mat.0) {
+        let wrote = if let Some(m) = materials.get_mut(&mat.0) {
             m.extension.params.hit_flash = value;
+            true
+        } else {
+            false
+        };
+        if first_tick {
+            info!(
+                "tick_hit_flash: entity={:?} value={:.2} wrote_material={}",
+                entity, value, wrote
+            );
         }
         if t >= 1.0 {
             if let Some(m) = materials.get_mut(&mat.0) {
@@ -103,10 +115,20 @@ pub fn tick_dissolve(
 ) {
     let dt = time.delta_secs();
     for (entity, mut diss, mat) in &mut q {
+        let first_tick = diss.elapsed == 0.0;
         diss.elapsed += dt;
         let t = (diss.elapsed / diss.duration).clamp(0.0, 1.0);
-        if let Some(m) = materials.get_mut(&mat.0) {
+        let wrote = if let Some(m) = materials.get_mut(&mat.0) {
             m.extension.params.dissolve = t;
+            true
+        } else {
+            false
+        };
+        if first_tick {
+            info!(
+                "tick_dissolve: entity={:?} t={:.2} wrote_material={}",
+                entity, t, wrote
+            );
         }
         if t >= 1.0 {
             if diss.despawn_when_done {
@@ -121,29 +143,33 @@ pub fn tick_dissolve(
     }
 }
 
-/// Demo hotkeys — apply effects to the `ToonTestCapsule` reference entity.
+/// Demo hotkeys — apply effects to **every** toon-shaded entity so the demo is
+/// always visible (player + enemies + test capsule), regardless of camera focus.
 pub fn demo_effect_hotkeys(
     keys: Res<ButtonInput<KeyCode>>,
     mut commands: Commands,
-    q: Query<(Entity, &Name)>,
+    q: Query<Entity, With<MeshMaterial3d<ToonMaterial>>>,
 ) {
-    let target = if keys.just_pressed(KeyCode::F3) || keys.just_pressed(KeyCode::F4) {
-        q.iter()
-            .find(|(_, n)| n.as_str() == "ToonTestCapsule")
-            .map(|(e, _)| e)
-    } else {
-        None
-    };
-    let Some(target) = target else {
+    let f3 = keys.just_pressed(KeyCode::F3);
+    let f4 = keys.just_pressed(KeyCode::F4);
+    if !f3 && !f4 {
         return;
-    };
-    if keys.just_pressed(KeyCode::F3) {
-        info!("effects: HitFlash on ToonTestCapsule");
-        commands.entity(target).insert(HitFlash::new(0.35, 1.4));
     }
-    if keys.just_pressed(KeyCode::F4) {
-        info!("effects: Dissolve (demo) on ToonTestCapsule");
-        commands.entity(target).insert(Dissolve::demo(1.0));
+    let mut count = 0;
+    for e in &q {
+        if f3 {
+            commands.entity(e).insert(HitFlash::new(0.5, 2.5));
+        }
+        if f4 {
+            commands.entity(e).insert(Dissolve::demo(1.5));
+        }
+        count += 1;
+    }
+    if f3 {
+        info!("effects: HitFlash applied to {} toon entities", count);
+    }
+    if f4 {
+        info!("effects: Dissolve(demo) applied to {} toon entities", count);
     }
 }
 

@@ -18,6 +18,57 @@ pub const TILE_WORLD_SIZE: f32 = 4096.0;
 pub const LOCAL_MAP_BORDER_THICKNESS: f32 = 24.0;
 pub const LOCAL_MAP_BORDER_INSET: f32 = 8.0;
 
+/// How many tiles out from the player are streamed in while exploring. Radius 1
+/// = a 3×3 block, so a tile's neighbours are already visible before you reach
+/// the edge and walking from one to the next is seamless. (The camera shows
+/// well under one 4096-unit tile, so 3×3 fully covers the view at any spot.)
+/// Map-UI travel is unaffected — it stays a discrete jump to a single tile.
+pub const TILE_LOAD_RADIUS: i32 = 1;
+
+/// `type_id` of an impassable world-edge tile: not walkable, not a valid travel
+/// destination, and excluded from travel pathfinding. Rendered with a distinct
+/// dark material so the world's edge is visible rather than unloaded void.
+pub const IMPASSABLE_TERRAIN: u8 = 9;
+
+/// Thickness (in tiles) of the impassable border ringing the whole map.
+pub const MAP_BORDER_THICKNESS: i32 = 1;
+
+/// Tile the party spawns on. Kept inside the impassable border so every
+/// direction has a loaded neighbour from the first frame.
+pub const PLAYER_SPAWN_TILE: Position = Position { x: 3, y: 3 };
+
+#[inline]
+pub fn is_walkable_type(type_id: u8) -> bool {
+    type_id != IMPASSABLE_TERRAIN
+}
+
+#[inline]
+pub fn is_walkable_tile(tile: &MapTile) -> bool {
+    is_walkable_type(tile.type_id)
+}
+
+/// Stamp an impassable ring `MAP_BORDER_THICKNESS` tiles deep around the map so
+/// the player can neither walk nor fast-travel off the edge. Call this *after*
+/// area stamping so the border always wins on edge tiles.
+pub fn apply_impassable_border(map: &mut MapTiles) {
+    let height = map.tiles.len();
+    let width = map.tiles.first().map(|r| r.len()).unwrap_or(0);
+    let t = MAP_BORDER_THICKNESS.max(0) as usize;
+    if t == 0 {
+        return;
+    }
+    for y in 0..height {
+        for x in 0..width {
+            if x < t || y < t || x + t >= width || y + t >= height {
+                if let Some(tile) = map.tiles.get_mut(y).and_then(|row| row.get_mut(x)) {
+                    tile.type_id = IMPASSABLE_TERRAIN;
+                    tile.event_ids.clear();
+                }
+            }
+        }
+    }
+}
+
 pub enum TravelingSpeed {
     Slow,
     Normal,
@@ -462,7 +513,8 @@ pub fn generate_map_tiles() -> MapTiles {
     MapTiles { tiles }
 }
 
-/// Toggle entering the map (travel mode) with `M` when exploring.
+/// Toggle entering the legacy tile-grid travel mode with `B` when exploring.
+/// (`M` now opens the higher-level world/area map — see [`crate::areas`].)
 pub fn toggle_map_mode(
     input: Res<ButtonInput<KeyCode>>,
     mut game_state: ResMut<GameState>,
@@ -473,7 +525,7 @@ pub fn toggle_map_mode(
     asset_server: Res<AssetServer>,
     windows: Query<&Window>,
 ) {
-    if !input.just_pressed(KeyCode::KeyM) {
+    if !input.just_pressed(KeyCode::KeyB) {
         return;
     }
 
@@ -735,6 +787,11 @@ fn shortest_time_path_and_cost(
                 continue;
             };
 
+            // Never route through (or to) impassable world-edge tiles.
+            if !is_walkable_tile(tile) {
+                continue;
+            }
+
             let next_pos = Position { x: nx, y: ny };
             let next_index = tile_index(next_pos);
             let step_cost = total_time_cost_for_tile_indexed(tile, next_pos, slow_effects);
@@ -890,14 +947,20 @@ pub fn update_active_tile_background(
         return;
     }
 
+    // Stream a (2R+1)² block around the player so neighbouring tiles are
+    // already on-screen — seamless walking. Out-of-range tiles are simply not
+    // inserted (the impassable border keeps the player from ever standing where
+    // a neighbour would be missing).
     let player_tile = world_to_map_tile(player_tf.translation.truncate());
     let mut desired: HashSet<(i32, i32)> = HashSet::new();
-    if player_tile.x >= 0
-        && player_tile.y >= 0
-        && player_tile.x < width
-        && player_tile.y < height
-    {
-        desired.insert((player_tile.x, player_tile.y));
+    for dy in -TILE_LOAD_RADIUS..=TILE_LOAD_RADIUS {
+        for dx in -TILE_LOAD_RADIUS..=TILE_LOAD_RADIUS {
+            let tx = player_tile.x + dx;
+            let ty = player_tile.y + dy;
+            if tx >= 0 && ty >= 0 && tx < width && ty < height {
+                desired.insert((tx, ty));
+            }
+        }
     }
 
     // Despawn backgrounds that are no longer desired.
@@ -913,6 +976,13 @@ pub fn update_active_tile_background(
     for entity in active_bgs.border_entities.drain(..) {
         commands.entity(entity).despawn();
     }
+
+    // Snapshot existing tile-content coords once so the spawn loop below can do
+    // O(1) membership checks instead of rescanning the whole query per tile.
+    let existing_spawn_coords: HashSet<(i32, i32)> = tile_spawns
+        .iter()
+        .map(|(_, s)| (s.coords.x, s.coords.y))
+        .collect();
 
     // Despawn tile content outside the desired set.
     for (entity, spawn) in tile_spawns.iter_mut() {
@@ -937,12 +1007,19 @@ pub fn update_active_tile_background(
 
         // Placeholder ground: a flat quad in the XY plane just below z = 0 so
         // entities (at z >= 0) sit on top. Real tile textures return later via
-        // the glTF pipeline. The unit quad is scaled to one tile.
+        // the glTF pipeline. The unit quad is scaled to one tile. Impassable
+        // edge tiles use the dark border material so the world's edge reads as a
+        // visible boundary instead of unloaded void.
         let center = tile_center_world(pos);
+        let ground_material = if is_walkable_tile(tile) {
+            placeholders.ground_mat.clone()
+        } else {
+            placeholders.border_mat.clone()
+        };
         let entity = commands
             .spawn((
                 Mesh3d(placeholders.ground_quad.clone()),
-                MeshMaterial3d(placeholders.ground_mat.clone()),
+                MeshMaterial3d(ground_material),
                 Transform::from_translation(Vec3::new(center.x, center.y, -1.0))
                     .with_scale(Vec3::new(TILE_WORLD_SIZE, TILE_WORLD_SIZE, 1.0)),
                 Name::new(format!("MapTileBackground({}, {})", pos.x, pos.y)),
@@ -952,9 +1029,7 @@ pub fn update_active_tile_background(
         active_bgs.entities.insert(pos, entity);
 
         // Spawn content (placeholder NPC/occluder/collider) for this tile if not present.
-        let has_spawn = tile_spawns
-            .iter()
-            .any(|(_, t)| t.coords.x == pos.x && t.coords.y == pos.y);
+        let has_spawn = existing_spawn_coords.contains(&(pos.x, pos.y));
         if !has_spawn && should_spawn_tile_content(tile, pos, &mut content_cache) {
             spawn_tile_content(&mut commands, &placeholders, pos, tile);
         }
@@ -1124,6 +1199,16 @@ pub fn handle_local_map_boundary_crossing(
     else {
         return;
     };
+
+    // Impassable tiles ring the map edge: refuse to cross into one. Clamp the
+    // player's *actual* position (not the edge-wrapped `next_world`) back inside
+    // the current tile so they stop at the wall instead of wrapping across it.
+    if !is_walkable_tile(destination_map_tile) {
+        let clamped = clamp_world_inside_tile(player_tf.translation.truncate(), current_tile);
+        player_tf.translation.x = clamped.x;
+        player_tf.translation.y = clamped.y;
+        return;
+    }
 
     timestamp.0 = timestamp.0.saturating_add(total_time_cost_for_tile_indexed(
         destination_map_tile,
@@ -1405,7 +1490,11 @@ pub fn update_travel_ui(
 
     if let Some(label) = ui.label {
         if let Ok(mut t) = text_q.get_mut(label) {
-            t.0 = text;
+            // Only mutate when the content actually changed; an unconditional
+            // write marks the Text dirty every frame and forces UI re-layout.
+            if t.0 != text {
+                t.0 = text;
+            }
         }
     }
 }

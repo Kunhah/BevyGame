@@ -1,4 +1,10 @@
-// Kamishin — Divine invocation, faith, prayer, liturgy, sacred duty.
+// Kamishin — communion with the revered spirits: the kami of shrine and
+// mountain, the spirits of grove, field and hearth, and the honoured dead.
+// Where Yokaijutsu BARGAINS with the dangerous Other and Onmyodo COMMANDS
+// impersonal forces by technique, Kamishin PETITIONS and hosts spirits worthy
+// of reverence — through prayer, liturgy, purification, and the medium's
+// welcome. This is the benevolent half of the kami/yōkai divide, and the home
+// of the wild's own spirits.
 // IDs: 0xE3XX. Capstone unlocks ability 0x1301 ("Heaven's Mandate").
 [
     (
@@ -6,7 +12,7 @@
         tree: Kamishin,
         tier: 1,
         name: "Pilgrim's Resolve",
-        description: "Walk a road already prayed over. Raises max Kamishin by 5.",
+        description: "Walk a road already prayed over, past every wayside shrine and grove-kami. Raises max Kamishin by 5.",
         cost: 1,
         prerequisites: [],
         effects: [
@@ -30,7 +36,7 @@
         tree: Kamishin,
         tier: 2,
         name: "Sacred Vow",
-        description: "Swear a thing in front of the kami. +5 Mind.",
+        description: "Swear a thing before the kami — of shrine or of mountain. +5 Mind.",
         cost: 2,
         prerequisites: [58112],
         effects: [
@@ -54,7 +60,7 @@
         tree: Kamishin,
         tier: 2,
         name: "Liturgist",
-        description: "Knows the proper order of every rite. Reduces Kamishin ability cost by 10%.",
+        description: "Knows the proper order of every rite, and which spirit each one calls. Reduces Kamishin ability cost by 10%.",
         cost: 2,
         prerequisites: [58112],
         effects: [
@@ -66,12 +72,12 @@
         tree: Kamishin,
         tier: 3,
         name: "Divine Conduit",
-        description: "Become an instrument the kami can speak through. +5 max Kamishin and unlock the Heaven's Mandate ability.",
+        description: "Become a vessel a revered spirit can speak through. +5 max Kamishin and unlock the Heaven's Mandate ability.",
         cost: 3,
         prerequisites: [58114, 58115],
         effects: [
             StatBonus(target: Kamishin, amount: 5),
-            UnlockAbility(ability_id: 4865), // 0x1301
+            UnlockAbility(ability_id: 38913), // 0x9801 (L19 s1)
         ],
     ),
     (
@@ -84,7 +90,7 @@
         prerequisites: [58112],
         effects: [
             StatBonus(target: Mind, amount: 3),
-            UnlockAbility(ability_id: 5888), // 0x1700
+            UnlockAbility(ability_id: 47104), // 0xB800 (L23 s0)
         ],
     ),
     (
@@ -92,12 +98,12 @@
         tree: Kamishin,
         tier: 3,
         name: "Severing Light",
-        description: "Cut the wound free of its persistence. Unlocks Severance Prayer. +5 Mind.",
+        description: "Ask the spirits to cut a wound free of its persistence. Unlocks Severance Prayer. +5 Mind.",
         cost: 3,
         prerequisites: [58118],
         effects: [
             StatBonus(target: Mind, amount: 5),
-            UnlockAbility(ability_id: 5890), // 0x1702
+            UnlockAbility(ability_id: 47106), // 0xB802 (L23 s2)
         ],
     ),
 ]

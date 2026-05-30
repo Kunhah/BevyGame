@@ -481,7 +481,9 @@ fn handle_menu_actions(
 
         match action {
             MenuButtonAction::StartGame => {
-                game_state.0 = Game_State::Exploring;
+                // New runs go through the party-selection screen first; the
+                // roster the player picks there drives who is spawned.
+                game_state.0 = Game_State::PartySelection;
                 resume_state.0 = Game_State::Exploring;
                 mouse_input.reset_all();
                 key_input.clear();

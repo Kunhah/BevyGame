@@ -1763,9 +1763,9 @@ fn service_lock_reason_for_region(
     reputation: &ReputationLedger,
     crime: &PlayerCrimeStatus,
     map: &MapTiles,
+    centers: &HashMap<CityId, Vec2>,
 ) -> Option<String> {
-    let centers = city_centroids(cities, map);
-    let weights = nearest_city_weights_for_region(region_id, cities, map, &centers, 3);
+    let weights = nearest_city_weights_for_region(region_id, cities, map, centers, 3);
     if weights.is_empty() {
         return None;
     }
@@ -1831,9 +1831,9 @@ fn effective_city_modifiers_for_region(
     clans: &ClanCatalog,
     reputation: &ReputationLedger,
     map: &MapTiles,
+    centers: &HashMap<CityId, Vec2>,
 ) -> Option<EffectiveCityModifiers> {
-    let centers = city_centroids(cities, map);
-    let weights = nearest_city_weights_for_region(region_id, cities, map, &centers, 3);
+    let weights = nearest_city_weights_for_region(region_id, cities, map, centers, 3);
     if weights.is_empty() {
         return None;
     }
@@ -1928,6 +1928,12 @@ fn process_buy_item_events(
     mut rep_events: MessageWriter<ReputationChangeEvent>,
     mut logs: MessageWriter<TradeLogEvent>,
 ) {
+    if events.is_empty() {
+        return;
+    }
+    // City centroids depend only on the static map + catalog; compute once per
+    // batch instead of rescanning the whole map inside every pricing call.
+    let centers = city_centroids(&cities, &map);
     for evt in events.read() {
         if evt.quantity == 0 {
             logs.write(TradeLogEvent {
@@ -1965,6 +1971,7 @@ fn process_buy_item_events(
             &reputation,
             &crime,
             &map,
+            &centers,
         ) {
             logs.write(TradeLogEvent {
                 message: format!("buy_item failed: {}", reason),
@@ -1990,6 +1997,7 @@ fn process_buy_item_events(
             &clans,
             &reputation,
             &map,
+            &centers,
         );
 
         let Some(merchant) = merchants.0.get_mut(&merchant_id) else {
@@ -2088,6 +2096,12 @@ fn process_sell_item_events(
     mut rep_events: MessageWriter<ReputationChangeEvent>,
     mut logs: MessageWriter<TradeLogEvent>,
 ) {
+    if events.is_empty() {
+        return;
+    }
+    // City centroids depend only on the static map + catalog; compute once per
+    // batch instead of rescanning the whole map inside every pricing call.
+    let centers = city_centroids(&cities, &map);
     for evt in events.read() {
         if evt.quantity == 0 {
             logs.write(TradeLogEvent {
@@ -2125,6 +2139,7 @@ fn process_sell_item_events(
             &reputation,
             &crime,
             &map,
+            &centers,
         ) {
             logs.write(TradeLogEvent {
                 message: format!("sell_item failed: {}", reason),
@@ -2150,6 +2165,7 @@ fn process_sell_item_events(
             &clans,
             &reputation,
             &map,
+            &centers,
         );
 
         let Some(merchant) = merchants.0.get_mut(&merchant_id) else {
@@ -2263,12 +2279,14 @@ fn toggle_shop_ui_hotkey(
         });
         return;
     }
+    let centers = city_centroids(&cities, &map);
     if let Some(reason) = service_lock_reason_for_region(
         current_area.0,
         &cities,
         &reputation,
         &crime,
         &map,
+        &centers,
     ) {
         logs.write(TradeLogEvent {
             message: format!("shop_ui: {}", reason),
@@ -2601,6 +2619,8 @@ fn update_shop_ui_text(
 
     let market = markets.0.get(&merchant.region_id);
     let city = city_for_region(&cities, merchant.region_id);
+    // Computed once for the whole panel; every per-item pricing call below reuses it.
+    let centers = city_centroids(&cities, &map);
     out.push_str(&format!(
         "Area region: {} | Merchant region: {} | Player coins: {} | Qty: {} | Focus: {}\n",
         current_area.0,
@@ -2672,6 +2692,7 @@ fn update_shop_ui_text(
                         &clans,
                         &reputation,
                         &map,
+                        &centers,
                     );
                 (
                     item.name.as_str(),
@@ -2711,6 +2732,7 @@ fn update_shop_ui_text(
                         &clans,
                         &reputation,
                         &map,
+                        &centers,
                     );
                 (
                     item.name.as_str(),
@@ -2742,6 +2764,7 @@ fn update_shop_ui_text(
                         &clans,
                         &reputation,
                         &map,
+                        &centers,
                     );
                     let pricing = buy_price_breakdown(dyn_base, modifiers);
                     let unit = pricing.unit_price;
@@ -2784,6 +2807,7 @@ fn update_shop_ui_text(
                         &clans,
                         &reputation,
                         &map,
+                        &centers,
                     );
                     let pricing = sell_price_breakdown(dyn_base, modifiers);
                     let unit = pricing.unit_price;
@@ -2815,7 +2839,11 @@ fn update_shop_ui_text(
         }
     }
 
-    text.0 = out;
+    // Avoid marking the Text dirty (and triggering UI re-layout) every frame
+    // when the rendered contents are unchanged.
+    if text.0 != out {
+        text.0 = out;
+    }
 }
 
 fn debug_trade_hotkeys(

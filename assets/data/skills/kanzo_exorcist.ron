@@ -1,0 +1,91 @@
+// Kanzo — Exorcist. A blind itinerant priest in the line of the biwa hōshi
+// (the blind lute-priests who chanted the Heike and pacified the angry dead —
+// cf. Mimi-nashi Hōichi). He turns Kamishin OUTWARD as a weapon: words of
+// banishment, the rite of great purification, the air itself made to refuse
+// a spirit. He is the player-side mirror of the Kasha caster — a back-line
+// glass cannon. Note he shares the Kamishin school with Sayaka but inverts its
+// use (her liturgy heals and shields; his unmakes), so the same source funds
+// two distinct identities. IDs: 0xEDXX.
+//
+// WIRING (later): register `SkillTreeKind::KanzoExorcist` in src/skill_tree.rs
+// and add this path to `SKILL_RON_FILES`.
+[
+    (
+        id: 60672, // 0xED00
+        tree: KanzoExorcist,
+        tier: 1,
+        name: "Sutra Memory",
+        description: "He cannot read the page, so he carries every page behind his eyes. +5 Mind.",
+        cost: 1,
+        prerequisites: [],
+        effects: [
+            StatBonus(target: Mind, amount: 5),
+        ],
+    ),
+    (
+        id: 60673, // 0xED01
+        tree: KanzoExorcist,
+        tier: 1,
+        name: "Kindled Faith",
+        description: "Belief kept burning low and steady, never allowed to gutter out. +1 Kamishin per rest hour, +3 Kamishin max.",
+        cost: 1,
+        prerequisites: [],
+        effects: [
+            MagicRegenBonus(school: Kamishin, amount: 1.0),
+            StatBonus(target: Kamishin, amount: 3),
+        ],
+    ),
+    (
+        id: 60674, // 0xED02
+        tree: KanzoExorcist,
+        tier: 2,
+        name: "Word of Banishment",
+        description: "Names the thing aloud, and the naming is the wound. +5 Kamishin max, +3 Hit.",
+        cost: 2,
+        prerequisites: [60673],
+        effects: [
+            StatBonus(target: Kamishin, amount: 5),
+            StatBonus(target: Hit, amount: 3),
+        ],
+    ),
+    (
+        id: 60675, // 0xED03
+        tree: KanzoExorcist,
+        tier: 2,
+        name: "Reading the Air",
+        description: "Sightless, he aims by the way a room holds its breath. +6 Hit, +3 Mind.",
+        cost: 2,
+        prerequisites: [60672],
+        effects: [
+            StatBonus(target: Hit, amount: 6),
+            StatBonus(target: Mind, amount: 3),
+        ],
+    ),
+    (
+        id: 60676, // 0xED04
+        tree: KanzoExorcist,
+        tier: 2,
+        name: "Unwavering Recitation",
+        description: "The chant does not break for fear, for wound, or for the hour. +5 Morale, +5 Kamishin max.",
+        cost: 2,
+        prerequisites: [60672, 60673],
+        effects: [
+            StatBonus(target: Morale, amount: 5),
+            StatBonus(target: Kamishin, amount: 5),
+        ],
+    ),
+    (
+        id: 60677, // 0xED05
+        tree: KanzoExorcist,
+        tier: 3,
+        name: "Great Purification",
+        description: "Speaks the Ōharae entire, and the unclean is not slain but swept from the world the way the year's filth is swept to sea. +8 Kamishin max, +6 Mind, +5 Hit.",
+        cost: 3,
+        prerequisites: [60674, 60676],
+        effects: [
+            StatBonus(target: Kamishin, amount: 8),
+            StatBonus(target: Mind, amount: 6),
+            StatBonus(target: Hit, amount: 5),
+        ],
+    ),
+]

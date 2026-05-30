@@ -1,5 +1,5 @@
 // Sayaka — Cleric / Kitsune. Fox-cunning illusions and channeled blessings,
-// pairing Kamishin liturgy with Chiseijutsu nature work. Aligns with her
+// pairing Kamishin liturgy with a little Onmyodo element-craft. Aligns with her
 // 0x0B** ability set (Purifying strike, Sacred prayer, Barrier of faith,
 // Cleanse, Ritual of stillness). IDs: 0xE8XX.
 [
@@ -59,12 +59,12 @@
         tree: SayakaCleric,
         tier: 2,
         name: "Sacred Mediation",
-        description: "Stands between kami and place and translates each to the other. +5 Kamishin max, +3 Chiseijutsu max.",
+        description: "Stands between the kami's voice and the onmyōji's seal, and translates each to the other. +5 Kamishin max, +3 Onmyodo max.",
         cost: 2,
         prerequisites: [59392, 59393],
         effects: [
             StatBonus(target: Kamishin, amount: 5),
-            StatBonus(target: Chiseijutsu, amount: 3),
+            StatBonus(target: Onmyodo, amount: 3),
         ],
     ),
     (
@@ -72,13 +72,13 @@
         tree: SayakaCleric,
         tier: 3,
         name: "Nine-Tail Bond",
-        description: "The fox in her stops being a story and starts being a co-author. +5 Mind, +5 Kamishin max, +5 Chiseijutsu max.",
+        description: "The fox in her stops being a story and starts being a co-author. +5 Mind, +5 Kamishin max, +5 Onmyodo max.",
         cost: 3,
         prerequisites: [59394, 59396],
         effects: [
             StatBonus(target: Mind, amount: 5),
             StatBonus(target: Kamishin, amount: 5),
-            StatBonus(target: Chiseijutsu, amount: 5),
+            StatBonus(target: Onmyodo, amount: 5),
         ],
     ),
 ]

@@ -72,7 +72,7 @@
         prerequisites: [57858, 57859],
         effects: [
             StatBonus(target: Yokaijutsu, amount: 5),
-            UnlockAbility(ability_id: 4609), // 0x1201
+            UnlockAbility(ability_id: 36865), // 0x9001 (L18 s1)
         ],
     ),
     (
@@ -85,7 +85,7 @@
         prerequisites: [57857],
         effects: [
             StatBonus(target: Lethality, amount: 3),
-            UnlockAbility(ability_id: 5632), // 0x1600
+            UnlockAbility(ability_id: 45056), // 0xB000 (L22 s0)
         ],
     ),
     (
@@ -98,7 +98,7 @@
         prerequisites: [57862],
         effects: [
             StatBonus(target: Mind, amount: 3),
-            UnlockAbility(ability_id: 5634), // 0x1602
+            UnlockAbility(ability_id: 45058), // 0xB002 (L22 s2)
         ],
     ),
 ]

@@ -1,0 +1,167 @@
+// Onmyodo — the onmyōji's craft: gogyō (five-element) technique worked through
+// drawn seals and ofuda. Impersonal forces COMMANDED by technique — not the
+// communion with revered spirits that is Kamishin's, nor the bargains with the
+// dangerous Other that are Yokaijutsu's. All five gogyō lines are present —
+// earth (do, 土) and wood (moku, 木) at the base, with fire (ka, 火), metal
+// (kin, 金) and water (sui, 水) added along the generative cycle (相生: wood
+// feeds fire; earth bears metal; metal carries water) — capped by a shikigami
+// node that binds a commanded servant.
+// IDs: 0xE1XX. Capstone unlocks ability 0x1101 ("Verdant Pulse").
+[
+    (
+        id: 57600, // 0xE100
+        tree: Onmyodo,
+        tier: 1,
+        name: "Grounding Sigil",
+        description: "The first seal a student learns to hold. Raises max Onmyodo by 5.",
+        cost: 1,
+        prerequisites: [],
+        effects: [
+            StatBonus(target: Onmyodo, amount: 5),
+        ],
+    ),
+    (
+        id: 57601, // 0xE101
+        tree: Onmyodo,
+        tier: 1,
+        name: "Sapwood Talisman",
+        description: "A wood-line (moku) ofuda that drinks slowly and refills. +0.25 Onmyodo per rest hour.",
+        cost: 1,
+        prerequisites: [],
+        effects: [
+            MagicRegenBonus(school: Onmyodo, amount: 0.25),
+        ],
+    ),
+    (
+        id: 57602, // 0xE102
+        tree: Onmyodo,
+        tier: 2,
+        name: "Stone Skin",
+        description: "An earth-line (do) seal pressed to the body, set to harden. +4 Armor.",
+        cost: 2,
+        prerequisites: [57600],
+        effects: [
+            StatBonus(target: Armor, amount: 4),
+        ],
+    ),
+    (
+        id: 57603, // 0xE103
+        tree: Onmyodo,
+        tier: 2,
+        name: "Economy of Strokes",
+        description: "Knows which brushstrokes a seal can do without. Reduces Onmyodo ability cost by 10%.",
+        cost: 2,
+        prerequisites: [57601],
+        effects: [
+            MagicCostReduction(school: Onmyodo, percent: 0.10),
+        ],
+    ),
+    (
+        id: 57604, // 0xE104
+        tree: Onmyodo,
+        tier: 2,
+        name: "Talisman Lore",
+        description: "Inscribe an ofuda in the proper hand and order. +4 Mind.",
+        cost: 2,
+        prerequisites: [57601],
+        effects: [
+            StatBonus(target: Mind, amount: 4),
+        ],
+    ),
+    (
+        id: 57605, // 0xE105
+        tree: Onmyodo,
+        tier: 3,
+        name: "Verdant Mastery",
+        description: "Command of the wood line (moku); the talisman blooms unbidden. +5 max Onmyodo and unlock the Verdant Pulse ability.",
+        cost: 3,
+        prerequisites: [57602, 57603],
+        effects: [
+            StatBonus(target: Onmyodo, amount: 5),
+            UnlockAbility(ability_id: 34817), // 0x8801 (L17 s1)
+        ],
+    ),
+    (
+        id: 57606, // 0xE106
+        tree: Onmyodo,
+        tier: 2,
+        name: "Thorn Seal",
+        description: "A wood-line (moku) ofuda that throws out binding thorns. Unlocks Bramble Snare. +3 Mind.",
+        cost: 2,
+        prerequisites: [57600],
+        effects: [
+            StatBonus(target: Mind, amount: 3),
+            UnlockAbility(ability_id: 43008), // 0xA800 (L21 s0)
+        ],
+    ),
+    (
+        id: 57607, // 0xE107
+        tree: Onmyodo,
+        tier: 3,
+        name: "Stonewright",
+        description: "Raise a slab of earth (do) at a spoken word and a struck seal. Unlocks Stone Wall. +5 Armor.",
+        cost: 3,
+        prerequisites: [57606],
+        effects: [
+            StatBonus(target: Armor, amount: 5),
+            UnlockAbility(ability_id: 43009), // 0xA801 (L21 s1)
+        ],
+    ),
+
+    // --- Five-element expansion. Prerequisites follow the generative cycle
+    // --- (相生): wood feeds fire; earth bears metal; metal carries water. The
+    // --- shikigami node needs two lines answering at once (fire + water).
+    (
+        id: 57608, // 0xE108
+        tree: Onmyodo,
+        tier: 2,
+        name: "Cinnabar Seal",
+        description: "The fire line (ka) catches from the wood. Unlocks Ember Talisman. +3 Mind.",
+        cost: 2,
+        prerequisites: [57601],
+        effects: [
+            StatBonus(target: Mind, amount: 3),
+            UnlockAbility(ability_id: 43011), // 0xA803 (L21 s3)
+        ],
+    ),
+    (
+        id: 57609, // 0xE109
+        tree: Onmyodo,
+        tier: 2,
+        name: "Whetstone Seal",
+        description: "Earth bears metal (kin); a seal that folds paper to an edge. Unlocks Conjured Blades. +3 Lethality.",
+        cost: 2,
+        prerequisites: [57602],
+        effects: [
+            StatBonus(target: Lethality, amount: 3),
+            UnlockAbility(ability_id: 43013), // 0xA805 (L21 s5)
+        ],
+    ),
+    (
+        id: 57610, // 0xE10A
+        tree: Onmyodo,
+        tier: 2,
+        name: "Tidewater Seal",
+        description: "Metal carries water (sui); a seal that calls a cold, dragging current. Unlocks Quenching Current. +3 Mind.",
+        cost: 2,
+        prerequisites: [57609],
+        effects: [
+            StatBonus(target: Mind, amount: 3),
+            UnlockAbility(ability_id: 43012), // 0xA804 (L21 s4)
+        ],
+    ),
+    (
+        id: 57611, // 0xE10B
+        tree: Onmyodo,
+        tier: 3,
+        name: "Bind Shikigami",
+        description: "With two lines answering at once, fold a paper servant that obeys. Unlocks Paper Shikigami. +5 max Onmyodo, +3 Mind.",
+        cost: 3,
+        prerequisites: [57608, 57610],
+        effects: [
+            StatBonus(target: Onmyodo, amount: 5),
+            StatBonus(target: Mind, amount: 3),
+            UnlockAbility(ability_id: 43014), // 0xA806 (L21 s6)
+        ],
+    ),
+]

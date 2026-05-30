@@ -1,12 +1,15 @@
-// All ability data lives in this single file. IDs are packed (level << 8 | sub),
-// so I keep one "level" byte per character to make it obvious who owns what:
+// All ability data lives in this single file. IDs are packed (level << 11 | sub):
+// 5 bits of level (0..=30) in the high bits, 11 bits of sub-id in the low bits
+// (see `crate::combat_ability::pack_ability_id`). One level band per character
+// keeps it obvious who owns what:
 //
-//   0x00 — generic / placeholder demo abilities
-//   0x0A — Rina        (ids 2560..)
-//   0x0B — Sayaka      (ids 2816..)
-//   0x0C — Houjou Utaka (ids 3072..)
-//   0x0D — Toshiko     (ids 3328..)
-//   0x0F — Yokai       (ids 3840..)
+//   L0  / 0x0000.. — generic / placeholder demo abilities
+//   L10 / 0x5000.. — Rina
+//   L11 / 0x5800.. — Sayaka
+//   L12 / 0x6000.. — Houjou Utaka
+//   L13 / 0x6800.. — Toshiko
+//   L15 / 0x7800.. — Yokai
+//   L16+/ 0x8000.. — magic-school + martial capstones (unlocked via skill trees)
 //
 // Effects use the new `ApplyStatus { kind, tier }` / `RemoveStatus { kind }`
 // variants for non-damage actions (Cleanse, Bind spirit, Whisper, etc.).
@@ -32,7 +35,7 @@
         targets: 1,
     ),
     (
-        id: 258,
+        id: 2050,
         next_id: None,
         name: "Fireball",
         health_cost: 0,
@@ -55,7 +58,7 @@
         targets: 6,
     ),
     (
-        id: 513,
+        id: 4097,
         next_id: None,
         name: "Rallying Cry",
         health_cost: 0,
@@ -68,7 +71,7 @@
             Buff(
                 stat: Morale,
                 multiplier: 1.20,
-                effects: Some([258]),
+                effects: Some([2050]),
                 scaled_with: Mind,
             ),
         ],
@@ -77,8 +80,8 @@
         targets: 8,
     ),
     (
-        id: 770,
-        next_id: Some(771),
+        id: 6146,
+        next_id: Some(6147),
         name: "Crippling Flame",
         health_cost: 0,
         magic_cost: 25.0,
@@ -110,7 +113,7 @@
     // Rina — Rogue (Kiho)
     // -----------------------------------------------------------------------
     (
-        id: 2560, // 0x0A00 Quick slash
+        id: 20480, // 0x5000 (L10 s0) Quick slash
         next_id: None,
         name: "Quick slash",
         health_cost: 0,
@@ -127,7 +130,7 @@
         targets: 1,
     ),
     (
-        id: 2561, // 0x0A01 Throw knife
+        id: 20481, // 0x5001 (L10 s1) Throw knife
         next_id: None,
         name: "Throw knife",
         health_cost: 0,
@@ -144,7 +147,7 @@
         targets: 1,
     ),
     (
-        id: 2562, // 0x0A02 Shoot
+        id: 20482, // 0x5002 (L10 s2) Shoot
         next_id: None,
         name: "Shoot",
         health_cost: 0,
@@ -161,7 +164,7 @@
         targets: 1,
     ),
     (
-        id: 2563, // 0x0A03 Reload
+        id: 20483, // 0x5003 (L10 s3) Reload
         next_id: None,
         name: "Reload",
         health_cost: 0,
@@ -176,7 +179,7 @@
         targets: 1,
     ),
     (
-        id: 2564, // 0x0A04 Dodge
+        id: 20484, // 0x5004 (L10 s4) Dodge
         next_id: None,
         name: "Dodge",
         health_cost: 0,
@@ -193,7 +196,7 @@
         targets: 1,
     ),
     (
-        id: 2565, // 0x0A05 Get knife back
+        id: 20485, // 0x5005 (L10 s5) Get knife back
         next_id: None,
         name: "Get the knife back",
         health_cost: 0,
@@ -208,7 +211,7 @@
         targets: 1,
     ),
     (
-        id: 2566, // 0x0A06 Invisibility
+        id: 20486, // 0x5006 (L10 s6) Invisibility
         next_id: None,
         name: "Invisibility",
         health_cost: 0,
@@ -226,7 +229,7 @@
         targets: 1,
     ),
     (
-        id: 2567, // 0x0A07 Surprise attack
+        id: 20487, // 0x5007 (L10 s7) Surprise attack
         next_id: None,
         name: "Surprise attack",
         health_cost: 0,
@@ -244,10 +247,10 @@
     ),
 
     // -----------------------------------------------------------------------
-    // Sayaka — Cleric / Kitsune (Kamishin, Chiseijutsu)
+    // Sayaka — Cleric / Kitsune (Kamishin, Onmyodo)
     // -----------------------------------------------------------------------
     (
-        id: 2816, // 0x0B00 Purifying strike
+        id: 22528, // 0x5800 (L11 s0) Purifying strike
         next_id: None,
         name: "Purifying strike",
         health_cost: 0,
@@ -266,7 +269,7 @@
         targets: 1,
     ),
     (
-        id: 2817, // 0x0B01 Sacred prayer
+        id: 22529, // 0x5801 (L11 s1) Sacred prayer
         next_id: None,
         name: "Sacred prayer",
         health_cost: 0,
@@ -283,7 +286,7 @@
         targets: 1,
     ),
     (
-        id: 2818, // 0x0B02 Barrier of faith
+        id: 22530, // 0x5802 (L11 s2) Barrier of faith
         next_id: None,
         name: "Barrier of faith",
         health_cost: 0,
@@ -300,7 +303,7 @@
         targets: 1,
     ),
     (
-        id: 2819, // 0x0B03 Cleanse
+        id: 22531, // 0x5803 (L11 s3) Cleanse
         next_id: None,
         name: "Cleanse",
         health_cost: 0,
@@ -320,12 +323,12 @@
         targets: 1,
     ),
     (
-        id: 2820, // 0x0B04 Ritual of stillness
+        id: 22532, // 0x5804 (L11 s4) Ritual of stillness
         next_id: None,
         name: "Ritual of stillness",
         health_cost: 0,
         magic_cost: 14.0,
-        magic_school: Chiseijutsu,
+        magic_school: Onmyodo,
         action_point_cost: 4,
         cooldown: 6,
         description: "Earth-bound chant that slows enemies and saps their action economy.",
@@ -342,7 +345,7 @@
     // Houjou Utaka — Samurai (Kiho, Yokaijutsu)
     // -----------------------------------------------------------------------
     (
-        id: 3072, // 0x0C00 Heavy strike
+        id: 24576, // 0x6000 (L12 s0) Heavy strike
         next_id: None,
         name: "Heavy strike",
         health_cost: 0,
@@ -359,7 +362,7 @@
         targets: 1,
     ),
     (
-        id: 3073, // 0x0C01 Wide slash
+        id: 24577, // 0x6001 (L12 s1) Wide slash
         next_id: None,
         name: "Wide slash",
         health_cost: 0,
@@ -376,7 +379,7 @@
         targets: 4,
     ),
     (
-        id: 3074, // 0x0C02 Counter stance
+        id: 24578, // 0x6002 (L12 s2) Counter stance
         next_id: None,
         name: "Counter stance",
         health_cost: 0,
@@ -395,7 +398,7 @@
         targets: 1,
     ),
     (
-        id: 3075, // 0x0C03 Blood draw
+        id: 24579, // 0x6003 (L12 s3) Blood draw
         next_id: None,
         name: "Blood draw",
         health_cost: 6,
@@ -413,7 +416,7 @@
         targets: 1,
     ),
     (
-        id: 3076, // 0x0C04 Forbidden cut
+        id: 24580, // 0x6004 (L12 s4) Forbidden cut
         next_id: None,
         name: "Forbidden cut",
         health_cost: 0,
@@ -433,7 +436,7 @@
         targets: 1,
     ),
     (
-        id: 3077, // 0x0C05 Sake drink
+        id: 24581, // 0x6005 (L12 s5) Sake drink
         next_id: None,
         name: "Sake drink",
         health_cost: 0,
@@ -451,7 +454,7 @@
         targets: 1,
     ),
     (
-        id: 3078, // 0x0C06 Bind spirit
+        id: 24582, // 0x6006 (L12 s6) Bind spirit
         next_id: None,
         name: "Bind spirit",
         health_cost: 0,
@@ -472,7 +475,7 @@
     // Toshiko — Vessel (Yokaijutsu)
     // -----------------------------------------------------------------------
     (
-        id: 3328, // 0x0D00 Shadow touch
+        id: 26624, // 0x6800 (L13 s0) Shadow touch
         next_id: None,
         name: "Shadow touch",
         health_cost: 0,
@@ -489,7 +492,7 @@
         targets: 1,
     ),
     (
-        id: 3329, // 0x0D01 Whisper
+        id: 26625, // 0x6801 (L13 s1) Whisper
         next_id: None,
         name: "Whisper",
         health_cost: 0,
@@ -508,7 +511,7 @@
         targets: 1,
     ),
     (
-        id: 3330, // 0x0D02 See unseen
+        id: 26626, // 0x6802 (L13 s2) See unseen
         next_id: None,
         name: "See unseen",
         health_cost: 0,
@@ -525,7 +528,7 @@
         targets: 1,
     ),
     (
-        id: 3331, // 0x0D03 Kuro's grasp
+        id: 26627, // 0x6803 (L13 s3) Kuro's grasp
         next_id: None,
         name: "Kuro's grasp",
         health_cost: 0,
@@ -542,7 +545,7 @@
         targets: 1,
     ),
     (
-        id: 3332, // 0x0D04 Night veil
+        id: 26628, // 0x6804 (L13 s4) Night veil
         next_id: None,
         name: "Night veil",
         health_cost: 0,
@@ -559,7 +562,7 @@
         targets: 6,
     ),
     (
-        id: 3333, // 0x0D05 Shared pain
+        id: 26629, // 0x6805 (L13 s5) Shared pain
         next_id: None,
         name: "Shared pain",
         health_cost: 0,
@@ -580,7 +583,7 @@
     // Yokai abilities (id 0x0F00..)
     // -----------------------------------------------------------------------
     (
-        id: 3840, // 0x0F00 Onibi — Will-o'-wisp burn
+        id: 30720, // 0x7800 (L15 s0) Onibi — Will-o'-wisp burn
         next_id: None,
         name: "Will-o'-wisp burn",
         health_cost: 0,
@@ -598,12 +601,12 @@
         targets: 1,
     ),
     (
-        id: 3841, // 0x0F01 Kappa — River grasp
+        id: 30721, // 0x7801 (L15 s1) Kappa — River grasp
         next_id: None,
         name: "River grasp",
         health_cost: 0,
         magic_cost: 0.0,
-        magic_school: Chiseijutsu,
+        magic_school: Onmyodo,
         action_point_cost: 2,
         cooldown: 1,
         description: "A webbed-hand pull that trips and slows.",
@@ -616,7 +619,7 @@
         targets: 1,
     ),
     (
-        id: 3842, // 0x0F02 Kasha — Final cry
+        id: 30722, // 0x7802 (L15 s2) Kasha — Final cry
         next_id: None,
         name: "Final cry",
         health_cost: 0,
@@ -640,7 +643,7 @@
     // matching school's tree (see assets/data/skills/*.ron).
     // -----------------------------------------------------------------------
     (
-        id: 4097, // 0x1001 Kiho capstone — Tide of Breath
+        id: 32769, // 0x8001 (L16 s1) Kiho capstone — Tide of Breath
         next_id: None,
         name: "Tide of Breath",
         health_cost: 0,
@@ -657,12 +660,12 @@
         targets: 4,
     ),
     (
-        id: 4353, // 0x1101 Chiseijutsu capstone — Verdant Pulse
+        id: 34817, // 0x8801 (L17 s1) Onmyodo capstone — Verdant Pulse
         next_id: None,
         name: "Verdant Pulse",
         health_cost: 0,
         magic_cost: 22.0,
-        magic_school: Chiseijutsu,
+        magic_school: Onmyodo,
         action_point_cost: 3,
         cooldown: 6,
         description: "Pull green strength from the ground; heal nearby allies and slow the closest foe.",
@@ -675,7 +678,7 @@
         targets: 4,
     ),
     (
-        id: 4609, // 0x1201 Yokaijutsu capstone — Shadow Pact
+        id: 36865, // 0x9001 (L18 s1) Yokaijutsu capstone — Shadow Pact
         next_id: None,
         name: "Shadow Pact",
         health_cost: 4,
@@ -693,7 +696,7 @@
         targets: 1,
     ),
     (
-        id: 4865, // 0x1301 Kamishin capstone — Heaven's Mandate
+        id: 38913, // 0x9801 (L19 s1) Kamishin capstone — Heaven's Mandate
         next_id: None,
         name: "Heaven's Mandate",
         health_cost: 0,
@@ -715,13 +718,13 @@
     // Common spell pool. Unlocked via skill-tree nodes (see assets/data/skills/*.ron).
     // Anyone with the matching tree access can learn the unlock. IDs:
     //   0x14XX Kiho       0x16XX Yokaijutsu
-    //   0x15XX Chiseijutsu 0x17XX Kamishin
+    //   0x15XX Onmyodo 0x17XX Kamishin
     //   0x18XX Universal martial activations
     // -----------------------------------------------------------------------
 
     // ----- Kiho (0x14XX) -----
     (
-        id: 5120, // 0x1400 Steady Strike
+        id: 40960, // 0xA000 (L20 s0) Steady Strike
         next_id: None,
         name: "Steady Strike",
         health_cost: 0,
@@ -738,7 +741,7 @@
         targets: 1,
     ),
     (
-        id: 5121, // 0x1401 Inner Wind
+        id: 40961, // 0xA001 (L20 s1) Inner Wind
         next_id: None,
         name: "Inner Wind",
         health_cost: 0,
@@ -755,7 +758,7 @@
         targets: 1,
     ),
     (
-        id: 5122, // 0x1402 Mountain Stance
+        id: 40962, // 0xA002 (L20 s2) Mountain Stance
         next_id: None,
         name: "Mountain Stance",
         health_cost: 0,
@@ -772,14 +775,14 @@
         targets: 1,
     ),
 
-    // ----- Chiseijutsu (0x15XX) -----
+    // ----- Onmyodo (0x15XX) -----
     (
-        id: 5376, // 0x1500 Bramble Snare
+        id: 43008, // 0xA800 (L21 s0) Bramble Snare
         next_id: None,
         name: "Bramble Snare",
         health_cost: 0,
         magic_cost: 12.0,
-        magic_school: Chiseijutsu,
+        magic_school: Onmyodo,
         action_point_cost: 2,
         cooldown: 3,
         description: "Roots burst from the ground; piercing damage and slowed footing.",
@@ -792,12 +795,12 @@
         targets: 1,
     ),
     (
-        id: 5377, // 0x1501 Stone Wall
+        id: 43009, // 0xA801 (L21 s1) Stone Wall
         next_id: None,
         name: "Stone Wall",
         health_cost: 0,
         magic_cost: 16.0,
-        magic_school: Chiseijutsu,
+        magic_school: Onmyodo,
         action_point_cost: 3,
         cooldown: 5,
         description: "Pull a slab of earth between an ally and harm. Multiplies their armor briefly.",
@@ -809,12 +812,12 @@
         targets: 1,
     ),
     (
-        id: 5378, // 0x1502 Spring of Healing
+        id: 43010, // 0xA802 (L21 s2) Spring of Healing
         next_id: None,
         name: "Spring of Healing",
         health_cost: 0,
         magic_cost: 18.0,
-        magic_school: Chiseijutsu,
+        magic_school: Onmyodo,
         action_point_cost: 3,
         cooldown: 4,
         description: "A small spring opens at your feet; heals nearby allies with the soil's patience.",
@@ -825,10 +828,80 @@
         duration: 0,
         targets: 4,
     ),
+    (
+        id: 43011, // 0xA803 (L21 s3) Ember Talisman — fire line (ka, 火)
+        next_id: None,
+        name: "Ember Talisman",
+        health_cost: 0,
+        magic_cost: 14.0,
+        magic_school: Onmyodo,
+        action_point_cost: 2,
+        cooldown: 3,
+        description: "A struck fire-line (ka) seal bursts into a fan of flame.",
+        effects: [
+            Damage(floor: 16, ceiling: 26, damage_type: Fire, scaled_with: Mind, defended_with: Armor),
+        ],
+        shape: Cone(angle: 60.0, radius: 4.0),
+        duration: 0,
+        targets: 3,
+    ),
+    (
+        id: 43012, // 0xA804 (L21 s4) Quenching Current — water line (sui, 水)
+        next_id: None,
+        name: "Quenching Current",
+        health_cost: 0,
+        magic_cost: 14.0,
+        magic_school: Onmyodo,
+        action_point_cost: 2,
+        cooldown: 3,
+        description: "A water-line (sui) seal looses a cold current that bites and drags at footing.",
+        effects: [
+            Damage(floor: 12, ceiling: 20, damage_type: Ice, scaled_with: Mind, defended_with: Armor),
+            ApplyStatus(kind: BadCondition(Slowed), tier: 1),
+        ],
+        shape: Line(length: 6.0, thickness: 1.5),
+        duration: 0,
+        targets: 3,
+    ),
+    (
+        id: 43013, // 0xA805 (L21 s5) Conjured Blades — metal line (kin, 金)
+        next_id: None,
+        name: "Conjured Blades",
+        health_cost: 0,
+        magic_cost: 16.0,
+        magic_school: Onmyodo,
+        action_point_cost: 2,
+        cooldown: 4,
+        description: "Paper folds into a ring of metal-line (kin) blades that find the gap in any guard.",
+        effects: [
+            Damage(floor: 18, ceiling: 30, damage_type: True, scaled_with: Mind, defended_with: Mind),
+            ApplyStatus(kind: BadCondition(Exposed), tier: 1),
+        ],
+        shape: Select,
+        duration: 0,
+        targets: 1,
+    ),
+    (
+        id: 43014, // 0xA806 (L21 s6) Paper Shikigami — commanded familiar (real summon)
+        next_id: None,
+        name: "Paper Shikigami",
+        health_cost: 0,
+        magic_cost: 18.0,
+        magic_school: Onmyodo,
+        action_point_cost: 3,
+        cooldown: 5,
+        description: "Fold and name a paper servant; it takes the field beside you and fights of its own accord for a few turns.",
+        effects: [
+            Summon(kind: Shikigami, lifetime_turns: 3),
+        ],
+        shape: Select,
+        duration: 0,
+        targets: 1,
+    ),
 
     // ----- Yokaijutsu (0x16XX) -----
     (
-        id: 5632, // 0x1600 Spectral Lash
+        id: 45056, // 0xB000 (L22 s0) Spectral Lash
         next_id: None,
         name: "Spectral Lash",
         health_cost: 0,
@@ -846,7 +919,7 @@
         targets: 1,
     ),
     (
-        id: 5633, // 0x1601 Crawling Shadow
+        id: 45057, // 0xB001 (L22 s1) Crawling Shadow
         next_id: None,
         name: "Crawling Shadow",
         health_cost: 0,
@@ -863,7 +936,7 @@
         targets: 3,
     ),
     (
-        id: 5634, // 0x1602 Whisper of Doubt
+        id: 45058, // 0xB002 (L22 s2) Whisper of Doubt
         next_id: None,
         name: "Whisper of Doubt",
         health_cost: 0,
@@ -882,7 +955,7 @@
 
     // ----- Kamishin (0x17XX) -----
     (
-        id: 5888, // 0x1700 Kanji of Mercy
+        id: 47104, // 0xB800 (L23 s0) Kanji of Mercy
         next_id: None,
         name: "Kanji of Mercy",
         health_cost: 0,
@@ -899,7 +972,7 @@
         targets: 1,
     ),
     (
-        id: 5889, // 0x1701 Field of Quiet
+        id: 47105, // 0xB801 (L23 s1) Field of Quiet
         next_id: None,
         name: "Field of Quiet",
         health_cost: 0,
@@ -916,7 +989,7 @@
         targets: 4,
     ),
     (
-        id: 5890, // 0x1702 Severance Prayer
+        id: 47106, // 0xB802 (L23 s2) Severance Prayer
         next_id: None,
         name: "Severance Prayer",
         health_cost: 0,
@@ -935,7 +1008,7 @@
 
     // ----- Universal martial activations (0x18XX). Non-spell: magic_cost 0. -----
     (
-        id: 6144, // 0x1800 Sweeping Strike
+        id: 49152, // 0xC000 (L24 s0) Sweeping Strike
         next_id: None,
         name: "Sweeping Strike",
         health_cost: 0,
@@ -952,7 +1025,7 @@
         targets: 4,
     ),
     (
-        id: 6145, // 0x1801 Brace
+        id: 49153, // 0xC001 (L24 s1) Brace
         next_id: None,
         name: "Brace",
         health_cost: 0,
@@ -969,7 +1042,7 @@
         targets: 1,
     ),
     (
-        id: 6146, // 0x1802 Aimed Shot
+        id: 49154, // 0xC002 (L24 s2) Aimed Shot
         next_id: None,
         name: "Aimed Shot",
         health_cost: 0,
@@ -986,7 +1059,7 @@
         targets: 1,
     ),
     (
-        id: 6147, // 0x1803 Disengage
+        id: 49155, // 0xC003 (L24 s3) Disengage
         next_id: None,
         name: "Disengage",
         health_cost: 0,
@@ -1001,6 +1074,334 @@
         ],
         shape: Select,
         duration: 2,
+        targets: 1,
+    ),
+
+    // ====================================================================
+    // Renjiro — Monk (yamabushi staff striker). Kiho, ids 0x7000 (L14 s0..).
+    // Mobile front-line: arcing staff sweeps, ki-charged strikes, and brief
+    // self-buffs. Physical strikes are free (magic_cost 0); ki techniques cost.
+    // ====================================================================
+    (
+        id: 28672, // 0x7000 (L14 s0) Staff Sweep
+        next_id: None,
+        name: "Staff Sweep",
+        health_cost: 0,
+        magic_cost: 0.0,
+        magic_school: Kiho,
+        action_point_cost: 3,
+        cooldown: 1,
+        description: "A wide arc of the iron-shod shakujo catches everyone in front.",
+        effects: [
+            Damage(floor: 14, ceiling: 24, damage_type: Physical, scaled_with: Lethality, defended_with: Armor),
+        ],
+        shape: Cone(angle: 90.0, radius: 3.0),
+        duration: 0,
+        targets: 3,
+    ),
+    (
+        id: 28673, // 0x7001 (L14 s1) Iron Palm
+        next_id: None,
+        name: "Iron Palm",
+        health_cost: 0,
+        magic_cost: 0.0,
+        magic_school: Kiho,
+        action_point_cost: 2,
+        cooldown: 0,
+        description: "A single focused strike that lands with a mountain's weight behind it.",
+        effects: [
+            Damage(floor: 20, ceiling: 32, damage_type: Physical, scaled_with: Lethality, defended_with: Armor),
+        ],
+        shape: Select,
+        duration: 0,
+        targets: 1,
+    ),
+    (
+        id: 28674, // 0x7002 (L14 s2) Mountain Breath
+        next_id: None,
+        name: "Mountain Breath",
+        health_cost: 0,
+        magic_cost: 6.0,
+        magic_school: Kiho,
+        action_point_cost: 2,
+        cooldown: 3,
+        description: "A breathing form that stokes the inner furnace — sharper, faster.",
+        effects: [
+            Buff(stat: Lethality, multiplier: 1.25, effects: None, scaled_with: Kiho),
+            Buff(stat: Speed, multiplier: 1.15, effects: None, scaled_with: Kiho),
+        ],
+        shape: Select,
+        duration: 3,
+        targets: 1,
+    ),
+    (
+        id: 28675, // 0x7003 (L14 s3) Flowing Guard
+        next_id: None,
+        name: "Flowing Guard",
+        health_cost: 0,
+        magic_cost: 5.0,
+        magic_school: Kiho,
+        action_point_cost: 2,
+        cooldown: 3,
+        description: "Settle into a turning stance; blows slide off rather than land.",
+        effects: [
+            ApplyStatus(kind: Buff(Fortified), tier: 1),
+        ],
+        shape: Select,
+        duration: 4,
+        targets: 1,
+    ),
+    (
+        id: 28676, // 0x7004 (L14 s4) Pressure Point
+        next_id: None,
+        name: "Pressure Point",
+        health_cost: 0,
+        magic_cost: 4.0,
+        magic_school: Kiho,
+        action_point_cost: 2,
+        cooldown: 2,
+        description: "The staff finds a nerve; the body forgets, briefly, how to stand.",
+        effects: [
+            Damage(floor: 10, ceiling: 16, damage_type: Physical, scaled_with: Lethality, defended_with: Armor),
+            ApplyStatus(kind: BadCondition(Staggered), tier: 1),
+        ],
+        shape: Select,
+        duration: 0,
+        targets: 1,
+    ),
+    (
+        id: 28677, // 0x7005 (L14 s5) Hundred Breaths
+        next_id: None,
+        name: "Hundred Breaths",
+        health_cost: 0,
+        magic_cost: 10.0,
+        magic_school: Kiho,
+        action_point_cost: 4,
+        cooldown: 4,
+        description: "A flurry counted between two heartbeats — many strikes, one motion.",
+        effects: [
+            Damage(floor: 30, ceiling: 46, damage_type: Physical, scaled_with: Lethality, defended_with: Armor),
+        ],
+        shape: Select,
+        duration: 0,
+        targets: 1,
+    ),
+
+    // ====================================================================
+    // Midori — Wildkeeper (Onmyodo living-nature support). ids 0x7008.
+    // Sustain healer with thorns and growth: heals, wards, and snares rooted
+    // in the living world rather than divine liturgy.
+    // ====================================================================
+    (
+        id: 28680, // 0x7008 (L14 s8) Healing Poultice
+        next_id: None,
+        name: "Healing Poultice",
+        health_cost: 0,
+        magic_cost: 5.0,
+        magic_school: Onmyodo,
+        action_point_cost: 2,
+        cooldown: 0,
+        description: "Crushed leaves and a steady hand close a single ally's wound.",
+        effects: [
+            Heal(floor: 14, ceiling: 22, scaled_with: Onmyodo),
+        ],
+        shape: Select,
+        duration: 0,
+        targets: 1,
+    ),
+    (
+        id: 28681, // 0x7009 (L14 s9) Thorn Lash
+        next_id: None,
+        name: "Thorn Lash",
+        health_cost: 0,
+        magic_cost: 4.0,
+        magic_school: Onmyodo,
+        action_point_cost: 2,
+        cooldown: 0,
+        description: "A whip of bramble answers her call and opens a long scratch.",
+        effects: [
+            Damage(floor: 8, ceiling: 16, damage_type: Physical, scaled_with: Mind, defended_with: Armor),
+        ],
+        shape: Select,
+        duration: 0,
+        targets: 1,
+    ),
+    (
+        id: 28682, // 0x700A (L14 s10) Renewing Rain
+        next_id: None,
+        name: "Renewing Rain",
+        health_cost: 0,
+        magic_cost: 12.0,
+        magic_school: Onmyodo,
+        action_point_cost: 4,
+        cooldown: 4,
+        description: "A soft green rain settles over the band and mends as it falls.",
+        effects: [
+            Heal(floor: 10, ceiling: 18, scaled_with: Onmyodo),
+        ],
+        shape: Radius(4.0),
+        duration: 0,
+        targets: 4,
+    ),
+    (
+        id: 28683, // 0x700B (L14 s11) Barkskin
+        next_id: None,
+        name: "Barkskin",
+        health_cost: 0,
+        magic_cost: 8.0,
+        magic_school: Onmyodo,
+        action_point_cost: 3,
+        cooldown: 4,
+        description: "An ally's skin takes on the patience of standing wood.",
+        effects: [
+            ApplyStatus(kind: Buff(Fortified), tier: 2),
+        ],
+        shape: Select,
+        duration: 5,
+        targets: 1,
+    ),
+    (
+        id: 28684, // 0x700C (L14 s12) Entangling Vines
+        next_id: None,
+        name: "Entangling Vines",
+        health_cost: 0,
+        magic_cost: 8.0,
+        magic_school: Onmyodo,
+        action_point_cost: 3,
+        cooldown: 3,
+        description: "Roots heave up and wrap a foe's legs; the world holds them in place.",
+        effects: [
+            ApplyStatus(kind: BadCondition(Slowed), tier: 2),
+        ],
+        shape: Select,
+        duration: 4,
+        targets: 1,
+    ),
+    (
+        id: 28685, // 0x700D (L14 s13) Wild Vigor
+        next_id: None,
+        name: "Wild Vigor",
+        health_cost: 0,
+        magic_cost: 10.0,
+        magic_school: Onmyodo,
+        action_point_cost: 3,
+        cooldown: 5,
+        description: "Lends an ally the surge of a beast that has caught a scent.",
+        effects: [
+            Buff(stat: Lethality, multiplier: 1.20, effects: None, scaled_with: Onmyodo),
+            Heal(floor: 6, ceiling: 10, scaled_with: Onmyodo),
+        ],
+        shape: Select,
+        duration: 3,
+        targets: 1,
+    ),
+
+    // ====================================================================
+    // Kanzo — Exorcist (biwa-hoshi, Kamishin back-line). ids 0x7010.
+    // Glass-cannon caster: banishment and purifying fire at range, plus a
+    // ward and a sealing rite. Kamishin turned outward as a weapon.
+    // ====================================================================
+    (
+        id: 28688, // 0x7010 (L14 s16) Word of Banishment
+        next_id: None,
+        name: "Word of Banishment",
+        health_cost: 0,
+        magic_cost: 6.0,
+        magic_school: Kamishin,
+        action_point_cost: 2,
+        cooldown: 0,
+        description: "Names the thing aloud; the naming is the wound.",
+        effects: [
+            Damage(floor: 14, ceiling: 24, damage_type: True, scaled_with: Kamishin, defended_with: Mind),
+        ],
+        shape: Select,
+        duration: 0,
+        targets: 1,
+    ),
+    (
+        id: 28689, // 0x7011 (L14 s17) Purifying Flame
+        next_id: None,
+        name: "Purifying Flame",
+        health_cost: 0,
+        magic_cost: 8.0,
+        magic_school: Kamishin,
+        action_point_cost: 3,
+        cooldown: 2,
+        description: "A clean white fire that burns the unclean and little else.",
+        effects: [
+            Damage(floor: 18, ceiling: 30, damage_type: Fire, scaled_with: Mind, defended_with: Mind),
+        ],
+        shape: Select,
+        duration: 0,
+        targets: 1,
+    ),
+    (
+        id: 28690, // 0x7012 (L14 s18) Rite of Warding
+        next_id: None,
+        name: "Rite of Warding",
+        health_cost: 0,
+        magic_cost: 8.0,
+        magic_school: Kamishin,
+        action_point_cost: 3,
+        cooldown: 4,
+        description: "Chants a circle of protection over an ally faster than fear can spread.",
+        effects: [
+            ApplyStatus(kind: Buff(Fortified), tier: 2),
+        ],
+        shape: Select,
+        duration: 5,
+        targets: 1,
+    ),
+    (
+        id: 28691, // 0x7013 (L14 s19) Sutra of Severance
+        next_id: None,
+        name: "Sutra of Severance",
+        health_cost: 0,
+        magic_cost: 14.0,
+        magic_school: Kamishin,
+        action_point_cost: 4,
+        cooldown: 4,
+        description: "Recites the cutting sutra; every spirit in the chant's reach is pared.",
+        effects: [
+            Damage(floor: 12, ceiling: 22, damage_type: True, scaled_with: Kamishin, defended_with: Mind),
+        ],
+        shape: Radius(4.0),
+        duration: 0,
+        targets: 4,
+    ),
+    (
+        id: 28692, // 0x7014 (L14 s20) Sealing Ward
+        next_id: None,
+        name: "Sealing Ward",
+        health_cost: 0,
+        magic_cost: 10.0,
+        magic_school: Kamishin,
+        action_point_cost: 3,
+        cooldown: 3,
+        description: "Pins a paper seal to the air before a foe — voice and footing both falter.",
+        effects: [
+            ApplyStatus(kind: BadCondition(Staggered), tier: 2),
+            ApplyStatus(kind: BadCondition(Silenced), tier: 1),
+        ],
+        shape: Select,
+        duration: 0,
+        targets: 1,
+    ),
+    (
+        id: 28693, // 0x7015 (L14 s21) Great Purification
+        next_id: None,
+        name: "Great Purification",
+        health_cost: 0,
+        magic_cost: 18.0,
+        magic_school: Kamishin,
+        action_point_cost: 4,
+        cooldown: 6,
+        description: "Speaks the Oharae entire; the unclean is swept from the world like the year's filth to sea.",
+        effects: [
+            Damage(floor: 34, ceiling: 52, damage_type: True, scaled_with: Kamishin, defended_with: Mind),
+        ],
+        shape: Select,
+        duration: 0,
         targets: 1,
     ),
 ]

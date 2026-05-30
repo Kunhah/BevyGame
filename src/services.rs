@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use bevy::input::keyboard::KeyCode;
 use bevy::prelude::*;
 
+use crate::activities::{ActivityKind, PerformActivityEvent};
 use crate::city_data::{City, CityAuthorityState, CityCatalog};
 use crate::core::{GameState, Game_State, Player};
 use crate::economy::{PlayerWallet, TradeLogEvent};
@@ -16,6 +17,11 @@ use crate::ui_style::{font_size, palette, radius, spacing};
 const SERVICE_INTERACT_DISTANCE: f32 = 96.0;
 const INN_REST_COST: u32 = 280;
 const INN_REST_HOURS: u32 = 8;
+/// Coin offering for a shrine purification rite (GDD: "offering worth 50").
+const SHRINE_RITE_COST: u32 = 50;
+/// Hours the harae rite takes; also satisfies the activity system's `hours > 0`
+/// gate so the purification fires.
+const SHRINE_RITE_HOURS: u32 = 1;
 type RegionId = u16;
 type CityId = u16;
 
@@ -25,6 +31,7 @@ pub enum ServiceKind {
     Transport,
     CraftingHall,
     CastleGate,
+    Shrine,
 }
 
 impl ServiceKind {
@@ -34,6 +41,7 @@ impl ServiceKind {
             ServiceKind::Transport => "transport",
             ServiceKind::CraftingHall => "crafting_hall",
             ServiceKind::CastleGate => "castle_gate",
+            ServiceKind::Shrine => "shrine",
         }
     }
 
@@ -43,6 +51,7 @@ impl ServiceKind {
             ServiceKind::Transport => KeyCode::KeyV,
             ServiceKind::CraftingHall => KeyCode::KeyB,
             ServiceKind::CastleGate => KeyCode::KeyN,
+            ServiceKind::Shrine => KeyCode::KeyG,
         }
     }
 }
@@ -338,10 +347,11 @@ fn service_interaction_input(
     mut wallet: ResMut<PlayerWallet>,
     mut assault_clock: ResMut<CastleAssaultClock>,
     mut timestamp: ResMut<crate::core::Timestamp>,
-    player_q: Query<&Transform, With<Player>>,
+    player_q: Query<(Entity, &Transform), With<Player>>,
     service_q: Query<(&Transform, &ServiceNpc)>,
     mut transport_ui: ResMut<TransportUiState>,
     mut logs: MessageWriter<TradeLogEvent>,
+    mut activity_writer: MessageWriter<PerformActivityEvent>,
 ) {
     if game_state.0 != Game_State::Exploring || transport_ui.open {
         return;
@@ -353,6 +363,7 @@ fn service_interaction_input(
         ServiceKind::Transport,
         ServiceKind::CraftingHall,
         ServiceKind::CastleGate,
+        ServiceKind::Shrine,
     ] {
         if input.just_pressed(kind.hotkey()) {
             requested_kind = Some(kind);
@@ -363,7 +374,7 @@ fn service_interaction_input(
         return;
     };
 
-    let Ok(player_tf) = player_q.single() else {
+    let Ok((player_entity, player_tf)) = player_q.single() else {
         return;
     };
     let Some(service) = nearest_service_of_kind(
@@ -460,6 +471,31 @@ fn service_interaction_input(
                 message: format!(
                     "crafting hall accessed [{}]: artisans ready (placeholder service)",
                     city.name
+                ),
+            });
+        }
+        ServiceKind::Shrine => {
+            if wallet.coins < SHRINE_RITE_COST {
+                logs.write(TradeLogEvent {
+                    message: format!("shrine rite denied: need {} coins", SHRINE_RITE_COST),
+                });
+                return;
+            }
+            wallet.coins = wallet.coins.saturating_sub(SHRINE_RITE_COST);
+            timestamp.0 = timestamp
+                .0
+                .saturating_add(SHRINE_RITE_HOURS * TIMESTAMP_TICKS_PER_HOUR);
+            // Route through the activity system: a Harae rite strips kegare off
+            // the performer. No-op if the player isn't in the kegare system.
+            activity_writer.write(PerformActivityEvent {
+                performer: player_entity,
+                activity: ActivityKind::Harae,
+                hours: SHRINE_RITE_HOURS,
+            });
+            logs.write(TradeLogEvent {
+                message: format!(
+                    "shrine rite accepted [{}]: harae performed, offering {} coins, {}h passed",
+                    city.name, SHRINE_RITE_COST, SHRINE_RITE_HOURS
                 ),
             });
         }

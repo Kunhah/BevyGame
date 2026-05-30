@@ -1,0 +1,158 @@
+// Creature templates consumed by `crate::creatures`.
+//
+// Each entry bundles cosmetic identity, an overworld `disposition`, the
+// `behavior` radii/speeds that tune it, the combat `ai` personality, and an
+// optional `yokai` species whose battle stat block / abilities / behaviour-tree
+// profile it fights with. The per-spawn encounter id (for quest/hunt matching)
+// is NOT stored here — it is passed to `spawn_creature` at placement time, so
+// the same species can appear in many different encounters.
+//
+//   disposition: Hostile | Territorial | Skittish | Passive | Friendly
+//   yokai:       Some(Onibi) | Some(Kappa) | Some(Kasha) | None
+//
+// `behavior` and `ai` may be omitted to take their defaults. When `ai` is
+// present every field must be listed.
+(
+    templates: {
+        // ----------------------------------------------------------------
+        // Wild Onibi — a hostile will-o'-wisp. Notices the player from far
+        // off, rushes in, and attacks on contact. Fragile but relentless.
+        // ----------------------------------------------------------------
+        "wild_onibi": (
+            name: "Wild Onibi",
+            color: (0.95, 0.55, 0.20),
+            disposition: Hostile,
+            behavior: (
+                detection_radius: 360.0,
+                engage_radius: 36.0,
+                move_speed: 130.0,
+                leash_radius: 1000.0,
+                wander_radius: 64.0,
+            ),
+            ai: (
+                aggressiveness: 9,
+                caution: 2,
+                curiosity: 6,
+                perception: 7,
+                bravery: 8,
+                patience: 2,
+                panic_threshold: 10,
+                magic_thrift: 7,
+                group_loyalty: 3,
+                focus_preference: Closest,
+                preferred_range: Any,
+            ),
+            yokai: Some(Onibi),
+        ),
+
+        // ----------------------------------------------------------------
+        // River Kappa — territorial. Lazes by its pool until the player
+        // wades into its territory, then chases; if lured too far it gives
+        // up and trudges home. Sturdy bruiser in a fight.
+        // ----------------------------------------------------------------
+        "river_kappa": (
+            name: "River Kappa",
+            color: (0.30, 0.65, 0.45),
+            disposition: Territorial,
+            behavior: (
+                detection_radius: 200.0,
+                engage_radius: 40.0,
+                move_speed: 95.0,
+                leash_radius: 300.0,
+                wander_radius: 48.0,
+            ),
+            ai: (
+                aggressiveness: 6,
+                caution: 6,
+                curiosity: 3,
+                perception: 5,
+                bravery: 7,
+                patience: 7,
+                panic_threshold: 20,
+                magic_thrift: 4,
+                group_loyalty: 6,
+                focus_preference: HighestHp,
+                preferred_range: Melee,
+            ),
+            yokai: Some(Kappa),
+        ),
+
+        // ----------------------------------------------------------------
+        // Kasha Stalker — hostile mental caster. Hangs back and opens with
+        // its AOE cry; targets the weakest foe.
+        // ----------------------------------------------------------------
+        "kasha_stalker": (
+            name: "Kasha Stalker",
+            color: (0.55, 0.30, 0.65),
+            disposition: Hostile,
+            behavior: (
+                detection_radius: 320.0,
+                engage_radius: 44.0,
+                move_speed: 110.0,
+                leash_radius: 1000.0,
+                wander_radius: 80.0,
+            ),
+            ai: (
+                aggressiveness: 7,
+                caution: 5,
+                curiosity: 4,
+                perception: 8,
+                bravery: 5,
+                patience: 6,
+                panic_threshold: 30,
+                magic_thrift: 8,
+                group_loyalty: 4,
+                focus_preference: LowestHp,
+                preferred_range: Ranged,
+            ),
+            yokai: Some(Kasha),
+        ),
+
+        // ----------------------------------------------------------------
+        // Skittish Hare — never fights. Bolts directly away the moment the
+        // player gets near. No encounter / no combat block needed.
+        // ----------------------------------------------------------------
+        "skittish_hare": (
+            name: "Skittish Hare",
+            color: (0.80, 0.78, 0.70),
+            disposition: Skittish,
+            behavior: (
+                detection_radius: 220.0,
+                engage_radius: 24.0,
+                move_speed: 150.0,
+                leash_radius: 600.0,
+                wander_radius: 32.0,
+            ),
+            yokai: None,
+        ),
+
+        // ----------------------------------------------------------------
+        // Wandering Tanuki — passive critter that ambles around its spawn
+        // point and ignores the player completely. Pure ambiance.
+        // ----------------------------------------------------------------
+        "wandering_tanuki": (
+            name: "Wandering Tanuki",
+            color: (0.55, 0.42, 0.30),
+            disposition: Passive,
+            behavior: (
+                detection_radius: 0.0,
+                engage_radius: 24.0,
+                move_speed: 70.0,
+                leash_radius: 200.0,
+                wander_radius: 120.0,
+            ),
+            yokai: None,
+        ),
+
+        // ----------------------------------------------------------------
+        // Shrine Fox — friendly guardian. Holds its post, never chases,
+        // never flees. A hook for later dialogue / quest wiring.
+        // ----------------------------------------------------------------
+        "shrine_fox": (
+            name: "Shrine Fox",
+            color: (0.92, 0.82, 0.55),
+            disposition: Friendly,
+            yokai: None,
+        ),
+    },
+)

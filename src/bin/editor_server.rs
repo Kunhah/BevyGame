@@ -36,7 +36,7 @@ const STATIC_ROOT: &str = "tools/editors";
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum Stat {
     Health, HealthRegen, Magic, MagicRegen,
-    Kiho, Chiseijutsu, Yokaijutsu, Kamishin,
+    Kiho, Onmyodo, Yokaijutsu, Kamishin,
     ActionPoints, Lethality, Hit, Agility, Defense,
     Mind, Morale, Strength, Bravery, Speed, Luck,
 }
@@ -69,7 +69,7 @@ pub enum AbilityShape {
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub enum MagicSchool {
-    #[default] Kiho, Chiseijutsu, Yokaijutsu, Kamishin,
+    #[default] Kiho, Onmyodo, Yokaijutsu, Kamishin,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

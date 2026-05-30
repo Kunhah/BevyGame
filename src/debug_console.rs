@@ -116,6 +116,16 @@ fn toggle_console(
     }
 }
 
+/// Message writers the console needs, bundled into one `SystemParam` so
+/// `handle_console_input` stays under Bevy's per-system param limit.
+#[derive(bevy::ecs::system::SystemParam)]
+struct ConsoleWriters<'w> {
+    activity: MessageWriter<'w, PerformActivityEvent>,
+    confess: MessageWriter<'w, ConfessAtShrineEvent>,
+    tea: MessageWriter<'w, DrinkTeaWithBoundEvent>,
+    purify: MessageWriter<'w, crate::kegare::PurifyEvent>,
+}
+
 fn handle_console_input(
     mut commands: Commands,
     mut state: ResMut<DebugConsoleState>,
@@ -130,9 +140,7 @@ fn handle_console_input(
     mut level_q: Query<&mut Level>,
     mut inventory_q: Query<&mut Inventory>,
     mut loadout_q: Query<&mut EquipmentLoadout>,
-    mut activity_writer: MessageWriter<PerformActivityEvent>,
-    mut confess_writer: MessageWriter<ConfessAtShrineEvent>,
-    mut tea_writer: MessageWriter<DrinkTeaWithBoundEvent>,
+    mut writers: ConsoleWriters,
 ) {
     if !state.open {
         return;
@@ -176,9 +184,7 @@ fn handle_console_input(
                 &mut level_q,
                 &mut inventory_q,
                 &mut loadout_q,
-                &mut activity_writer,
-                &mut confess_writer,
-                &mut tea_writer,
+                &mut writers,
             );
             for out in outputs {
                 push_history(&mut state, out);
@@ -285,9 +291,7 @@ fn execute_command(
     level_q: &mut Query<&mut Level>,
     inventory_q: &mut Query<&mut Inventory>,
     loadout_q: &mut Query<&mut EquipmentLoadout>,
-    activity_writer: &mut MessageWriter<PerformActivityEvent>,
-    confess_writer: &mut MessageWriter<ConfessAtShrineEvent>,
-    tea_writer: &mut MessageWriter<DrinkTeaWithBoundEvent>,
+    writers: &mut ConsoleWriters,
 ) -> Vec<String> {
     let mut parts = line.split_whitespace();
     let Some(cmd) = parts.next() else {
@@ -379,6 +383,102 @@ fn execute_command(
                 _ => vec!["add_stat: usage `add_stat <stat> <value> [target]`".to_string()],
             }
         }
+        "kegare" => {
+            // Opt a character into the kegare system and set their defilement
+            // live. Value is a percentage (0-100) of the hidden accumulator;
+            // `clear` removes the components (opts the character back out, so
+            // no gating applies). The derived state is reported along with which
+            // schools it gates, so you can watch Kamishin lock as you climb.
+            use crate::combat_ability::MagicSchool;
+            use crate::kegare::{Defilement, Kegare};
+
+            let arg = parts.next();
+            let target = parts.next();
+            match arg {
+                None => vec!["kegare: usage `kegare <0-100|clear> [target]`".to_string()],
+                Some(a) if a.eq_ignore_ascii_case("clear") => {
+                    match resolve_target(target, player_q, name_q, id_q) {
+                        Ok(entity) => {
+                            commands
+                                .entity(entity)
+                                .remove::<Kegare>()
+                                .remove::<Defilement>();
+                            vec![format!(
+                                "kegare: removed from {:?} — opted out, no gating applies",
+                                entity
+                            )]
+                        }
+                        Err(err) => vec![err],
+                    }
+                }
+                Some(a) => match a.parse::<i32>() {
+                    Ok(pct) => match resolve_target(target, player_q, name_q, id_q) {
+                        Ok(entity) => {
+                            let level = (pct.clamp(0, 100) as f32) / 100.0;
+                            // Derive from Clean so a manual set is deterministic
+                            // ("X% -> state Y"); this is idempotent with
+                            // derive_defilement_system, which holds the same
+                            // state from the next frame on.
+                            let state = Defilement::derive(level, Defilement::Clean);
+                            commands
+                                .entity(entity)
+                                .insert((Kegare::new(level), state));
+                            vec![format!(
+                                "kegare: {:?} set to {}% -> {:?}  | Kamishin regen x{:.2} cost x{:.2}  | Yokaijutsu regen x{:.2} cost x{:.2}",
+                                entity,
+                                (level * 100.0) as i32,
+                                state,
+                                crate::kegare::regen_multiplier(state, MagicSchool::Kamishin),
+                                crate::kegare::cost_multiplier(state, MagicSchool::Kamishin),
+                                crate::kegare::regen_multiplier(state, MagicSchool::Yokaijutsu),
+                                crate::kegare::cost_multiplier(state, MagicSchool::Yokaijutsu),
+                            )]
+                        }
+                        Err(err) => vec![err],
+                    },
+                    Err(_) => {
+                        vec!["kegare: value must be an integer 0-100, or `clear`".to_string()]
+                    }
+                },
+            }
+        }
+        "purify" => {
+            // Run a rite of purification, reducing the target's kegare. Drives
+            // the real `PurifyEvent` -> `purify_system` path (no-op unless the
+            // target is in the kegare system).
+            use crate::kegare::{Purification, PurifyEvent};
+
+            let method_arg = parts.next();
+            let target = parts.next();
+            let method = match method_arg.map(|s| s.to_ascii_lowercase()) {
+                Some(ref s) if s == "misogi" || s == "salt" => Some(Purification::Misogi),
+                Some(ref s) if s == "harae" || s == "rite" || s == "ritual" => {
+                    Some(Purification::Harae)
+                }
+                Some(_) => None,
+                None => Some(Purification::Misogi),
+            };
+            let Some(method) = method else {
+                return vec![
+                    "purify: usage `purify <misogi|harae> [target]`".to_string(),
+                ];
+            };
+            match resolve_target(target, player_q, name_q, id_q) {
+                Ok(entity) => {
+                    writers.purify.write(PurifyEvent {
+                        target: entity,
+                        method,
+                    });
+                    vec![format!(
+                        "purify: {:?} on {:?} (-{:.0}% kegare; state updates next frame, `status`/`kegare` to read)",
+                        method,
+                        entity,
+                        method.potency() * 100.0,
+                    )]
+                }
+                Err(err) => vec![err],
+            }
+        }
         "give_item" | "give" => {
             let item_id = parts.next();
             let maybe_slot = parts.next();
@@ -466,7 +566,7 @@ fn execute_command(
             };
             match resolve_target(target, player_q, name_q, id_q) {
                 Ok(entity) => {
-                    activity_writer.write(PerformActivityEvent {
+                    writers.activity.write(PerformActivityEvent {
                         performer: entity,
                         activity,
                         hours,
@@ -486,7 +586,7 @@ fn execute_command(
             let target = parts.next();
             match resolve_target(target, player_q, name_q, id_q) {
                 Ok(entity) => {
-                    confess_writer.write(ConfessAtShrineEvent { who: entity });
+                    writers.confess.write(ConfessAtShrineEvent { who: entity });
                     vec![format!("confess: shrine confession fired for {:?}", entity)]
                 }
                 Err(err) => vec![err],
@@ -509,7 +609,7 @@ fn execute_command(
                 Ok(e) => e,
                 Err(err) => return vec![err],
             };
-            tea_writer.write(DrinkTeaWithBoundEvent {
+            writers.tea.write(DrinkTeaWithBoundEvent {
                 who: drinker_entity,
                 with_bound: with_entity,
             });
@@ -536,7 +636,7 @@ fn parse_activity_kind(name: &str) -> Option<ActivityKind> {
         "kata" | "kata_practice" => ActivityKind::KataPractice,
         "sparring" | "sparring_drills" => ActivityKind::SparringDrills,
         "shrine_focus" => ActivityKind::ShrineFocus,
-        // Chiseijutsu
+        // Onmyodo
         "nature" | "nature_spirit" => ActivityKind::NatureSpiritInteraction,
         "grove" | "tend_grove" => ActivityKind::TendSacredGrove,
         "forage" => ActivityKind::Forage,
@@ -554,6 +654,9 @@ fn parse_activity_kind(name: &str) -> Option<ActivityKind> {
         "rite" | "formal_rite" => ActivityKind::FormalRite,
         "pilgrimage" => ActivityKind::Pilgrimage,
         "blessing" | "temple_blessing" => ActivityKind::TempleBlessing,
+        // Purification (strips kegare; "rite"/"ritual" are already taken above)
+        "misogi" | "salt" | "ablution" => ActivityKind::Misogi,
+        "harae" | "harai" => ActivityKind::Harae,
         _ => return None,
     })
 }
@@ -567,6 +670,8 @@ fn help_text() -> String {
         "  teleport|tp <x> <y> [target]",
         "  set_stat|set <stat> <value> [target]",
         "  add_stat|add <stat> <value> [target]",
+        "  kegare <0-100|clear> [target]   (defilement %; tilts Kamishin/Yokaijutsu regen & cost)",
+        "  purify <misogi|harae> [target]  (misogi -25% / harae -60% kegare)",
         "  give_item|give <item_id> [slot] [target]",
         "  spawn_entity|spawn [name] <x> <y>",
         "  activity <kind> [hours] [target]",
@@ -574,13 +679,14 @@ fn help_text() -> String {
         "  tea|drink_tea <with_target> [drinker]",
         "",
         "Targets: `player`, `name:<Name>`, `id:<Number>` (default is player).",
-        "Stats: hp, hpmax, morale, moralemax, ap, apmax, movement, movementmax, kiho, kihomax, kihoregen, chiseijutsu, chiseimax, chiseiregen, yokaijutsu, yokaimax, yokairegen, kamishin, kamishinmax, kamishinregen, lethality, lethalitymax, hit, hitmax, armor, armormax, speed, speedmax, evasion, evasionmax, mind, mindmax, xp, level.",
+        "Stats: hp, hpmax, morale, moralemax, ap, apmax, movement, movementmax, kiho, kihomax, kihoregen, onmyodo, chiseimax, chiseiregen, yokaijutsu, yokaimax, yokairegen, kamishin, kamishinmax, kamishinregen, lethality, lethalitymax, hit, hitmax, armor, armormax, speed, speedmax, evasion, evasionmax, mind, mindmax, xp, level.",
         "Slots: weapon, armor, accessory.",
         "Activity kinds:",
         "  Kiho: meditation, breath, kata, sparring, shrine_focus",
-        "  Chiseijutsu: nature, grove, forage, talisman, fertile",
+        "  Onmyodo: nature, grove, forage, talisman, fertile",
         "  Yokaijutsu: night_ritual, spirit_offering, blood_pact, binding, haunted",
         "  Kamishin: prayer, shrine_offering, rite, pilgrimage, blessing",
+        "  Purification: misogi, harae (strip kegare instead of restoring magic)",
     ]
     .join("\n")
 }
@@ -656,7 +762,7 @@ fn spawn_debug_entity(
     stats.morale = <StatPool<i32>>::new(50);
     stats.movement = <StatPool<i32>>::new(5);
     stats.kiho = <StatPool<f32>>::new(2.0);
-    stats.chiseijutsu = <StatPool<f32>>::new(1.0);
+    stats.onmyodo = <StatPool<f32>>::new(1.0);
     stats.yokaijutsu = <StatPool<f32>>::new(1.0);
     stats.kamishin = <StatPool<f32>>::new(1.0);
     stats.lethality = <StatPool<i32>>::new(10);
@@ -699,7 +805,7 @@ fn format_status(
             s.morale.current, s.morale.base,
             s.action_points.current, s.action_points.base,
             s.kiho.current, s.kiho.base,
-            s.chiseijutsu.current, s.chiseijutsu.base,
+            s.onmyodo.current, s.onmyodo.base,
             s.yokaijutsu.current, s.yokaijutsu.base,
             s.kamishin.current, s.kamishin.base,
             s.lethality.current, s.hit.current, s.armor.current,
@@ -739,7 +845,7 @@ enum MagicField {
 fn school_label(school: MagicSchool) -> &'static str {
     match school {
         MagicSchool::Kiho => "kiho",
-        MagicSchool::Chiseijutsu => "chiseijutsu",
+        MagicSchool::Onmyodo => "onmyodo",
         MagicSchool::Yokaijutsu => "yokaijutsu",
         MagicSchool::Kamishin => "kamishin",
     }
@@ -789,7 +895,7 @@ fn apply_magic_school_stat(
         MagicField::Regen => {
             let target_rate = match school {
                 MagicSchool::Kiho => &mut stats.kiho_per_rest_hour,
-                MagicSchool::Chiseijutsu => &mut stats.chiseijutsu_per_rest_hour,
+                MagicSchool::Onmyodo => &mut stats.onmyodo_per_rest_hour,
                 MagicSchool::Yokaijutsu => &mut stats.yokaijutsu_per_rest_hour,
                 MagicSchool::Kamishin => &mut stats.kamishin_per_rest_hour,
             };
@@ -864,14 +970,14 @@ fn apply_stat(
 
     match stat.as_str() {
         "mp" | "mana" | "magic" | "mpmax" | "magicmax" | "maxmp" => {
-            "use kiho/chiseijutsu/yokaijutsu/kamishin fields directly".to_string()
+            "use kiho/onmyodo/yokaijutsu/kamishin fields directly".to_string()
         }
         "kiho" => apply_magic_school_stat(op, entity, commands, stats_q, MagicSchool::Kiho, MagicField::Current),
         "kihomax" | "maxkiho" => apply_magic_school_stat(op, entity, commands, stats_q, MagicSchool::Kiho, MagicField::Max),
         "kihoregen" => apply_magic_school_stat(op, entity, commands, stats_q, MagicSchool::Kiho, MagicField::Regen),
-        "chiseijutsu" | "chisei" => apply_magic_school_stat(op, entity, commands, stats_q, MagicSchool::Chiseijutsu, MagicField::Current),
-        "chiseijutsumax" | "chiseimax" | "maxchisei" => apply_magic_school_stat(op, entity, commands, stats_q, MagicSchool::Chiseijutsu, MagicField::Max),
-        "chiseijutsuregen" | "chiseiregen" => apply_magic_school_stat(op, entity, commands, stats_q, MagicSchool::Chiseijutsu, MagicField::Regen),
+        "onmyodo" | "chisei" => apply_magic_school_stat(op, entity, commands, stats_q, MagicSchool::Onmyodo, MagicField::Current),
+        "onmyodomax" | "chiseimax" | "maxchisei" => apply_magic_school_stat(op, entity, commands, stats_q, MagicSchool::Onmyodo, MagicField::Max),
+        "onmyodoregen" | "chiseiregen" => apply_magic_school_stat(op, entity, commands, stats_q, MagicSchool::Onmyodo, MagicField::Regen),
         "yokaijutsu" | "yokai" => apply_magic_school_stat(op, entity, commands, stats_q, MagicSchool::Yokaijutsu, MagicField::Current),
         "yokaijutsumax" | "yokaimax" | "maxyokai" => apply_magic_school_stat(op, entity, commands, stats_q, MagicSchool::Yokaijutsu, MagicField::Max),
         "yokaijutsuregen" | "yokairegen" => apply_magic_school_stat(op, entity, commands, stats_q, MagicSchool::Yokaijutsu, MagicField::Regen),

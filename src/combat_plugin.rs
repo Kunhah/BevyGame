@@ -177,7 +177,7 @@ pub struct CombatStats {
     pub action_points: StatPool<i32>,
     pub movement: StatPool<i32>,
     pub kiho: StatPool<f32>,
-    pub chiseijutsu: StatPool<f32>,
+    pub onmyodo: StatPool<f32>,
     pub yokaijutsu: StatPool<f32>,
     pub kamishin: StatPool<f32>,
 
@@ -195,7 +195,7 @@ pub struct CombatStats {
     pub health_per_rest_hour: i32,
     pub morale_per_rest_hour: i32,
     pub kiho_per_rest_hour: f32,
-    pub chiseijutsu_per_rest_hour: f32,
+    pub onmyodo_per_rest_hour: f32,
     pub yokaijutsu_per_rest_hour: f32,
     pub kamishin_per_rest_hour: f32,
 }
@@ -208,7 +208,7 @@ impl Default for CombatStats {
             action_points: <StatPool<i32>>::new(DEFAULT_ACTION_POINTS),
             movement: <StatPool<i32>>::new(0),
             kiho: <StatPool<f32>>::new(0.0),
-            chiseijutsu: <StatPool<f32>>::new(0.0),
+            onmyodo: <StatPool<f32>>::new(0.0),
             yokaijutsu: <StatPool<f32>>::new(0.0),
             kamishin: <StatPool<f32>>::new(0.0),
             lethality: <StatPool<i32>>::new(0),
@@ -220,7 +220,7 @@ impl Default for CombatStats {
             health_per_rest_hour: 0,
             morale_per_rest_hour: 0,
             kiho_per_rest_hour: 0.0,
-            chiseijutsu_per_rest_hour: 0.0,
+            onmyodo_per_rest_hour: 0.0,
             yokaijutsu_per_rest_hour: 0.0,
             kamishin_per_rest_hour: 0.0,
         }
@@ -231,7 +231,7 @@ impl CombatStats {
     pub fn pool(&self, school: MagicSchool) -> &StatPool<f32> {
         match school {
             MagicSchool::Kiho => &self.kiho,
-            MagicSchool::Chiseijutsu => &self.chiseijutsu,
+            MagicSchool::Onmyodo => &self.onmyodo,
             MagicSchool::Yokaijutsu => &self.yokaijutsu,
             MagicSchool::Kamishin => &self.kamishin,
         }
@@ -240,18 +240,18 @@ impl CombatStats {
     pub fn pool_mut(&mut self, school: MagicSchool) -> &mut StatPool<f32> {
         match school {
             MagicSchool::Kiho => &mut self.kiho,
-            MagicSchool::Chiseijutsu => &mut self.chiseijutsu,
+            MagicSchool::Onmyodo => &mut self.onmyodo,
             MagicSchool::Yokaijutsu => &mut self.yokaijutsu,
             MagicSchool::Kamishin => &mut self.kamishin,
         }
     }
 
     pub fn total_magic_current(&self) -> f32 {
-        self.kiho.current + self.chiseijutsu.current + self.yokaijutsu.current + self.kamishin.current
+        self.kiho.current + self.onmyodo.current + self.yokaijutsu.current + self.kamishin.current
     }
 
     pub fn total_magic_base(&self) -> f32 {
-        self.kiho.base + self.chiseijutsu.base + self.yokaijutsu.base + self.kamishin.base
+        self.kiho.base + self.onmyodo.base + self.yokaijutsu.base + self.kamishin.base
     }
 }
 
@@ -292,7 +292,7 @@ pub enum Stat {
     Health,
     Magic,
     Kiho,
-    Chiseijutsu,
+    Onmyodo,
     Yokaijutsu,
     Kamishin,
     ActionPoints,
@@ -321,7 +321,7 @@ fn get_stat_value(stat: Stat, combat_stats: Option<&CombatStats>) -> i32 {
         Stat::Movement => c.movement.current,
         Stat::Magic => c.total_magic_current().round() as i32,
         Stat::Kiho => c.kiho.current.round() as i32,
-        Stat::Chiseijutsu => c.chiseijutsu.current.round() as i32,
+        Stat::Onmyodo => c.onmyodo.current.round() as i32,
         Stat::Yokaijutsu => c.yokaijutsu.current.round() as i32,
         Stat::Kamishin => c.kamishin.current.round() as i32,
     }
@@ -346,7 +346,7 @@ fn get_stat_value(stat: Stat, combat_stats: Option<&CombatStats>) -> i32 {
 #[derive(Component, Debug, Default)]
 pub struct GrowthAttributes {
     pub vitality: u8,   // grows Health (max + per-rest-hour regen)
-    pub endurance: u8,  // grows Chiseijutsu (place-bound earth practice)
+    pub endurance: u8,  // grows Onmyodo (place-bound earth practice)
     pub spirit: u8,     // produces 3 distribution points per spirit; small magic baseline
     pub power: u8,      // grows Lethality + small Yokaijutsu (forbidden strength)
     pub control: u8,    // grows Hit
@@ -369,7 +369,7 @@ pub struct GrowthAttributes {
 #[derive(Debug, Default, Clone, Copy)]
 pub struct MagicDistribution {
     pub kiho: u8,
-    pub chiseijutsu: u8,
+    pub onmyodo: u8,
     pub yokaijutsu: u8,
     pub kamishin: u8,
 }
@@ -393,7 +393,7 @@ pub enum GrowthTarget {
     Mind,
     Movement,
     Kiho,
-    Chiseijutsu,
+    Onmyodo,
     Yokaijutsu,
     Kamishin,
 }
@@ -428,7 +428,7 @@ impl GrowthAttributes {
             // Spirit's distribution: each per-school count is its own growth
             // source, feeding the corresponding magic pool's curve.
             (self.magic_distribution.kiho, &KIHO_DIST_CONTRIBUTIONS[..]),
-            (self.magic_distribution.chiseijutsu, &CHISEIJUTSU_DIST_CONTRIBUTIONS[..]),
+            (self.magic_distribution.onmyodo, &ONMYODO_DIST_CONTRIBUTIONS[..]),
             (self.magic_distribution.yokaijutsu, &YOKAIJUTSU_DIST_CONTRIBUTIONS[..]),
             (self.magic_distribution.kamishin, &KAMISHIN_DIST_CONTRIBUTIONS[..]),
         ]
@@ -440,10 +440,10 @@ const VITALITY_CONTRIBUTIONS: &[GrowthContribution] = &[
     GrowthContribution { target: GrowthTarget::HealthRegen, base: 10.0, exponent: 2.691262945 },
 ];
 
-// Endurance — earth-bound, place-rooted. Themed for chiseijutsu (nature
+// Endurance — earth-bound, place-rooted. Themed for onmyodo (nature
 // magic, "place-bound practice" per the GDD's school description).
 const ENDURANCE_CONTRIBUTIONS: &[GrowthContribution] = &[
-    GrowthContribution { target: GrowthTarget::Chiseijutsu, base: 8.0, exponent: 3.0 },
+    GrowthContribution { target: GrowthTarget::Onmyodo, base: 8.0, exponent: 3.0 },
 ];
 
 // Spirit is primarily a *budget* — each point produces 3 distribution points
@@ -452,7 +452,7 @@ const ENDURANCE_CONTRIBUTIONS: &[GrowthContribution] = &[
 // character with spirit but no manual distribution still grows magic.
 const SPIRIT_CONTRIBUTIONS: &[GrowthContribution] = &[
     GrowthContribution { target: GrowthTarget::Kiho, base: 6.0, exponent: 3.0 },
-    GrowthContribution { target: GrowthTarget::Chiseijutsu, base: 6.0, exponent: 3.0 },
+    GrowthContribution { target: GrowthTarget::Onmyodo, base: 6.0, exponent: 3.0 },
     GrowthContribution { target: GrowthTarget::Yokaijutsu, base: 6.0, exponent: 3.0 },
     GrowthContribution { target: GrowthTarget::Kamishin, base: 6.0, exponent: 3.0 },
 ];
@@ -496,8 +496,8 @@ const KIHO_DIST_CONTRIBUTIONS: &[GrowthContribution] = &[
     GrowthContribution { target: GrowthTarget::Kiho, base: 25.0, exponent: 3.0 },
 ];
 
-const CHISEIJUTSU_DIST_CONTRIBUTIONS: &[GrowthContribution] = &[
-    GrowthContribution { target: GrowthTarget::Chiseijutsu, base: 25.0, exponent: 3.0 },
+const ONMYODO_DIST_CONTRIBUTIONS: &[GrowthContribution] = &[
+    GrowthContribution { target: GrowthTarget::Onmyodo, base: 25.0, exponent: 3.0 },
 ];
 
 const YOKAIJUTSU_DIST_CONTRIBUTIONS: &[GrowthContribution] = &[
@@ -1707,6 +1707,17 @@ pub struct DeathEvent {
     pub killer: Option<Entity>,
 }
 
+/// Request to bring a temporary combatant onto the field beside `summoner`.
+/// Emitted by [`crate::combat_ability::handle_ability`] for `Summon` effects
+/// and consumed by `crate::battle::resolve_summon_system`, which has the
+/// `Commands` needed to spawn the unit and slot it into turn order.
+#[derive(Debug, Clone, Message)]
+pub struct SummonEvent {
+    pub summoner: Entity,
+    pub kind: SummonKind,
+    pub lifetime_turns: u8,
+}
+
 pub trait DeathBehavior: Send + Sync + 'static {
     fn on_death(
         &self,
@@ -1785,7 +1796,9 @@ fn award_xp_system(
     for evt in events.read() {
         if let Ok((mut xp, mut lvl)) = query.get_mut(evt.recipient) {
             xp.0 += evt.amount;
-            let new_level = (xp.0 >> 16) as u8;
+            // Levels are capped at MAX_LEVEL (30); the high bits of `xp` encode
+            // the raw level, so clamp before it ever leaves this system.
+            let new_level = ((xp.0 >> 16) as u8).min(crate::combat_ability::MAX_LEVEL);
             events_level.write(LevelUpEvent {
                 who: evt.recipient,
                 old_level: lvl.0 as u8,
@@ -2354,7 +2367,8 @@ fn queue_damage_from_before_attack(
                     AbilityEffect::Heal { .. }
                     | AbilityEffect::Buff { .. }
                     | AbilityEffect::ApplyStatus { .. }
-                    | AbilityEffect::RemoveStatus { .. } => {}
+                    | AbilityEffect::RemoveStatus { .. }
+                    | AbilityEffect::Summon { .. } => {}
                 }
             }
         }
@@ -3441,7 +3455,7 @@ fn apply_growth(stats: &mut CombatStats, target: GrowthTarget, amount: i32) {
         GrowthTarget::Mind => stats.mind.add_to_base(amount),
         GrowthTarget::Movement => stats.movement.add_to_base(amount),
         GrowthTarget::Kiho => stats.kiho.add_to_base(amount_f),
-        GrowthTarget::Chiseijutsu => stats.chiseijutsu.add_to_base(amount_f),
+        GrowthTarget::Onmyodo => stats.onmyodo.add_to_base(amount_f),
         GrowthTarget::Yokaijutsu => stats.yokaijutsu.add_to_base(amount_f),
         GrowthTarget::Kamishin => stats.kamishin.add_to_base(amount_f),
     }
@@ -3461,7 +3475,7 @@ fn growth_curve_multiplier(target: GrowthTarget, curve: Option<&GrowthCurve>) ->
         GrowthTarget::Mind => c.mind_curve,
         GrowthTarget::Morale | GrowthTarget::MoraleRegen => c.morale_curve,
         GrowthTarget::Kiho
-        | GrowthTarget::Chiseijutsu
+        | GrowthTarget::Onmyodo
         | GrowthTarget::Yokaijutsu
         | GrowthTarget::Kamishin => c.magic_curve,
         GrowthTarget::Armor => 1.0,
@@ -3738,6 +3752,7 @@ struct PlayerActionWriters<'w> {
     defend: MessageWriter<'w, DefendIntentEvent>,
     wait: MessageWriter<'w, WaitIntentEvent>,
     turn_end: MessageWriter<'w, TurnEndEvent>,
+    summon: MessageWriter<'w, SummonEvent>,
 }
 
 fn process_player_action_system(
@@ -3748,6 +3763,7 @@ fn process_player_action_system(
     mut dq: ResMut<DamageQueue>,
     mut stats_q: Query<&mut CombatStats>,
     status_q: Query<&crate::status_effects::StatusEffects>,
+    defilement_q: Query<&crate::kegare::Defilement>,
     mut writers: PlayerActionWriters,
     mut turn_in_progress: ResMut<TurnInProgress>,
 ) {
@@ -3823,7 +3839,15 @@ fn process_player_action_system(
                 // paid; AP cost is unaffected.
                 let cost_mult =
                     crate::status_effects::magic_cost_multiplier(status_q.get(actor).ok());
-                let scaled_magic_cost = ability.magic_cost * cost_mult;
+                // Kegare never blocks a school — it only tilts the cost.
+                // Kamishin grows pricier as you defile, Yokaijutsu cheaper.
+                // Only entities carrying a `Defilement` participate, so this is
+                // a no-op until kegare is wired onto a character.
+                let kegare_cost_mult = defilement_q
+                    .get(actor)
+                    .map(|&d| crate::kegare::cost_multiplier(d, ability.magic_school))
+                    .unwrap_or(1.0);
+                let scaled_magic_cost = ability.magic_cost * cost_mult * kegare_cost_mult;
 
                 let Ok(mut stats) = stats_q.get_mut(actor) else {
                     warn!("Actor {:?} has no combat stats", actor);
@@ -3863,6 +3887,7 @@ fn process_player_action_system(
                     &mut writers.buff,
                     &mut writers.apply_status,
                     &mut writers.remove_status,
+                    &mut writers.summon,
                 );
             }
 
@@ -4240,7 +4265,7 @@ fn spawn_examples(mut commands: Commands, mut tm: ResMut<TurnManager>, timestamp
             action_points: <StatPool<i32>>::new(DEFAULT_ACTION_POINTS + 1), // GDD: extra AP
             movement: <StatPool<i32>>::new(7),
             kiho: <StatPool<f32>>::new(4.0),
-            chiseijutsu: <StatPool<f32>>::new(0.0),
+            onmyodo: <StatPool<f32>>::new(0.0),
             yokaijutsu: <StatPool<f32>>::new(0.0),
             kamishin: <StatPool<f32>>::new(0.0),
             lethality: <StatPool<i32>>::new(25),
@@ -4252,7 +4277,7 @@ fn spawn_examples(mut commands: Commands, mut tm: ResMut<TurnManager>, timestamp
             health_per_rest_hour: 1,
             morale_per_rest_hour: 4,
             kiho_per_rest_hour: 0.25,
-            chiseijutsu_per_rest_hour: 0.0,
+            onmyodo_per_rest_hour: 0.0,
             yokaijutsu_per_rest_hour: 0.0,
             kamishin_per_rest_hour: 0.0,
         })
@@ -4265,8 +4290,8 @@ fn spawn_examples(mut commands: Commands, mut tm: ResMut<TurnManager>, timestamp
             (EquipmentSlotType::Accessory, vec![EquipmentType::Accessory(AccessoryType::Charm)]),
         ]))
         // Quick slash, Throw knife, Shoot, Reload, Dodge, Get knife back,
-        // Invisibility, Surprise attack — see AbilitiesExample.ron 0x0A**.
-        .insert(Abilities(vec![2560, 2561, 2562, 2563, 2564, 2565, 2566, 2567]))
+        // Invisibility, Surprise attack — see AbilitiesExample.ron L10 / 0x5000**.
+        .insert(Abilities(vec![20480, 20481, 20482, 20483, 20484, 20485, 20486, 20487]))
         .insert(Experience(0))
         .insert(Level(1))
         .insert(AccumulatedSpeed(0))
@@ -4285,7 +4310,7 @@ fn spawn_examples(mut commands: Commands, mut tm: ResMut<TurnManager>, timestamp
         .id();
 
     // --------------------------------------
-    // Sayaka — Cleric / Kitsune (Kamishin, Chiseijutsu)
+    // Sayaka — Cleric / Kitsune (Kamishin, Onmyodo)
     // --------------------------------------
     let sayaka = commands
         .spawn_empty()
@@ -4301,7 +4326,7 @@ fn spawn_examples(mut commands: Commands, mut tm: ResMut<TurnManager>, timestamp
             action_points: <StatPool<i32>>::new(DEFAULT_ACTION_POINTS),
             movement: <StatPool<i32>>::new(5),
             kiho: <StatPool<f32>>::new(0.0),
-            chiseijutsu: <StatPool<f32>>::new(5.0),
+            onmyodo: <StatPool<f32>>::new(5.0),
             yokaijutsu: <StatPool<f32>>::new(0.0),
             kamishin: <StatPool<f32>>::new(6.0),
             lethality: <StatPool<i32>>::new(12),
@@ -4313,7 +4338,7 @@ fn spawn_examples(mut commands: Commands, mut tm: ResMut<TurnManager>, timestamp
             health_per_rest_hour: 2,
             morale_per_rest_hour: 5,
             kiho_per_rest_hour: 0.0,
-            chiseijutsu_per_rest_hour: 0.5,
+            onmyodo_per_rest_hour: 0.5,
             yokaijutsu_per_rest_hour: 0.0,
             kamishin_per_rest_hour: 0.6,
         })
@@ -4325,7 +4350,7 @@ fn spawn_examples(mut commands: Commands, mut tm: ResMut<TurnManager>, timestamp
             (EquipmentSlotType::Accessory, vec![EquipmentType::Accessory(AccessoryType::Charm)]),
         ]))
         // Purifying strike, Sacred prayer, Barrier of faith, Cleanse, Ritual of stillness.
-        .insert(Abilities(vec![2816, 2817, 2818, 2819, 2820]))
+        .insert(Abilities(vec![22528, 22529, 22530, 22531, 22532]))
         .insert(Experience(0))
         .insert(Level(1))
         .insert(AccumulatedSpeed(0))
@@ -4333,11 +4358,11 @@ fn spawn_examples(mut commands: Commands, mut tm: ResMut<TurnManager>, timestamp
         .insert(SkillPoints::default())
         .insert(LearnedSkills::default())
         .insert(MagicCostMultipliers::default())
-        // Sayaka: Kamishin + Chiseijutsu, plus her Cleric class tree.
+        // Sayaka: Kamishin + Onmyodo, plus her Cleric class tree.
         .insert(
             SkillTreeAccess::new()
                 .with_universal()
-                .with_magic([MagicSchool::Kamishin, MagicSchool::Chiseijutsu])
+                .with_magic([MagicSchool::Kamishin, MagicSchool::Onmyodo])
                 .with(SkillTreeKind::SayakaCleric),
         )
         .id();
@@ -4359,7 +4384,7 @@ fn spawn_examples(mut commands: Commands, mut tm: ResMut<TurnManager>, timestamp
             action_points: <StatPool<i32>>::new(DEFAULT_ACTION_POINTS),
             movement: <StatPool<i32>>::new(5),
             kiho: <StatPool<f32>>::new(2.0),
-            chiseijutsu: <StatPool<f32>>::new(0.0),
+            onmyodo: <StatPool<f32>>::new(0.0),
             yokaijutsu: <StatPool<f32>>::new(3.0),
             kamishin: <StatPool<f32>>::new(0.0),
             lethality: <StatPool<i32>>::new(34),
@@ -4371,7 +4396,7 @@ fn spawn_examples(mut commands: Commands, mut tm: ResMut<TurnManager>, timestamp
             health_per_rest_hour: 2,
             morale_per_rest_hour: 3,
             kiho_per_rest_hour: 0.15,
-            chiseijutsu_per_rest_hour: 0.0,
+            onmyodo_per_rest_hour: 0.0,
             yokaijutsu_per_rest_hour: 0.2,
             kamishin_per_rest_hour: 0.0,
         })
@@ -4388,7 +4413,7 @@ fn spawn_examples(mut commands: Commands, mut tm: ResMut<TurnManager>, timestamp
         })
         // Heavy strike, Wide slash, Counter stance, Blood draw, Forbidden cut,
         // Sake drink, Bind spirit.
-        .insert(Abilities(vec![3072, 3073, 3074, 3075, 3076, 3077, 3078]))
+        .insert(Abilities(vec![24576, 24577, 24578, 24579, 24580, 24581, 24582]))
         .insert(Experience(0))
         .insert(Level(1))
         .insert(AccumulatedSpeed(0))
@@ -4422,7 +4447,7 @@ fn spawn_examples(mut commands: Commands, mut tm: ResMut<TurnManager>, timestamp
             action_points: <StatPool<i32>>::new(DEFAULT_ACTION_POINTS),
             movement: <StatPool<i32>>::new(5),
             kiho: <StatPool<f32>>::new(0.0),
-            chiseijutsu: <StatPool<f32>>::new(0.0),
+            onmyodo: <StatPool<f32>>::new(0.0),
             yokaijutsu: <StatPool<f32>>::new(5.0),
             kamishin: <StatPool<f32>>::new(0.0),
             lethality: <StatPool<i32>>::new(16),
@@ -4434,7 +4459,7 @@ fn spawn_examples(mut commands: Commands, mut tm: ResMut<TurnManager>, timestamp
             health_per_rest_hour: 1,
             morale_per_rest_hour: 3,
             kiho_per_rest_hour: 0.0,
-            chiseijutsu_per_rest_hour: 0.0,
+            onmyodo_per_rest_hour: 0.0,
             yokaijutsu_per_rest_hour: 0.5,
             kamishin_per_rest_hour: 0.0,
         })
@@ -4453,7 +4478,7 @@ fn spawn_examples(mut commands: Commands, mut tm: ResMut<TurnManager>, timestamp
             ),
         ]))
         // Shadow touch, Whisper, See unseen, Kuro's grasp, Night veil, Shared pain.
-        .insert(Abilities(vec![3328, 3329, 3330, 3331, 3332, 3333]))
+        .insert(Abilities(vec![26624, 26625, 26626, 26627, 26628, 26629]))
         .insert(Experience(0))
         .insert(Level(1))
         .insert(AccumulatedSpeed(0))
@@ -4541,6 +4566,7 @@ impl Plugin for CombatPlugin {
             .add_message::<AfterHitEvent>()
             .add_message::<AfterAttackEvent>()
             .add_message::<DeathEvent>()
+            .add_message::<SummonEvent>()
             .add_message::<ResurrectionRequestedEvent>()
             .add_message::<ResurrectedEvent>()
             .add_message::<ReactionTriggeredEvent>()

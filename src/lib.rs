@@ -18,7 +18,9 @@ use bevy::log::{Level, LogPlugin};
 
 pub mod activities;
 pub mod ai_decision;
+pub mod areas;
 pub mod battle;
+pub mod characters;
 pub mod city_data;
 pub mod combat_ability;
 pub mod combat_hud;
@@ -26,15 +28,18 @@ pub mod combat_plugin;
 pub mod constants;
 pub mod contract;
 pub mod core;
+pub mod creatures;
 pub mod debug_console;
 pub mod dialogue;
 pub mod economy;
 pub mod effects;
 pub mod governance;
 pub mod hud;
+pub mod kegare;
 pub mod light_plugin;
 pub mod menu;
 pub mod map;
+pub mod party_select;
 pub mod movement;
 pub mod pathfinding;
 pub mod quadtree;
@@ -54,8 +59,9 @@ pub mod world;
 pub mod world_rules;
 
 use battle::{
-    battle_trigger_system, combat_end_turn_input, end_battle_on_death,
-    setup_player_turns, sync_combat_move_points_from_world, test_log_button, transform_npc_to_enemy, BattleState,
+    battle_trigger_system, combat_end_turn_input, end_battle_on_death, resolve_summon_system,
+    setup_player_turns, sync_combat_move_points_from_world, test_log_button,
+    tick_summon_lifetime_system, transform_npc_to_enemy, BattleState,
 };
 use combat_hud::CombatHudPlugin;
 use combat_plugin::{
@@ -134,6 +140,17 @@ fn base_default_plugins(window_title: &str) -> impl PluginGroup {
 
 fn full_game_app() -> App {
     let mut app = App::new();
+
+    // Named areas drive both the world-map travel UI and the terrain/location
+    // ids stamped onto the single continuous tilemap. Build the catalog first
+    // so the generated map can be stamped to match it before insertion.
+    let area_catalog = areas::AreaCatalog::default();
+    let mut map_tiles = generate_map_tiles();
+    areas::stamp_areas_onto_map(&mut map_tiles, &area_catalog);
+    // Ring the map in impassable edge tiles *after* area stamping so the border
+    // always wins; the player can neither walk nor fast-travel onto them.
+    map::apply_impassable_border(&mut map_tiles);
+
     app.add_plugins(base_default_plugins("Seirei Kuni"))
         .add_plugins(bevy::pbr::MaterialPlugin::<render3d::ToonMaterial>::default())
         .add_plugins(bevy_mod_outline::OutlinePlugin)
@@ -156,22 +173,26 @@ fn full_game_app() -> App {
         .add_plugins(HudPlugin)
         .add_plugins(CombatPlugin)
         .add_plugins(StatusEffectsPlugin)
+        .add_plugins(kegare::KegarePlugin)
         .add_plugins(ContractPlugin)
         .add_plugins(GovernancePlugin)
         .add_plugins(EconomyPlugin)
         .add_plugins(ServicesPlugin)
         .add_plugins(QuestPlugin)
         .add_plugins(MenuPlugin)
+        .add_plugins(party_select::PartySelectPlugin)
         .add_plugins(SettingsPlugin)
         .add_plugins(SkillTreePlugin)
         .add_plugins(CombatHudPlugin)
         .add_plugins(AiDecisionPlugin)
+        .add_plugins(creatures::CreaturesPlugin)
         .add_plugins(activities::ActivitiesPlugin)
         .add_plugins(DebugConsolePlugin)
         .add_plugins(StoryFlagsPlugin)
         .add_plugins(DialoguePlugin)
         .add_plugins(WorldRulesPlugin)
-        .insert_resource(PlayerMapPosition(Position::default()))
+        .add_plugins(areas::AreasPlugin)
+        .insert_resource(PlayerMapPosition(map::PLAYER_SPAWN_TILE))
         .insert_resource(ClearColor(Color::srgb(0.1, 0.1, 0.1)))
         .insert_resource(CachedColliders(Vec::new()))
         .insert_resource(GameState(Game_State::MainMenu))
@@ -186,7 +207,8 @@ fn full_game_app() -> App {
         .insert_resource(Messages::<AttackIntentEvent>::default())
         .init_resource::<movement::TravelTimeAccumulator>()
         .insert_resource(DamageQueue::default())
-        .insert_resource(generate_map_tiles())
+        .insert_resource(map_tiles)
+        .insert_resource(area_catalog)
         .insert_resource(MapSelection(Position::default()))
         .insert_resource(CurrentArea::default())
         .insert_resource(ActiveMapBackgrounds::default())
@@ -209,7 +231,9 @@ fn full_game_app() -> App {
         .insert_resource(AutoSaveSettings::default())
         .init_resource::<battle::PendingHuntBattle>()
         .init_resource::<render3d::CameraRig>()
+        .init_resource::<characters::SelectedParty>()
         .add_systems(Startup, setup)
+        .add_systems(Update, world::spawn_party)
         .add_systems(Update, player_movement)
         .add_systems(Update, toggle_camera_lock)
         .add_systems(Update, update_cache)
@@ -232,6 +256,8 @@ fn full_game_app() -> App {
         .add_systems(Update, transform_npc_to_enemy)
         .add_systems(Update, test_log_button)
         .add_systems(Update, end_battle_on_death)
+        .add_systems(Update, resolve_summon_system)
+        .add_systems(Update, tick_summon_lifetime_system)
         .add_systems(Update, battle::bridge_player_death_to_world)
         .add_systems(Update, follow_path_system)
         .add_systems(Update, ally_follow_player_system.after(player_movement))
