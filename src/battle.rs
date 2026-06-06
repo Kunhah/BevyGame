@@ -5,10 +5,11 @@ use bevy::prelude::Messages;
 
 use crate::characters::CharacterKind;
 use crate::combat_plugin::{
-    Abilities, AccumulatedSpeed, ActionCause, Bound, CombatStats, DamageEvent, DamageType,
-    DeathEvent, Experience, GrowthAttributes, Level, MagicDistribution, PendingPlayerAction,
-    PlayerAction, PlayerActionEvent, PlayerControlled, ResurrectionStanding, RoundEndEvent,
-    StatModifiers, StatPool, SummonEvent, TurnEndEvent, TurnManager, TurnOrder, TurnStartEvent,
+    Abilities, AccumulatedSpeed, ActionCause, AttackContext, AttackIntentEvent, Bound, CombatStats,
+    DamageEvent, DamageType, DeathEvent, Experience, GrowthAttributes, Level, MagicDistribution,
+    PendingPlayerAction, PlayerAction, PlayerActionEvent, PlayerControlled, ResurrectionStanding,
+    RoundEndEvent, StatModifiers, StatPool, SummonEvent, TurnEndEvent, TurnInProgress, TurnManager,
+    TurnOrder, TurnStartEvent, WaitIntentEvent,
 };
 use crate::status_effects::{ApplyStatusEvent, BadConditionKind, StatusKind, Tier};
 use std::collections::HashSet;
@@ -67,6 +68,24 @@ pub struct BattleWorldLink {
 pub struct CombatMovePoints {
     pub remaining: f32,
     pub max: f32,
+}
+
+/// World-distance at which a melee AI considers itself adjacent enough to strike
+/// (and below which it stops approaching).
+pub const AI_MELEE_RANGE: f32 = 56.0;
+/// Upper bound on how far an AI may travel in one turn, mirroring the player's
+/// move-point cap so a single approach can't cross the whole field.
+pub const AI_MOVE_CAP: f32 = 250.0;
+
+/// Attached to an AI combatant that decided to melee a target it can't yet reach.
+/// `ai_combat_movement_system` steers the unit toward `target` over subsequent
+/// frames (consuming `remaining` budget, respecting walls and slow terrain), and
+/// once in range / out of budget / blocked it fires the deferred attack and ends
+/// the turn. The turn is held open (`TurnInProgress` stays true) until then.
+#[derive(Component, Clone, Copy, Debug)]
+pub struct PendingAiMove {
+    pub target: Entity,
+    pub remaining: f32,
 }
 
 /// Marks a summoned, temporary combatant (e.g. a shikigami). Decremented at the
@@ -941,19 +960,31 @@ pub fn obstacle_aura_tick_system(
 
 /// Bites whoever steps onto a passable `on_pass` obstacle. Occupancy is tracked
 /// per obstacle so the hit lands once on *entry* rather than every frame the
-/// mover stands on it. Only the player physically moves in combat, so this maps
-/// the moving world entity back to its combat participant (which holds health)
-/// via [`BattleWorldLink`] and damages that.
+/// mover stands on it. The player moves its world entity but takes damage on its
+/// combat entity (mapped via [`BattleWorldLink`]); AI combatants move and take
+/// damage on the same entity. Both are folded into one mover list.
 pub fn obstacle_on_pass_system(
     game_state: Res<GameState>,
     players: Query<(Entity, &BattleWorldLink), (With<BattleParticipant>, With<PlayerControlled>)>,
     world_tf: Query<&Transform, With<Player>>,
+    ai: Query<(Entity, &Transform), (With<BattleParticipant>, Without<PlayerControlled>)>,
     mut obstacles: Query<(Entity, &Transform, &ObstacleEffects, &mut ObstacleOccupants)>,
     mut damage_writer: MessageWriter<DamageEvent>,
 ) {
     if game_state.0 != Game_State::Battle {
         return;
     }
+    // (entity-that-holds-health, current world position).
+    let mut movers: Vec<(Entity, Vec2)> = Vec::new();
+    for (combat_entity, link) in players.iter() {
+        if let Ok(ptf) = world_tf.get(link.world_entity) {
+            movers.push((combat_entity, ptf.translation.truncate()));
+        }
+    }
+    for (e, tf) in ai.iter() {
+        movers.push((e, tf.translation.truncate()));
+    }
+
     for (obs, otf, effects, mut occ) in obstacles.iter_mut() {
         let Some((amount, damage_type)) = effects.on_pass else {
             continue;
@@ -961,24 +992,172 @@ pub fn obstacle_on_pass_system(
         let half = otf.scale.truncate() * 0.5;
         let center = otf.translation.truncate();
         let (min, max) = (center - half, center + half);
-        for (combat_entity, link) in players.iter() {
-            let Ok(ptf) = world_tf.get(link.world_entity) else {
-                continue;
-            };
-            let p = ptf.translation.truncate();
+        for &(ent, p) in &movers {
             let inside = p.x >= min.x && p.x <= max.x && p.y >= min.y && p.y <= max.y;
-            let was_inside = occ.0.contains(&combat_entity);
+            let was_inside = occ.0.contains(&ent);
             if inside && !was_inside {
-                occ.0.insert(combat_entity);
+                occ.0.insert(ent);
                 damage_writer.write(DamageEvent {
                     attacker: obs,
-                    target: combat_entity,
+                    target: ent,
                     amount,
                     damage_type,
                     cause: ActionCause::World,
                 });
             } else if !inside && was_inside {
-                occ.0.remove(&combat_entity);
+                occ.0.remove(&ent);
+            }
+        }
+    }
+}
+
+/// Steers a melee AI that deferred its attack (carrying [`PendingAiMove`]) toward
+/// its target each frame, using the same `is_walkable_move` validation and
+/// `obstacle_slow_mult` the player obeys — so enemies path around walls, are
+/// slowed by hazard terrain, and trip on-pass obstacles just like the player.
+/// When the unit reaches melee range, exhausts its budget, or is fully blocked,
+/// it fires the deferred attack, ends its turn, and releases the turn lock.
+pub fn ai_combat_movement_system(
+    mut commands: Commands,
+    game_state: Res<GameState>,
+    quad_tree: Res<QuadTree>,
+    obstacles: Query<(&Transform, &ObstacleEffects), (Without<Player>, Without<MainCamera>)>,
+    time: Res<Time>,
+    mut movers: Query<
+        (Entity, &mut Transform, &mut PendingAiMove),
+        (Without<ObstacleEffects>, Without<Player>),
+    >,
+    targets: Query<&Transform, Without<PendingAiMove>>,
+    links: Query<&BattleWorldLink>,
+    world_tf: Query<&Transform, With<Player>>,
+    mut attack_writer: MessageWriter<AttackIntentEvent>,
+    mut wait_writer: MessageWriter<WaitIntentEvent>,
+    mut turn_end_writer: MessageWriter<TurnEndEvent>,
+    mut turn_in_progress: ResMut<TurnInProgress>,
+) {
+    if game_state.0 != Game_State::Battle {
+        return;
+    }
+    let walkable = |p: Vec2| {
+        is_walkable_move(
+            Position {
+                x: p.x as i32,
+                y: p.y as i32,
+            },
+            &quad_tree,
+        )
+    };
+
+    for (actor, mut transform, mut pending) in movers.iter_mut() {
+        // Resolve where to finish the turn: strike if the target still lives,
+        // otherwise simply wait. Either way, release the turn lock.
+        let finish = |commands: &mut Commands,
+                      attack_writer: &mut MessageWriter<AttackIntentEvent>,
+                      wait_writer: &mut MessageWriter<WaitIntentEvent>,
+                      turn_end_writer: &mut MessageWriter<TurnEndEvent>,
+                      turn_in_progress: &mut ResMut<TurnInProgress>,
+                      strike: bool| {
+            if strike {
+                attack_writer.write(AttackIntentEvent {
+                    attacker: actor,
+                    target: pending.target,
+                    ability: None,
+                    context: AttackContext::default(),
+                    cause: ActionCause::Ai,
+                });
+            } else {
+                wait_writer.write(WaitIntentEvent { waiter: actor });
+            }
+            turn_end_writer.write(TurnEndEvent { who: actor });
+            turn_in_progress.0 = false;
+            commands.entity(actor).remove::<PendingAiMove>();
+        };
+
+        // The player's live position is on its linked world entity (the thing
+        // that moves); an AI target's position is its own transform.
+        let target_pos = links
+            .get(pending.target)
+            .ok()
+            .and_then(|link| world_tf.get(link.world_entity).ok())
+            .or_else(|| targets.get(pending.target).ok())
+            .map(|tf| tf.translation.truncate());
+        let Some(target_pos) = target_pos else {
+            // Target gone (despawned / also mid-move): just end the turn.
+            finish(
+                &mut commands,
+                &mut attack_writer,
+                &mut wait_writer,
+                &mut turn_end_writer,
+                &mut turn_in_progress,
+                false,
+            );
+            continue;
+        };
+
+        let ai_pos = transform.translation.truncate();
+        let to = target_pos - ai_pos;
+        let dist = to.length();
+
+        if dist <= AI_MELEE_RANGE {
+            finish(
+                &mut commands,
+                &mut attack_writer,
+                &mut wait_writer,
+                &mut turn_end_writer,
+                &mut turn_in_progress,
+                true,
+            );
+            continue;
+        }
+        if pending.remaining <= 0.0 {
+            // Out of budget but couldn't close the gap — strike anyway (attacks
+            // are not range-gated today, matching prior AI behavior).
+            finish(
+                &mut commands,
+                &mut attack_writer,
+                &mut wait_writer,
+                &mut turn_end_writer,
+                &mut turn_in_progress,
+                true,
+            );
+            continue;
+        }
+
+        let dir = to / dist.max(f32::EPSILON);
+        let mult = obstacle_slow_mult(ai_pos, &obstacles);
+        let charge = (PLAYER_SPEED * time.delta_secs()).min(pending.remaining);
+        let dist_move = charge * mult;
+
+        // Try a direct step; if a wall blocks it, slide along one axis.
+        let direct = ai_pos + dir * dist_move;
+        let slide_x = ai_pos + Vec2::new(dir.x, 0.0) * dist_move;
+        let slide_y = ai_pos + Vec2::new(0.0, dir.y) * dist_move;
+        let next = if walkable(direct) {
+            Some(direct)
+        } else if dir.x != 0.0 && walkable(slide_x) {
+            Some(slide_x)
+        } else if dir.y != 0.0 && walkable(slide_y) {
+            Some(slide_y)
+        } else {
+            None
+        };
+
+        match next {
+            Some(p) => {
+                transform.translation.x = p.x;
+                transform.translation.y = p.y;
+                pending.remaining -= charge;
+            }
+            None => {
+                // Boxed in — strike from here and end the turn.
+                finish(
+                    &mut commands,
+                    &mut attack_writer,
+                    &mut wait_writer,
+                    &mut turn_end_writer,
+                    &mut turn_in_progress,
+                    true,
+                );
             }
         }
     }

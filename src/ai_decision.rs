@@ -20,7 +20,8 @@ use bevy::prelude::*;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 
-use crate::battle::BattleSide;
+use crate::battle::{BattleSide, PendingAiMove, AI_MELEE_RANGE, AI_MOVE_CAP};
+use crate::constants::PLAYER_SPEED;
 use crate::combat_ability::{Ability, AbilityEffect, Ability_Tree};
 use crate::combat_plugin::{
     Abilities, AIParameters, AbilityIntentEvent, ActionCause, AttackContext, AttackIntentEvent,
@@ -394,6 +395,7 @@ fn expected_damage(ability: &Ability) -> u32 {
 
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
 pub fn evaluate_behavior_tree_system(
+    mut commands: Commands,
     mut turn_start_reader: MessageReader<TurnStartEvent>,
     profiles: Res<BehaviorTreeAssets>,
     ability_tree: Option<Res<Ability_Tree>>,
@@ -462,15 +464,44 @@ pub fn evaluate_behavior_tree_system(
         tick(&profile.logic, &mut ctx, &mut rng);
 
         let actor = ev.who;
+        // When a melee attacker's target is out of reach, defer the strike:
+        // stash a `PendingAiMove` and hold the turn open so
+        // `ai_combat_movement_system` can walk the unit in (through any hazards)
+        // before the attack lands. All other decisions resolve instantly.
+        let mut deferred_to_movement = false;
         match ctx.decision {
             Some(AiAction::Attack { target }) => {
-                intent_writer.write(AttackIntentEvent {
-                    attacker: actor,
-                    target,
-                    ability: None,
-                    context: AttackContext::default(),
-                    cause: ActionCause::Ai,
-                });
+                let target_pos = ctx
+                    .enemies
+                    .iter()
+                    .find(|s| s.entity == target)
+                    .map(|s| s.position);
+                let out_of_range = target_pos
+                    .map(|tp| ctx.actor.position.distance(tp) > AI_MELEE_RANGE)
+                    .unwrap_or(false);
+                if out_of_range {
+                    let movement = actors
+                        .get(actor)
+                        .map(|(_, _, stats, _, _, _)| stats.movement.current.max(0) as f32)
+                        .unwrap_or(0.0);
+                    let budget = (movement * PLAYER_SPEED).min(AI_MOVE_CAP);
+                    if budget > 0.0 {
+                        commands.entity(actor).insert(PendingAiMove {
+                            target,
+                            remaining: budget,
+                        });
+                        deferred_to_movement = true;
+                    }
+                }
+                if !deferred_to_movement {
+                    intent_writer.write(AttackIntentEvent {
+                        attacker: actor,
+                        target,
+                        ability: None,
+                        context: AttackContext::default(),
+                        cause: ActionCause::Ai,
+                    });
+                }
             }
             Some(AiAction::Ability { ability_id, target: _ }) => {
                 // The ability event handler resolves targets internally based
@@ -487,8 +518,12 @@ pub fn evaluate_behavior_tree_system(
                 wait_writer.write(WaitIntentEvent { waiter: actor });
             }
         }
-        turn_end_writer.write(TurnEndEvent { who: actor });
-        turn_in_progress.0 = false;
+        // A deferred attacker keeps the turn open until it finishes moving;
+        // `ai_combat_movement_system` will emit TurnEndEvent / clear the lock.
+        if !deferred_to_movement {
+            turn_end_writer.write(TurnEndEvent { who: actor });
+            turn_in_progress.0 = false;
+        }
     }
 }
 
