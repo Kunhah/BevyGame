@@ -16,6 +16,9 @@ pub enum Game_State {
     WorldMapOpen,
     Traveling,
     Paused,
+    /// The character / skill-tree overlay, opened with `K` while exploring.
+    /// Lets the player browse and spend skill points on the party leader.
+    SkillTree,
 }
 
 #[derive(Resource)]

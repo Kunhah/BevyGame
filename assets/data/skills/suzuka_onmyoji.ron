@@ -1,0 +1,88 @@
+// Suzuka — Onmyoji. A diviner of the Kamo line (the onmyōdō house that stood
+// beside the Abe), she works the gogyō (five-element) craft through brush-drawn
+// ofuda and spoken seals: warding, hexing, calendrical divination, and the
+// binding of a paper shikigami. This is TECHNIQUE — impersonal forces commanded
+// by procedure — not Kamishin's communion with revered spirits nor Yokaijutsu's
+// bargains with the Other. She is Onmyodo's lead caster (a controller/summoner),
+// where Sayaka uses the school only in support of her divine work.
+// IDs: 0xECXX (the former Wildkeeper block, reflavoured).
+[
+    (
+        id: 60416, // 0xEC00
+        tree: SuzukaOnmyoji,
+        tier: 1,
+        name: "First Seal",
+        description: "The grounding sigil every onmyōdō student learns to hold before any other. +5 Mind.",
+        cost: 1,
+        prerequisites: [],
+        effects: [
+            StatBonus(target: Mind, amount: 5),
+        ],
+    ),
+    (
+        id: 60417, // 0xEC01
+        tree: SuzukaOnmyoji,
+        tier: 1,
+        name: "Ofuda Reserve",
+        description: "A satchel of prepared talismans, brushed in advance by lamplight. +1 Onmyodo per rest hour, +3 Onmyodo max.",
+        cost: 1,
+        prerequisites: [],
+        effects: [
+            MagicRegenBonus(school: Onmyodo, amount: 1.0),
+            StatBonus(target: Onmyodo, amount: 3),
+        ],
+    ),
+    (
+        id: 60418, // 0xEC02
+        tree: SuzukaOnmyoji,
+        tier: 2,
+        name: "Gogyō Study",
+        description: "Reads the five phases — wood, fire, earth, metal, water — and which feeds or fells which. +5 Onmyodo max, +3 Mind.",
+        cost: 2,
+        prerequisites: [60417],
+        effects: [
+            StatBonus(target: Onmyodo, amount: 5),
+            StatBonus(target: Mind, amount: 3),
+        ],
+    ),
+    (
+        id: 60419, // 0xEC03
+        tree: SuzukaOnmyoji,
+        tier: 2,
+        name: "Reading the Stars",
+        description: "Keeps the tenmon watch — reads a coming blow in the sky's account of the hour. +6 Evasion, +3 Mind.",
+        cost: 2,
+        prerequisites: [60416],
+        effects: [
+            StatBonus(target: Evasion, amount: 6),
+            StatBonus(target: Mind, amount: 3),
+        ],
+    ),
+    (
+        id: 60420, // 0xEC04
+        tree: SuzukaOnmyoji,
+        tier: 2,
+        name: "Kuji no In",
+        description: "The nine-syllable hand-seals, cut in the air to turn aside what is sent against her. +5 Mind, +4 Armor.",
+        cost: 2,
+        prerequisites: [60416, 60417],
+        effects: [
+            StatBonus(target: Mind, amount: 5),
+            StatBonus(target: Armor, amount: 4),
+        ],
+    ),
+    (
+        id: 60421, // 0xEC05
+        tree: SuzukaOnmyoji,
+        tier: 3,
+        name: "Mastery of the Two Lines",
+        description: "The Kamo art at its height: two gogyō lines answer at one stroke, and the shikigami folds itself. +5 Onmyodo max, +5 Mind, +3 Evasion.",
+        cost: 3,
+        prerequisites: [60418, 60420],
+        effects: [
+            StatBonus(target: Onmyodo, amount: 5),
+            StatBonus(target: Mind, amount: 5),
+            StatBonus(target: Evasion, amount: 3),
+        ],
+    ),
+]

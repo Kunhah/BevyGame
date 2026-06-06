@@ -27,6 +27,16 @@ pub mod palette {
     pub const ACCENT_SUCCESS: Color = Color::srgb(0.45, 0.85, 0.55);
     pub const ACCENT_DANGER: Color = Color::srgb(0.92, 0.40, 0.45);
     pub const ACCENT_WARNING: Color = Color::srgb(0.95, 0.78, 0.35);
+
+    // ---- Title-scene palette ----
+    /// Warm gold used for the game's wordmark — evokes shrine lantern light.
+    pub const BRAND: Color = Color::srgb(0.95, 0.83, 0.58);
+    pub const BRAND_BRIGHT: Color = Color::srgb(1.0, 0.94, 0.78);
+    /// Soft bloom tint that sits behind the title (kept gentle so the 3D cast
+    /// rendered behind the UI is not washed out).
+    pub const SCENE_GLOW: Color = Color::srgba(0.58, 0.70, 0.98, 0.10);
+    /// Near-opaque dark used by the legibility scrims behind text.
+    pub const SCRIM: Color = Color::srgba(0.01, 0.02, 0.05, 0.92);
 }
 
 pub mod spacing {
@@ -103,6 +113,102 @@ pub fn floating_panel(width_px: f32) -> impl Bundle {
         },
         BackgroundColor(palette::BG_PANEL),
         BorderColor::all(palette::BORDER_ACCENT),
+    )
+}
+
+/// Transparent, full-screen root for the main-menu scene.
+///
+/// The backdrop is a live 3D stage (see `menu::spawn_menu_scene`) rendered by
+/// the dedicated menu camera, so the UI root itself paints nothing — it just
+/// centres its page content and lets the cast show through. Legibility comes
+/// from [`scene_vignette`] / [`bottom_scrim`] / [`top_scrim`] and the page's own
+/// panels.
+pub fn menu_scene_overlay() -> impl Bundle {
+    Node {
+        width: Val::Percent(100.0),
+        height: Val::Percent(100.0),
+        display: Display::Flex,
+        flex_direction: FlexDirection::Column,
+        justify_content: JustifyContent::Center,
+        align_items: AlignItems::Center,
+        position_type: PositionType::Absolute,
+        ..default()
+    }
+}
+
+/// A dark gradient hugging the bottom of the screen so foreground buttons stay
+/// legible over the bright 3D cast behind them.
+pub fn bottom_scrim() -> impl Bundle {
+    (
+        Node {
+            position_type: PositionType::Absolute,
+            bottom: Val::Px(0.0),
+            width: Val::Percent(100.0),
+            height: Val::Percent(42.0),
+            ..default()
+        },
+        BackgroundGradient(vec![Gradient::Linear(LinearGradient::to_top(vec![
+            ColorStop::percent(palette::SCRIM, 0.0),
+            ColorStop::percent(Color::srgba(0.01, 0.02, 0.05, 0.0), 100.0),
+        ]))]),
+    )
+}
+
+/// Mirror of [`bottom_scrim`] for the top of the screen, framing the wordmark.
+pub fn top_scrim() -> impl Bundle {
+    (
+        Node {
+            position_type: PositionType::Absolute,
+            top: Val::Px(0.0),
+            width: Val::Percent(100.0),
+            height: Val::Percent(30.0),
+            ..default()
+        },
+        BackgroundGradient(vec![Gradient::Linear(LinearGradient::to_bottom(vec![
+            ColorStop::percent(palette::SCRIM, 0.0),
+            ColorStop::percent(Color::srgba(0.01, 0.02, 0.05, 0.0), 100.0),
+        ]))]),
+    )
+}
+
+/// A soft warm bloom centred on the screen, drawn behind the title. Spawn it
+/// *before* the foreground content so it renders underneath.
+pub fn scene_glow() -> impl Bundle {
+    (
+        Node {
+            position_type: PositionType::Absolute,
+            width: Val::Percent(100.0),
+            height: Val::Percent(100.0),
+            ..default()
+        },
+        BackgroundGradient(vec![Gradient::Radial(RadialGradient::new(
+            UiPosition::CENTER,
+            RadialGradientShape::FarthestSide,
+            vec![
+                ColorStop::percent(palette::SCENE_GLOW, 0.0),
+                ColorStop::percent(Color::srgba(0.0, 0.0, 0.0, 0.0), 45.0),
+            ],
+        ))]),
+    )
+}
+
+/// Darkened corners to frame the scene and draw the eye to the centre.
+pub fn scene_vignette() -> impl Bundle {
+    (
+        Node {
+            position_type: PositionType::Absolute,
+            width: Val::Percent(100.0),
+            height: Val::Percent(100.0),
+            ..default()
+        },
+        BackgroundGradient(vec![Gradient::Radial(RadialGradient::new(
+            UiPosition::CENTER,
+            RadialGradientShape::FarthestCorner,
+            vec![
+                ColorStop::percent(Color::srgba(0.0, 0.0, 0.0, 0.0), 38.0),
+                ColorStop::percent(Color::srgba(0.0, 0.0, 0.0, 0.62), 100.0),
+            ],
+        ))]),
     )
 }
 

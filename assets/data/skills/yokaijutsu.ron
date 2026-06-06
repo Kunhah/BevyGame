@@ -101,4 +101,84 @@
             UnlockAbility(ability_id: 45058), // 0xB002 (L22 s2)
         ],
     ),
+
+    // --- Expanded bargain pool (unlocks 0xC010-0xC015). ---
+    (
+        id: 57864, // 0xE208
+        tree: Yokaijutsu,
+        tier: 2,
+        name: "Ghost's Reach",
+        description: "Lets a vengeful spirit borrow a little of one's reach into the living world. Unlocks Onryō's Touch. +3 Lethality.",
+        cost: 2,
+        prerequisites: [57857],
+        effects: [
+            StatBonus(target: Lethality, amount: 3),
+            UnlockAbility(ability_id: 49168), // 0xC010 Onryō's Touch
+        ],
+    ),
+    (
+        id: 57865, // 0xE209
+        tree: Yokaijutsu,
+        tier: 3,
+        name: "Night Parade",
+        description: "Learns to call up the shape of the hundred-demon procession. Unlocks Hyakki Yagyō. +3 Mind.",
+        cost: 3,
+        prerequisites: [57859],
+        effects: [
+            StatBonus(target: Mind, amount: 3),
+            UnlockAbility(ability_id: 49169), // 0xC011 Hyakki Yagyō
+        ],
+    ),
+    (
+        id: 57866, // 0xE20A
+        tree: Yokaijutsu,
+        tier: 2,
+        name: "Shadow Eater",
+        description: "Strikes a bargain to take a bite of shadow back into oneself. Unlocks Devour Shadow. +3 Lethality.",
+        cost: 2,
+        prerequisites: [57858],
+        effects: [
+            StatBonus(target: Lethality, amount: 3),
+            UnlockAbility(ability_id: 49170), // 0xC012 Devour Shadow
+        ],
+    ),
+    (
+        id: 57867, // 0xE20B
+        tree: Yokaijutsu,
+        tier: 3,
+        name: "Paralysing Dread",
+        description: "Knows the binding the sleep-paralysis spirits work on the helpless. Unlocks Kanashibari. +3 Mind.",
+        cost: 3,
+        prerequisites: [57859, 57861],
+        effects: [
+            StatBonus(target: Mind, amount: 3),
+            UnlockAbility(ability_id: 49171), // 0xC013 Kanashibari
+        ],
+    ),
+    (
+        id: 57868, // 0xE20C
+        tree: Yokaijutsu,
+        tier: 2,
+        name: "Festering Word",
+        description: "Speaks a curse that keeps gnawing long after it is spoken. Unlocks Cursed Mark. +3 Mind.",
+        cost: 2,
+        prerequisites: [57862],
+        effects: [
+            StatBonus(target: Mind, amount: 3),
+            UnlockAbility(ability_id: 49172), // 0xC014 Cursed Mark
+        ],
+    ),
+    (
+        id: 57869, // 0xE20D
+        tree: Yokaijutsu,
+        tier: 3,
+        name: "Oni-Pact",
+        description: "Dares a pact with a strong oni for a single devastating blow. Unlocks Oni's Bargain. +5 max Yokaijutsu.",
+        cost: 3,
+        prerequisites: [57861],
+        effects: [
+            StatBonus(target: Yokaijutsu, amount: 5),
+            UnlockAbility(ability_id: 49173), // 0xC015 Oni's Bargain
+        ],
+    ),
 ]

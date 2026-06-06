@@ -15,6 +15,7 @@
 use bevy::prelude::*;
 
 use crate::characters::{CharacterKind, SelectedParty};
+use crate::combat_ability::MagicSchool;
 use crate::constants::MAX_OBJECTS;
 use crate::core::{GameState, Game_State};
 use crate::ui_style::{
@@ -47,19 +48,48 @@ struct PartyConfirm;
 #[derive(Component)]
 struct PartyConfirmLabel;
 
+/// Detail line describing the keyboard-focused character.
+#[derive(Component)]
+struct PartyDetail;
+
+/// Index (into [`CharacterKind::ALL`]) of the keyboard-focused tile.
+#[derive(Resource, Default)]
+struct PartyFocus(usize);
+
 pub struct PartySelectPlugin;
 
 impl Plugin for PartySelectPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<PartyDraft>().add_systems(
-            Update,
-            (
-                spawn_party_select_ui,
-                handle_party_select_interactions,
-                update_party_select_visuals,
-                teardown_party_select_ui,
-            ),
-        );
+        app.init_resource::<PartyDraft>()
+            .init_resource::<PartyFocus>()
+            .add_systems(
+                Update,
+                (
+                    spawn_party_select_ui,
+                    handle_party_select_interactions,
+                    handle_party_select_keyboard,
+                    update_party_select_visuals,
+                    teardown_party_select_ui,
+                ),
+            );
+    }
+}
+
+fn magic_short(school: MagicSchool) -> &'static str {
+    match school {
+        MagicSchool::Kiho => "Kihō",
+        MagicSchool::Onmyodo => "Onmyōdō",
+        MagicSchool::Yokaijutsu => "Yōkaijutsu",
+        MagicSchool::Kamishin => "Kamishin",
+    }
+}
+
+fn affinity_text(kind: CharacterKind) -> String {
+    let schools: Vec<&str> = kind.magic_affinities().iter().map(|s| magic_short(*s)).collect();
+    if schools.is_empty() {
+        "no magic".to_string()
+    } else {
+        schools.join(", ")
     }
 }
 
@@ -82,6 +112,7 @@ fn spawn_party_select_ui(
     mut commands: Commands,
     game_state: Res<GameState>,
     mut draft: ResMut<PartyDraft>,
+    mut focus: ResMut<PartyFocus>,
     existing: Query<(), With<PartySelectRoot>>,
 ) {
     if game_state.0 != Game_State::PartySelection || !existing.is_empty() {
@@ -89,6 +120,7 @@ fn spawn_party_select_ui(
     }
     // Fresh selection each time the screen opens.
     draft.0.clear();
+    focus.0 = 0;
 
     let root = commands
         .spawn((crate::ui_style::overlay_root(), PartySelectRoot))
@@ -99,6 +131,9 @@ fn spawn_party_select_ui(
             col.spawn(label_text(format!(
                 "Pick up to {MAX_OBJECTS}. Your first pick leads the party."
             )));
+            col.spawn(label_text(
+                "Arrows move · Space toggles · Enter confirms · or use the mouse.",
+            ));
 
             // Roster grid (wraps to two columns inside the panel).
             col.spawn(Node {
@@ -125,6 +160,9 @@ fn spawn_party_select_ui(
                 }
             });
 
+            // Detail line for the focused character.
+            col.spawn((label_text(""), PartyDetail));
+
             // Confirm.
             col.spawn((Button::default(), button_node(48.0), button_visual(), PartyConfirm))
                 .with_children(|btn| {
@@ -147,9 +185,33 @@ fn teardown_party_select_ui(
     }
 }
 
+/// Toggle a character in/out of the draft, respecting the party cap.
+fn toggle_kind(draft: &mut PartyDraft, kind: CharacterKind) {
+    if let Some(pos) = draft.0.iter().position(|k| *k == kind) {
+        draft.0.remove(pos); // deselect
+    } else if draft.0.len() < MAX_OBJECTS {
+        draft.0.push(kind); // select (until the party is full)
+    }
+}
+
+/// Commit the draft and leave for exploration. No-op without a leader.
+fn confirm_party(
+    draft: &PartyDraft,
+    selected: &mut SelectedParty,
+    game_state: &mut GameState,
+) {
+    if draft.0.is_empty() {
+        return;
+    }
+    selected.0 = draft.0.clone();
+    info!("Party confirmed: {:?}", selected.0);
+    game_state.0 = Game_State::Exploring;
+}
+
 fn handle_party_select_interactions(
     mut game_state: ResMut<GameState>,
     mut draft: ResMut<PartyDraft>,
+    mut focus: ResMut<PartyFocus>,
     mut selected: ResMut<SelectedParty>,
     toggles: Query<(&Interaction, &PartyToggle), (Changed<Interaction>, With<Button>)>,
     confirms: Query<&Interaction, (Changed<Interaction>, With<Button>, With<PartyConfirm>)>,
@@ -159,46 +221,78 @@ fn handle_party_select_interactions(
     }
 
     for (interaction, toggle) in &toggles {
-        if *interaction != Interaction::Pressed {
-            continue;
+        // Hovering moves the focus so the detail line tracks the mouse.
+        if *interaction != Interaction::None {
+            if let Some(idx) = CharacterKind::ALL.iter().position(|k| *k == toggle.0) {
+                focus.0 = idx;
+            }
         }
-        let kind = toggle.0;
-        if let Some(pos) = draft.0.iter().position(|k| *k == kind) {
-            draft.0.remove(pos); // deselect
-        } else if draft.0.len() < MAX_OBJECTS {
-            draft.0.push(kind); // select (until the party is full)
+        if *interaction == Interaction::Pressed {
+            toggle_kind(&mut draft, toggle.0);
         }
     }
 
     for interaction in &confirms {
-        if *interaction != Interaction::Pressed {
-            continue;
+        if *interaction == Interaction::Pressed {
+            confirm_party(&draft, &mut selected, &mut game_state);
         }
-        // Need at least a leader; the cap is enforced on toggle.
-        if draft.0.is_empty() {
-            continue;
-        }
-        selected.0 = draft.0.clone();
-        info!("Party confirmed: {:?}", selected.0);
-        game_state.0 = Game_State::Exploring;
+    }
+}
+
+/// Arrow keys move the focus, Space toggles the focused character, Enter
+/// confirms.
+fn handle_party_select_keyboard(
+    keys: Res<ButtonInput<KeyCode>>,
+    mut game_state: ResMut<GameState>,
+    mut draft: ResMut<PartyDraft>,
+    mut focus: ResMut<PartyFocus>,
+    mut selected: ResMut<SelectedParty>,
+) {
+    if game_state.0 != Game_State::PartySelection {
+        return;
+    }
+    let n = CharacterKind::ALL.len();
+    if keys.just_pressed(KeyCode::ArrowDown) || keys.just_pressed(KeyCode::ArrowRight) {
+        focus.0 = (focus.0 + 1) % n;
+    }
+    if keys.just_pressed(KeyCode::ArrowUp) || keys.just_pressed(KeyCode::ArrowLeft) {
+        focus.0 = (focus.0 + n - 1) % n;
+    }
+    if keys.just_pressed(KeyCode::Space) {
+        toggle_kind(&mut draft, CharacterKind::ALL[focus.0]);
+    }
+    if keys.just_pressed(KeyCode::Enter) {
+        confirm_party(&draft, &mut selected, &mut game_state);
     }
 }
 
 fn update_party_select_visuals(
     draft: Res<PartyDraft>,
+    focus: Res<PartyFocus>,
     mut toggle_labels: Query<(&PartyToggleLabel, &mut Text, &mut TextColor)>,
-    mut confirm_label: Query<&mut Text, (With<PartyConfirmLabel>, Without<PartyToggleLabel>)>,
+    mut confirm_label: Query<
+        &mut Text,
+        (With<PartyConfirmLabel>, Without<PartyToggleLabel>, Without<PartyDetail>),
+    >,
+    mut detail: Query<
+        &mut Text,
+        (With<PartyDetail>, Without<PartyToggleLabel>, Without<PartyConfirmLabel>),
+    >,
 ) {
+    let focused_kind = CharacterKind::ALL.get(focus.0).copied();
+
     // Cheap (7 labels) and must also run on the frame after the UI spawns, when
     // the draft isn't "changed" but the freshly-created labels are still blank.
     for (label, mut text, mut color) in &mut toggle_labels {
         let kind = label.0;
         let idx = draft.0.iter().position(|k| *k == kind);
         let is_leader = idx == Some(0);
+        let is_focused = focused_kind == Some(kind);
+        let focus_mark = if is_focused { "▶ " } else { "  " };
         let mark = if idx.is_some() { "●" } else { "○" };
         let suffix = if is_leader { "  (leader)" } else { "" };
         *text = Text::new(format!(
-            "{mark}  {} — {}{}",
+            "{focus_mark}{mark} {} · {}{}",
             kind.display_name(),
             kind.class_label(),
             suffix
@@ -207,10 +301,28 @@ fn update_party_select_visuals(
             palette::ACCENT_PRIMARY
         } else if idx.is_some() {
             palette::ACCENT_SUCCESS
+        } else if is_focused {
+            palette::TEXT_HEADING
         } else {
             palette::TEXT_SECONDARY
         };
     }
+
+    if let Ok(mut text) = detail.single_mut() {
+        let desired = match focused_kind {
+            Some(kind) => format!(
+                "{} the {} — magic: {}",
+                kind.display_name(),
+                kind.class_label(),
+                affinity_text(kind)
+            ),
+            None => String::new(),
+        };
+        if text.0 != desired {
+            *text = Text::new(desired);
+        }
+    }
+
     if let Ok(mut text) = confirm_label.single_mut() {
         *text = Text::new(format!("Confirm  ({}/{})", draft.0.len(), MAX_OBJECTS));
     }

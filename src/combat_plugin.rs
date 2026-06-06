@@ -706,6 +706,10 @@ pub enum WeaponType {
     Sword,
     Dagger,
     Staff,
+    /// Polearm — the sōhei / yamabushi blade-on-a-shaft (Renjiro).
+    Naginata,
+    /// Longbow — ranged (Renjiro).
+    Bow,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

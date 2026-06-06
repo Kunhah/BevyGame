@@ -106,4 +106,84 @@
             UnlockAbility(ability_id: 47106), // 0xB802 (L23 s2)
         ],
     ),
+
+    // --- Expanded liturgy pool (unlocks 0xD800-0xD805). ---
+    (
+        id: 58120, // 0xE308
+        tree: Kamishin,
+        tier: 2,
+        name: "Words of the Rite",
+        description: "Knows the old cadence of the norito, that lands on the impure like a bell. Unlocks Norito. +3 Mind.",
+        cost: 2,
+        prerequisites: [58114],
+        effects: [
+            StatBonus(target: Mind, amount: 3),
+            UnlockAbility(ability_id: 55296), // 0xD800 Norito
+        ],
+    ),
+    (
+        id: 58121, // 0xE309
+        tree: Kamishin,
+        tier: 2,
+        name: "Sacred Dance",
+        description: "Learns the kagura steps that please the kami into open-handedness. Unlocks Kagura. +5 Morale.",
+        cost: 2,
+        prerequisites: [58115],
+        effects: [
+            StatBonus(target: Morale, amount: 5),
+            UnlockAbility(ability_id: 55297), // 0xD801 Kagura
+        ],
+    ),
+    (
+        id: 58122, // 0xE30A
+        tree: Kamishin,
+        tier: 2,
+        name: "Boundary Rope",
+        description: "Hangs a shimenawa that the unclean cannot easily cross. Unlocks Shimenawa. +3 Mind.",
+        cost: 2,
+        prerequisites: [58112],
+        effects: [
+            StatBonus(target: Mind, amount: 3),
+            UnlockAbility(ability_id: 55298), // 0xD802 Shimenawa
+        ],
+    ),
+    (
+        id: 58123, // 0xE30B
+        tree: Kamishin,
+        tier: 3,
+        name: "Kami's Anger",
+        description: "May ask a revered spirit to strike for the wrong done to its ground. Unlocks Kami's Wrath. +5 Mind.",
+        cost: 3,
+        prerequisites: [58114, 58117],
+        effects: [
+            StatBonus(target: Mind, amount: 5),
+            UnlockAbility(ability_id: 55299), // 0xD803 Kami's Wrath
+        ],
+    ),
+    (
+        id: 58124, // 0xE30C
+        tree: Kamishin,
+        tier: 2,
+        name: "Purifying Waters",
+        description: "The misogi ablution, strong enough to wash a curse from another. Unlocks Misogi. +3 Mind.",
+        cost: 2,
+        prerequisites: [58118],
+        effects: [
+            StatBonus(target: Mind, amount: 3),
+            UnlockAbility(ability_id: 55300), // 0xD804 Misogi
+        ],
+    ),
+    (
+        id: 58125, // 0xE30D
+        tree: Kamishin,
+        tier: 3,
+        name: "Bestow Favour",
+        description: "Can leave a kami's blessing resting on another for a time. Unlocks Kami's Blessing. +5 max Kamishin.",
+        cost: 3,
+        prerequisites: [58115],
+        effects: [
+            StatBonus(target: Kamishin, amount: 5),
+            UnlockAbility(ability_id: 55301), // 0xD805 Kami's Blessing
+        ],
+    ),
 ]

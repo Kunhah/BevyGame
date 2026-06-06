@@ -385,6 +385,8 @@ pub fn tick_active_travel(
 pub struct WorldMapUi {
     map_root: Option<Entity>,
     overlay_root: Option<Entity>,
+    /// Keyboard-focused area (the one arrows move and Enter travels to).
+    focus: Option<u16>,
 }
 
 #[derive(Component)]
@@ -433,10 +435,13 @@ pub fn manage_world_map_ui(
     if open && ui.map_root.is_none() {
         let here = current_area_node(&catalog, current_area.0, player_map_pos.0);
         ui.map_root = Some(spawn_world_map(&mut commands, &catalog, here));
+        // Start the keyboard focus on the current area.
+        ui.focus = Some(here);
     } else if !open {
         if let Some(root) = ui.map_root.take() {
             commands.entity(root).despawn();
         }
+        ui.focus = None;
     }
 }
 
@@ -526,7 +531,9 @@ fn spawn_world_map(commands: &mut Commands, catalog: &AreaCatalog, here: u16) ->
             });
 
             root.spawn((
-                Text::new("Hover a region to plan a route · Click to travel · M to close"),
+                Text::new(
+                    "Hover or arrow-key a region to plan a route · Click or Enter to travel · M/Esc to close",
+                ),
                 TextFont {
                     font_size: font_size::LABEL,
                     ..default()
@@ -656,6 +663,7 @@ pub fn world_map_interaction(
     player_map_pos: Res<PlayerMapPosition>,
     timestamp: Res<Timestamp>,
     mut travel: ResMut<ActiveTravel>,
+    mut ui: ResMut<WorldMapUi>,
     nodes: Query<(&Interaction, &AreaNodeButton)>,
     mut info_q: Query<&mut Text, With<WorldMapInfoText>>,
 ) {
@@ -675,25 +683,157 @@ pub fn world_map_interaction(
         }
     }
 
-    let focus = pressed.or(hovered);
+    // The mouse takes the focus when it's over a node, so hover and keyboard
+    // navigation stay in sync (and the highlight follows the pointer).
+    if let Some(over) = pressed.or(hovered) {
+        ui.focus = Some(over);
+    }
+
+    // Info panel reflects the current focus (mouse or keyboard), else the
+    // "you are here" blurb.
+    let info_focus = pressed.or(hovered).or(ui.focus);
     if let Ok(mut text) = info_q.single_mut() {
-        text.0 = match focus {
+        text.0 = match info_focus {
             None => initial_info_text(&catalog, here),
             Some(dest) => route_info_text(&catalog, here, dest, timestamp.0),
         };
     }
 
     if let Some(dest) = pressed {
-        if dest == here {
-            return;
+        try_travel(&catalog, here, dest, &mut travel, &mut game_state, timestamp.0);
+    }
+}
+
+/// Begin travel from `here` to `dest` if it isn't the current area and a route
+/// exists. Shared by mouse clicks and the keyboard `Enter`.
+fn try_travel(
+    catalog: &AreaCatalog,
+    here: u16,
+    dest: u16,
+    travel: &mut ActiveTravel,
+    game_state: &mut GameState,
+    now: u32,
+) {
+    if dest == here {
+        return;
+    }
+    match (plan_travel(catalog, here, dest), catalog.get(dest)) {
+        (Some((hours, _path)), Some(area)) => {
+            begin_travel(travel, here, area, hours, now);
+            game_state.0 = Game_State::Traveling;
         }
-        match (plan_travel(&catalog, here, dest), catalog.get(dest)) {
-            (Some((hours, _path)), Some(area)) => {
-                begin_travel(&mut travel, here, area, hours, timestamp.0);
-                game_state.0 = Game_State::Traveling;
-            }
-            _ => warn!("No route from area {here} to {dest}"),
+        _ => warn!("No route from area {here} to {dest}"),
+    }
+}
+
+/// Keyboard control for the world map: arrow keys move the focus to the nearest
+/// region in that direction, `Enter` departs for it, `Esc` closes the map.
+fn world_map_keyboard(
+    keys: Res<ButtonInput<KeyCode>>,
+    mut game_state: ResMut<GameState>,
+    catalog: Res<AreaCatalog>,
+    current_area: Res<CurrentArea>,
+    player_map_pos: Res<PlayerMapPosition>,
+    timestamp: Res<Timestamp>,
+    mut travel: ResMut<ActiveTravel>,
+    mut ui: ResMut<WorldMapUi>,
+) {
+    if game_state.0 != Game_State::WorldMapOpen {
+        return;
+    }
+    if keys.just_pressed(KeyCode::Escape) {
+        game_state.0 = Game_State::Exploring;
+        return;
+    }
+
+    let here = current_area_node(&catalog, current_area.0, player_map_pos.0);
+    let focus = ui.focus.unwrap_or(here);
+
+    let dir = if keys.just_pressed(KeyCode::ArrowRight) {
+        Some(Vec2::new(1.0, 0.0))
+    } else if keys.just_pressed(KeyCode::ArrowLeft) {
+        Some(Vec2::new(-1.0, 0.0))
+    } else if keys.just_pressed(KeyCode::ArrowDown) {
+        Some(Vec2::new(0.0, 1.0))
+    } else if keys.just_pressed(KeyCode::ArrowUp) {
+        Some(Vec2::new(0.0, -1.0))
+    } else {
+        None
+    };
+    if let Some(dir) = dir {
+        if let Some(next) = nearest_in_direction(&catalog, focus, dir) {
+            ui.focus = Some(next);
         }
+    }
+
+    if keys.just_pressed(KeyCode::Enter) {
+        try_travel(&catalog, here, focus, &mut travel, &mut game_state, timestamp.0);
+    }
+}
+
+/// Pick the area whose canvas position lies most directly in `dir` from `from`.
+/// Scores by distance along `dir` plus a penalty for sideways drift, so arrows
+/// feel like "go to the region over there".
+fn nearest_in_direction(catalog: &AreaCatalog, from: u16, dir: Vec2) -> Option<u16> {
+    let from_area = catalog.get(from)?;
+    let (fx, fy) = canvas_px(from_area);
+    let dir = dir.normalize_or_zero();
+    let mut best: Option<(u16, f32)> = None;
+    for area in &catalog.areas {
+        if area.id == from {
+            continue;
+        }
+        let (cx, cy) = canvas_px(area);
+        let delta = Vec2::new(cx - fx, cy - fy);
+        let along = delta.dot(dir);
+        if along <= 1.0 {
+            continue; // not in this direction
+        }
+        let perp = (delta - dir * along).length();
+        let score = along + perp * 2.0;
+        if best.map(|(_, b)| score < b).unwrap_or(true) {
+            best = Some((area.id, score));
+        }
+    }
+    best.map(|(id, _)| id)
+}
+
+/// Recolor area nodes each frame so the current area and the focused
+/// destination stand out. Runs in `PostUpdate` so it wins over the shared
+/// `update_standard_button_visuals` hover restyle.
+fn sync_world_map_nodes(
+    game_state: Res<GameState>,
+    catalog: Res<AreaCatalog>,
+    current_area: Res<CurrentArea>,
+    player_map_pos: Res<PlayerMapPosition>,
+    ui: Res<WorldMapUi>,
+    mut nodes: Query<(&AreaNodeButton, &Interaction, &mut BackgroundColor, &mut BorderColor)>,
+) {
+    if game_state.0 != Game_State::WorldMapOpen {
+        return;
+    }
+    let here = current_area_node(&catalog, current_area.0, player_map_pos.0);
+    let focus = ui.focus;
+
+    for (node, interaction, mut bg, mut border) in &mut nodes {
+        let is_here = node.area_id == here;
+        let is_focus = focus == Some(node.area_id);
+        let hovered = *interaction != Interaction::None;
+
+        let (bg_c, border_c) = if is_here {
+            (palette::BG_BUTTON_PRESSED, palette::ACCENT_SUCCESS)
+        } else if is_focus {
+            (palette::BG_BUTTON_HOVER, palette::BORDER_ACCENT)
+        } else if hovered {
+            (palette::BG_BUTTON_HOVER, palette::BORDER_HOVER)
+        } else {
+            (palette::BG_BUTTON, palette::BORDER)
+        };
+        bg.0 = bg_c;
+        border.top = border_c;
+        border.right = border_c;
+        border.bottom = border_c;
+        border.left = border_c;
     }
 }
 
@@ -921,10 +1061,13 @@ impl Plugin for AreasPlugin {
                 (
                     toggle_world_map,
                     manage_world_map_ui,
+                    world_map_keyboard,
                     world_map_interaction,
                     tick_active_travel,
                     manage_travel_overlay,
-                ),
-            );
+                )
+                    .chain(),
+            )
+            .add_systems(PostUpdate, sync_world_map_nodes);
     }
 }

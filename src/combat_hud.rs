@@ -1,31 +1,39 @@
-//! In-battle ability picker UI.
+//! In-battle action picker UI.
 //!
-//! Spawns a bottom-anchored panel during the player's turn that lists every
-//! ability the active combatant has on its [`Abilities`] component, plus
-//! Attack / Defend / Wait. Two-step targeting:
+//! During the player's turn this spawns a bottom-anchored panel listing every
+//! action the active combatant can take: Attack / Defend / Wait, any usable
+//! inventory items, and every ability on its [`Abilities`] component grouped by
+//! magic school. The panel is driven by both **mouse and keyboard** and shows
+//! live affordability, costs, cooldowns, and a contextual hint line.
 //!
-//! 1. Click a button. Defend / Wait fire immediately. Attack and any ability
-//!    transition the HUD into [`HudMode::AwaitingTarget`] and prompt for a
-//!    world click.
-//! 2. The next left-click in the world picks the closest enemy combatant
-//!    inside [`TARGET_PICK_RADIUS`] and fires the action. Right-click or Esc
-//!    cancels back to [`HudMode::Idle`].
+//! ## Controls
 //!
-//! The target-click system runs before [`crate::movement::mouse_click`] and
-//! consumes the mouse input when it acts, so the existing click-to-move
-//! behaviour still works when the HUD is idle.
+//! - **Mouse**: hover an option to focus it (its details show in the hint line);
+//!   click to choose it. Attack / abilities then ask for a target — left-click
+//!   an enemy to commit, right-click to cancel.
+//! - **Keyboard**: `↑`/`↓` move the focus, `1`–`9` jump straight to an option,
+//!   `Enter` chooses the focused option. While picking a target, `←`/`→`/`Tab`
+//!   cycle enemies, `Enter` commits, `Esc` cancels.
+//!
+//! Affordability (AP / magic-pool cost) and status gates (Silenced, Terrified)
+//! are evaluated every frame, so unusable options are dimmed and explain why in
+//! the hint line. The target-click system runs before
+//! [`crate::movement::mouse_click`] and consumes the click when it acts, so
+//! click-to-move still works while the HUD is idle.
 
 use bevy::prelude::*;
 
 use crate::battle::{BattleParticipant, BattleSide};
-use crate::combat_ability::{Ability, Ability_Tree};
+use crate::combat_ability::{Ability, Ability_Tree, MagicSchool};
 use crate::combat_plugin::{
-    Abilities, PendingPlayerAction, PlayerAction, PlayerActionEvent,
+    Abilities, CombatStats, Inventory, InventoryItemCatalog, InventoryItemKind, Name,
+    PendingPlayerAction, PlayerAction, PlayerActionEvent,
 };
+use crate::constants::{BASIC_ATTACK_ACTION_POINT_COST, ITEM_ACTION_POINT_COST};
 use crate::core::{GameState, Game_State, MainCamera};
-use crate::ui_style::{
-    button_node, button_text, button_visual, floating_panel, label_text, spacing,
-};
+use crate::skill_tree::MagicCostMultipliers;
+use crate::status_effects::{action_gates, magic_cost_multiplier, StatusEffects};
+use crate::ui_style::{font_size, palette, radius, spacing};
 
 /// Plugin entry point.
 pub struct CombatHudPlugin;
@@ -33,187 +41,301 @@ pub struct CombatHudPlugin;
 impl Plugin for CombatHudPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<CombatHudState>()
-            // Spawn / despawn must run before button handlers so a freshly
+            // Spawn / despawn must run before the input handlers so a freshly
             // spawned HUD is interactable on the same frame.
             .add_systems(Update, manage_combat_hud_lifetime)
-            .add_systems(Update, handle_combat_hud_buttons.after(manage_combat_hud_lifetime))
+            .add_systems(
+                Update,
+                (handle_combat_hud_mouse, handle_combat_hud_keyboard)
+                    .after(manage_combat_hud_lifetime),
+            )
             .add_systems(
                 Update,
                 handle_target_click.before(crate::movement::mouse_click),
             )
-            .add_systems(Update, cancel_targeting_on_escape)
-            .add_systems(Update, sync_hud_mode_text);
+            // Appearance / hint / marker updates run in PostUpdate so they win
+            // over the shared `update_standard_button_visuals` hover restyling
+            // and always reflect the current frame's affordability.
+            .add_systems(PostUpdate, (sync_combat_hud, sync_hint))
+            .add_systems(PostUpdate, sync_target_marker.after(sync_combat_hud));
     }
 }
 
-/// Distance (in world units) within which a click counts as picking an enemy
-/// for ability targeting. Roughly matches the 32-px sprite size used elsewhere
-/// in [`crate::battle`].
-const TARGET_PICK_RADIUS: f32 = 32.0;
+/// Distance (world units) within which a click counts as picking an enemy.
+const TARGET_PICK_RADIUS: f32 = 40.0;
 
-/// Resource describing the HUD's current targeting state. Read by the click
-/// handler in this module and by [`crate::movement::mouse_click`] to decide
-/// which click semantics apply.
-#[derive(Resource, Debug, Clone, Copy, Default)]
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
+
+#[derive(Resource, Debug, Clone, Default)]
 pub struct CombatHudState {
     pub mode: HudMode,
+    /// Index of the keyboard-focused option (also set by mouse hover).
+    focus: usize,
+    /// Number of options currently spawned, for focus wrap-around.
+    option_count: usize,
+    /// Enemy currently aimed at while in [`HudMode::AwaitingTarget`].
+    target: Option<Entity>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum HudMode {
-    /// No pending target selection. Default.
     #[default]
     Idle,
-    /// Player has picked an action; the next world click commits the target.
+    /// An action is chosen; the next click / Enter commits the target.
     AwaitingTarget(SelectedAction),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SelectedAction {
-    /// Basic weapon attack.
     Attack,
-    /// Activated ability (spell or non-spell), keyed by id.
     Ability(u16),
 }
 
-/// Marker on the HUD root.
-#[derive(Component)]
-struct CombatHudRoot;
-
-/// Marker on the "Target: ..." status label, so the indicator updates in place.
-#[derive(Component)]
-struct CombatHudStatusLabel;
-
-/// One HUD button. The action variant tells the click handler what to fire.
-#[derive(Component, Clone, Copy)]
-struct CombatHudButton(HudButton);
-
-#[derive(Clone, Copy)]
-enum HudButton {
+/// What a HUD option does when chosen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HudAction {
     Attack,
     Ability(u16),
+    Item(u16),
     Defend,
     Wait,
 }
 
-/// Spawn the HUD when a player turn begins; despawn when no player turn is
-/// pending. Re-spawns each turn so the ability list stays in sync with any
-/// `UnlockAbility` events that fired since the last turn.
+// ---------------------------------------------------------------------------
+// Markers
+// ---------------------------------------------------------------------------
+
+#[derive(Component)]
+struct CombatHudRoot;
+
+/// One selectable option. `index` is its position in the focus order.
+#[derive(Component, Clone, Copy)]
+struct CombatHudOption {
+    index: usize,
+    action: HudAction,
+}
+
+/// The text child of an option button (restyled for focus / affordability).
+#[derive(Component)]
+struct CombatHudOptionLabel;
+
+/// Header line showing the actor name and resource pools.
+#[derive(Component)]
+struct CombatHudHeader;
+
+/// Contextual hint / tooltip line at the bottom of the panel.
+#[derive(Component)]
+struct CombatHudHint;
+
+/// Floating marker drawn over the currently aimed enemy.
+#[derive(Component)]
+struct CombatHudTargetMarker;
+
+// ---------------------------------------------------------------------------
+// Lifetime
+// ---------------------------------------------------------------------------
+
+/// Spawn the HUD when a player turn begins; despawn when none is pending.
+/// Re-spawns each turn so the option list tracks newly-unlocked abilities and
+/// picked-up items.
 fn manage_combat_hud_lifetime(
     mut commands: Commands,
     game_state: Res<GameState>,
     pending: Res<PendingPlayerAction>,
     ability_tree: Option<Res<Ability_Tree>>,
+    item_catalog: Option<Res<InventoryItemCatalog>>,
     mut state: ResMut<CombatHudState>,
     abilities_q: Query<&Abilities>,
+    inventory_q: Query<&Inventory>,
     hud_q: Query<Entity, With<CombatHudRoot>>,
-    children: Query<&Children>,
 ) {
-    let in_battle = game_state.0 == Game_State::Battle;
-    let active = pending.entity;
-
-    let should_show = in_battle && active.is_some();
+    let should_show = game_state.0 == Game_State::Battle && pending.entity.is_some();
     let already_shown = !hud_q.is_empty();
 
     if should_show && !already_shown {
-        if let Some(actor) = active {
-            let abilities = abilities_q.get(actor).map(|a| a.0.clone()).unwrap_or_default();
-            spawn_combat_hud(&mut commands, &abilities, ability_tree.as_deref());
-        }
+        let actor = pending.entity.unwrap();
+        let abilities = abilities_q.get(actor).map(|a| a.0.clone()).unwrap_or_default();
+        let items = inventory_q
+            .get(actor)
+            .map(|i| i.item_ids.clone())
+            .unwrap_or_default();
+        let count = spawn_combat_hud(
+            &mut commands,
+            &abilities,
+            &items,
+            ability_tree.as_deref(),
+            item_catalog.as_deref(),
+        );
+        state.mode = HudMode::Idle;
+        state.focus = 0;
+        state.option_count = count;
+        state.target = None;
     } else if !should_show && already_shown {
         for entity in hud_q.iter() {
-            despawn_recursive(&mut commands, entity, &children);
+            commands.entity(entity).despawn();
         }
-        state.mode = HudMode::Idle;
+        *state = CombatHudState::default();
     }
 }
 
+/// Build the panel. Returns the number of selectable options spawned.
 fn spawn_combat_hud(
     commands: &mut Commands,
     ability_ids: &[u16],
+    item_ids: &[u16],
     ability_tree: Option<&Ability_Tree>,
-) {
-    let root = commands
-        .spawn((
+    item_catalog: Option<&InventoryItemCatalog>,
+) -> usize {
+    let mut index = 0usize;
+
+    let panel = (
+        Node {
+            position_type: PositionType::Absolute,
+            bottom: Val::Px(spacing::XL),
+            left: Val::Percent(50.0),
+            margin: UiRect::left(Val::Px(-260.0)),
+            width: Val::Px(520.0),
+            display: Display::Flex,
+            flex_direction: FlexDirection::Column,
+            align_items: AlignItems::Stretch,
+            row_gap: Val::Px(spacing::SM),
+            padding: UiRect::all(Val::Px(spacing::LG)),
+            border: UiRect::all(Val::Px(1.5)),
+            border_radius: BorderRadius::all(Val::Px(radius::LG)),
+            ..default()
+        },
+        BackgroundColor(palette::BG_PANEL),
+        BorderColor::all(palette::BORDER_ACCENT),
+        CombatHudRoot,
+    );
+
+    commands.spawn(panel).with_children(|col| {
+        // Header — actor name + resources, filled in by `sync_combat_hud`.
+        col.spawn((
+            text_node("", font_size::LABEL, palette::TEXT_HEADING),
+            CombatHudHeader,
+        ));
+
+        // Basic actions row.
+        section_label(col, "Actions");
+        button_row(col, |row| {
+            spawn_option(row, &mut index, "Attack", HudAction::Attack);
+            spawn_option(row, &mut index, "Defend", HudAction::Defend);
+            spawn_option(row, &mut index, "Wait", HudAction::Wait);
+        });
+
+        // Items.
+        if !item_ids.is_empty() {
+            section_label(col, "Items");
+            for &id in item_ids {
+                let label = item_catalog
+                    .and_then(|c| c.0.get(&id))
+                    .map(format_item_label)
+                    .unwrap_or_else(|| format!("Item {id}"));
+                spawn_option(col, &mut index, &label, HudAction::Item(id));
+            }
+        }
+
+        // Abilities grouped by school / techniques.
+        if ability_ids.is_empty() {
+            section_label(col, "Abilities");
+            col.spawn(text_node("(none learned)", font_size::SMALL, palette::TEXT_DIM));
+        } else {
+            let mut abilities: Vec<Ability> = ability_ids
+                .iter()
+                .filter_map(|&id| ability_tree.and_then(|t| t.0.find(id)))
+                .collect();
+            // Keep any ids the tree couldn't resolve as bare entries.
+            for &id in ability_ids {
+                if !abilities.iter().any(|a| a.id == id) {
+                    // Synthesize a minimal placeholder so the option still works.
+                    abilities.push(placeholder_ability(id));
+                }
+            }
+
+            for group in ABILITY_GROUPS {
+                let in_group: Vec<&Ability> = abilities
+                    .iter()
+                    .filter(|a| group.matches(a))
+                    .collect();
+                if in_group.is_empty() {
+                    continue;
+                }
+                section_label(col, group.label);
+                for ability in in_group {
+                    let label = format_ability_label(ability);
+                    spawn_option(col, &mut index, &label, HudAction::Ability(ability.id));
+                }
+            }
+        }
+
+        // Hint line.
+        col.spawn((
             Node {
-                position_type: PositionType::Absolute,
-                bottom: Val::Px(spacing::XL),
-                left: Val::Percent(50.0),
-                margin: UiRect {
-                    left: Val::Px(-220.0),
-                    ..default()
-                },
-                width: Val::Px(440.0),
+                margin: UiRect::top(Val::Px(spacing::XS)),
                 ..default()
             },
-            CombatHudRoot,
-        ))
-        .id();
-
-    commands.entity(root).with_children(|parent| {
-        parent.spawn(floating_panel(440.0)).with_children(|col| {
-            col.spawn((label_text("Click an action"), CombatHudStatusLabel));
-
-            // Top row: basic actions.
-            row(col, |row| {
-                spawn_button(row, "Attack", CombatHudButton(HudButton::Attack));
-                spawn_button(row, "Defend", CombatHudButton(HudButton::Defend));
-                spawn_button(row, "Wait", CombatHudButton(HudButton::Wait));
-            });
-
-            if ability_ids.is_empty() {
-                col.spawn(label_text("(no abilities)"));
-                return;
-            }
-
-            col.spawn((
-                label_text("Abilities"),
-                Node {
-                    margin: UiRect::top(Val::Px(spacing::SM)),
-                    ..default()
-                },
-            ));
-
-            // One column of ability buttons. Look the ability up so the label
-            // shows name + AP / magic cost; fall back to the bare id if the
-            // tree resource isn't available yet at first frame.
-            for &id in ability_ids {
-                let label = ability_tree
-                    .and_then(|t| t.0.find(id))
-                    .map(format_ability_label)
-                    .unwrap_or_else(|| format!("Ability {id}"));
-                spawn_button(col, &label, CombatHudButton(HudButton::Ability(id)));
-            }
-        });
-    });
-}
-
-fn format_ability_label(ability: Ability) -> String {
-    let mut parts = vec![format!("{}", ability.name)];
-    if ability.action_point_cost > 0 {
-        parts.push(format!("AP {}", ability.action_point_cost));
-    }
-    if ability.magic_cost > 0.0 {
-        parts.push(format!(
-            "{} {:.0}",
-            magic_school_short(ability.magic_school),
-            ability.magic_cost
+            text_node("", font_size::SMALL, palette::TEXT_SECONDARY),
+            CombatHudHint,
         ));
-    }
-    parts.join("   ")
+    });
+
+    index
 }
 
-fn magic_school_short(school: crate::combat_ability::MagicSchool) -> &'static str {
-    use crate::combat_ability::MagicSchool;
-    match school {
-        MagicSchool::Kiho => "Ki",
-        MagicSchool::Onmyodo => "Chi",
-        MagicSchool::Yokaijutsu => "Yo",
-        MagicSchool::Kamishin => "Kami",
+// ---------------------------------------------------------------------------
+// Grouping
+// ---------------------------------------------------------------------------
+
+struct AbilityGroup {
+    label: &'static str,
+    school: Option<MagicSchool>,
+}
+
+impl AbilityGroup {
+    fn matches(&self, a: &Ability) -> bool {
+        match self.school {
+            // Magic group: ability has a cost and matches the school.
+            Some(s) => a.magic_cost > 0.0 && std::mem::discriminant(&a.magic_school) == std::mem::discriminant(&s),
+            // Techniques group: no magic cost.
+            None => a.magic_cost <= 0.0,
+        }
     }
 }
 
-fn row(parent: &mut ChildSpawnerCommands, build: impl FnOnce(&mut ChildSpawnerCommands)) {
+const ABILITY_GROUPS: &[AbilityGroup] = &[
+    AbilityGroup { label: "Kihō",       school: Some(MagicSchool::Kiho) },
+    AbilityGroup { label: "Onmyōdō",    school: Some(MagicSchool::Onmyodo) },
+    AbilityGroup { label: "Yōkaijutsu", school: Some(MagicSchool::Yokaijutsu) },
+    AbilityGroup { label: "Kamishin",   school: Some(MagicSchool::Kamishin) },
+    AbilityGroup { label: "Techniques", school: None },
+];
+
+// ---------------------------------------------------------------------------
+// UI building helpers
+// ---------------------------------------------------------------------------
+
+fn text_node(text: &str, size: f32, color: Color) -> impl Bundle {
+    (
+        Text::new(text),
+        TextFont { font_size: size, ..default() },
+        TextColor(color),
+    )
+}
+
+fn section_label(parent: &mut ChildSpawnerCommands, text: &str) {
+    parent.spawn((
+        Node {
+            margin: UiRect::top(Val::Px(spacing::XS)),
+            ..default()
+        },
+        text_node(text, font_size::SMALL, palette::ACCENT_PRIMARY),
+    ));
+}
+
+fn button_row(parent: &mut ChildSpawnerCommands, build: impl FnOnce(&mut ChildSpawnerCommands)) {
     parent
         .spawn(Node {
             display: Display::Flex,
@@ -221,84 +343,412 @@ fn row(parent: &mut ChildSpawnerCommands, build: impl FnOnce(&mut ChildSpawnerCo
             column_gap: Val::Px(spacing::SM),
             ..default()
         })
-        .with_children(|row| build(row));
+        .with_children(build);
 }
 
-fn spawn_button(parent: &mut ChildSpawnerCommands, label: &str, marker: CombatHudButton) {
-    let mut node = button_node(36.0);
-    node.flex_grow = 1.0;
+fn spawn_option(
+    parent: &mut ChildSpawnerCommands,
+    index: &mut usize,
+    label: &str,
+    action: HudAction,
+) {
+    let i = *index;
+    *index += 1;
+    let display = format!("{}. {label}", i + 1);
     parent
-        .spawn((Button::default(), node, button_visual(), marker))
+        .spawn((
+            Button::default(),
+            Node {
+                min_height: Val::Px(32.0),
+                flex_grow: 1.0,
+                display: Display::Flex,
+                justify_content: JustifyContent::FlexStart,
+                align_items: AlignItems::Center,
+                padding: UiRect::axes(Val::Px(spacing::MD), Val::Px(spacing::XS)),
+                border: UiRect::all(Val::Px(1.5)),
+                border_radius: BorderRadius::all(Val::Px(radius::SM)),
+                ..default()
+            },
+            BackgroundColor(palette::BG_BUTTON),
+            BorderColor::all(palette::BORDER),
+            CombatHudOption { index: i, action },
+        ))
         .with_children(|btn| {
-            btn.spawn(button_text(label));
+            btn.spawn((
+                text_node(&display, font_size::LABEL, palette::TEXT_PRIMARY),
+                CombatHudOptionLabel,
+            ));
         });
 }
 
-/// Reads UI button presses and either fires the action immediately
-/// (Defend/Wait) or transitions the HUD into [`HudMode::AwaitingTarget`]
-/// (Attack/Ability) so the next world click commits the target.
-fn handle_combat_hud_buttons(
-    mut interactions: Query<(&Interaction, &CombatHudButton), (Changed<Interaction>, With<Button>)>,
+// ---------------------------------------------------------------------------
+// Labels & formatting
+// ---------------------------------------------------------------------------
+
+fn format_ability_label(ability: &Ability) -> String {
+    let mut badges = Vec::new();
+    if ability.action_point_cost > 0 {
+        badges.push(format!("{} AP", ability.action_point_cost));
+    }
+    if ability.magic_cost > 0.0 {
+        badges.push(format!(
+            "{:.0} {}",
+            ability.magic_cost,
+            magic_school_short(ability.magic_school)
+        ));
+    }
+    if ability.cooldown > 0 {
+        badges.push(format!("CD {}", ability.cooldown));
+    }
+    if badges.is_empty() {
+        ability.name.clone()
+    } else {
+        format!("{}   [{}]", ability.name, badges.join(" · "))
+    }
+}
+
+fn format_item_label(def: &crate::combat_plugin::InventoryItemDefinition) -> String {
+    let detail = match &def.kind {
+        InventoryItemKind::Consumable { effect, .. } => match effect {
+            crate::combat_plugin::ConsumableEffect::Heal { amount } => format!("heal {amount}"),
+        },
+        InventoryItemKind::Equipment(_) => "equipment".to_string(),
+    };
+    format!("{}   [{} AP · {detail}]", def.name, ITEM_ACTION_POINT_COST)
+}
+
+fn magic_school_short(school: MagicSchool) -> &'static str {
+    match school {
+        MagicSchool::Kiho => "Ki",
+        MagicSchool::Onmyodo => "On",
+        MagicSchool::Yokaijutsu => "Yō",
+        MagicSchool::Kamishin => "Ka",
+    }
+}
+
+fn placeholder_ability(id: u16) -> Ability {
+    Ability {
+        id,
+        next_id: None,
+        name: format!("Ability {id}"),
+        health_cost: 0,
+        magic_cost: 0.0,
+        magic_school: MagicSchool::Kiho,
+        action_point_cost: 0,
+        cooldown: 0,
+        description: String::new(),
+        effects: Vec::new(),
+        shape: crate::combat_ability::AbilityShape::Select,
+        duration: 0,
+        targets: 1,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Affordability
+// ---------------------------------------------------------------------------
+
+/// Whether an option can be used right now, and if not, a short reason.
+struct Usability {
+    enabled: bool,
+    reason: Option<String>,
+}
+
+impl Usability {
+    fn ok() -> Self {
+        Self { enabled: true, reason: None }
+    }
+    fn no(reason: impl Into<String>) -> Self {
+        Self { enabled: false, reason: Some(reason.into()) }
+    }
+}
+
+/// Context resolved once per frame for the active actor.
+struct ActorCtx<'a> {
+    stats: &'a CombatStats,
+    gates: crate::status_effects::ActionGates,
+    cost_mult: f32,
+    mults: MagicCostMultipliers,
+    tree: Option<&'a Ability_Tree>,
+}
+
+impl ActorCtx<'_> {
+    fn ability(&self, id: u16) -> Option<Ability> {
+        self.tree.and_then(|t| t.0.find(id))
+    }
+
+    fn scaled_magic_cost(&self, a: &Ability) -> f32 {
+        a.magic_cost * self.cost_mult * self.mults.for_school(a.magic_school)
+    }
+
+    fn usability(&self, action: HudAction) -> Usability {
+        match action {
+            HudAction::Defend | HudAction::Wait => Usability::ok(),
+            HudAction::Attack => {
+                if self.gates.block_attacks {
+                    Usability::no("Can't act (Terrified)")
+                } else if !self.stats.action_points.can_spend(BASIC_ATTACK_ACTION_POINT_COST) {
+                    Usability::no(format!("Needs {BASIC_ATTACK_ACTION_POINT_COST} AP"))
+                } else {
+                    Usability::ok()
+                }
+            }
+            HudAction::Item(_) => {
+                if self.gates.block_attacks {
+                    Usability::no("Can't act (Terrified)")
+                } else if self.gates.block_items {
+                    Usability::no("Items blocked (Silenced)")
+                } else if !self.stats.action_points.can_spend(ITEM_ACTION_POINT_COST) {
+                    Usability::no(format!("Needs {ITEM_ACTION_POINT_COST} AP"))
+                } else {
+                    Usability::ok()
+                }
+            }
+            HudAction::Ability(id) => {
+                let Some(a) = self.ability(id) else { return Usability::ok() };
+                if self.gates.block_attacks {
+                    return Usability::no("Can't act (Terrified)");
+                }
+                if a.magic_cost > 0.0 && self.gates.block_magic_abilities {
+                    return Usability::no("Magic blocked (Silenced)");
+                }
+                if !self.stats.action_points.can_spend(a.action_point_cost) {
+                    return Usability::no(format!("Needs {} AP", a.action_point_cost));
+                }
+                let cost = self.scaled_magic_cost(&a);
+                if !self.stats.pool(a.magic_school).can_spend(cost) {
+                    return Usability::no(format!(
+                        "Needs {:.0} {}",
+                        cost,
+                        magic_school_short(a.magic_school)
+                    ));
+                }
+                Usability::ok()
+            }
+        }
+    }
+}
+
+/// Build the actor context, or `None` if the active actor lacks stats.
+fn resolve_actor<'a>(
+    actor: Entity,
+    stats_q: &'a Query<&CombatStats>,
+    status_q: &Query<&StatusEffects>,
+    mult_q: &Query<&MagicCostMultipliers>,
+    tree: Option<&'a Ability_Tree>,
+) -> Option<ActorCtx<'a>> {
+    let stats = stats_q.get(actor).ok()?;
+    let se = status_q.get(actor).ok();
+    Some(ActorCtx {
+        stats,
+        gates: action_gates(se),
+        cost_mult: magic_cost_multiplier(se),
+        mults: mult_q.get(actor).copied().unwrap_or_default(),
+        tree,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Input — mouse
+// ---------------------------------------------------------------------------
+
+/// Mouse hover focuses an option; a click chooses it (subject to affordability).
+fn handle_combat_hud_mouse(
+    mut interactions: Query<(&Interaction, &CombatHudOption), Changed<Interaction>>,
     mut state: ResMut<CombatHudState>,
+    pending: Res<PendingPlayerAction>,
+    ability_tree: Option<Res<Ability_Tree>>,
+    stats_q: Query<&CombatStats>,
+    status_q: Query<&StatusEffects>,
+    mult_q: Query<&MagicCostMultipliers>,
+    enemies_q: Query<(Entity, &BattleSide), With<BattleParticipant>>,
     mut actions: MessageWriter<PlayerActionEvent>,
 ) {
-    for (interaction, button) in &mut interactions {
-        if *interaction != Interaction::Pressed {
-            continue;
-        }
-        match button.0 {
-            HudButton::Defend => {
-                actions.write(PlayerActionEvent { action: PlayerAction::Defend });
-                state.mode = HudMode::Idle;
-            }
-            HudButton::Wait => {
-                actions.write(PlayerActionEvent { action: PlayerAction::Wait });
-                state.mode = HudMode::Idle;
-            }
-            HudButton::Attack => {
-                state.mode = HudMode::AwaitingTarget(SelectedAction::Attack);
-            }
-            HudButton::Ability(id) => {
-                state.mode = HudMode::AwaitingTarget(SelectedAction::Ability(id));
-            }
-        }
-    }
-}
-
-/// Updates the "Target: ..." label so the player knows when targeting is armed.
-fn sync_hud_mode_text(
-    state: Res<CombatHudState>,
-    ability_tree: Option<Res<Ability_Tree>>,
-    mut labels: Query<&mut Text, With<CombatHudStatusLabel>>,
-) {
-    let desired = match state.mode {
-        HudMode::Idle => "Click an action".to_string(),
-        HudMode::AwaitingTarget(SelectedAction::Attack) => {
-            "Click an enemy to attack (right-click to cancel)".to_string()
-        }
-        HudMode::AwaitingTarget(SelectedAction::Ability(id)) => {
-            let name = ability_tree
-                .as_deref()
-                .and_then(|t| t.0.find(id))
-                .map(|a| a.name.clone())
-                .unwrap_or_else(|| format!("Ability {id}"));
-            format!("Click an enemy to use {name} (right-click to cancel)")
-        }
+    let Some(actor) = pending.entity else { return };
+    let Some(ctx) = resolve_actor(actor, &stats_q, &status_q, &mult_q, ability_tree.as_deref())
+    else {
+        return;
     };
-    for mut text in &mut labels {
-        if text.0 != desired {
-            text.0 = desired.clone();
+
+    for (interaction, option) in &mut interactions {
+        match *interaction {
+            Interaction::Hovered | Interaction::Pressed => {
+                state.focus = option.index;
+            }
+            Interaction::None => {}
+        }
+        if *interaction == Interaction::Pressed {
+            choose_option(option.action, &ctx, &mut state, &enemies_q, &mut actions);
         }
     }
 }
 
-/// When in [`HudMode::AwaitingTarget`], the next left-click that lands inside
-/// [`TARGET_PICK_RADIUS`] of an enemy combatant fires the chosen action and
-/// resets the HUD mode. A right-click cancels.
-///
-/// Consumes the mouse input via `clear_just_pressed` so the click is *not*
-/// also seen by [`crate::movement::mouse_click`] (which would otherwise treat
-/// it as a movement request).
+// ---------------------------------------------------------------------------
+// Input — keyboard
+// ---------------------------------------------------------------------------
+
+fn handle_combat_hud_keyboard(
+    keys: Res<ButtonInput<KeyCode>>,
+    mut state: ResMut<CombatHudState>,
+    game_state: Res<GameState>,
+    pending: Res<PendingPlayerAction>,
+    ability_tree: Option<Res<Ability_Tree>>,
+    stats_q: Query<&CombatStats>,
+    status_q: Query<&StatusEffects>,
+    mult_q: Query<&MagicCostMultipliers>,
+    options_q: Query<&CombatHudOption>,
+    enemies_q: Query<(Entity, &BattleSide), With<BattleParticipant>>,
+    mut actions: MessageWriter<PlayerActionEvent>,
+) {
+    if game_state.0 != Game_State::Battle {
+        return;
+    }
+    let Some(actor) = pending.entity else { return };
+
+    // Cancel takes priority in either mode.
+    if keys.just_pressed(KeyCode::Escape) && state.mode != HudMode::Idle {
+        state.mode = HudMode::Idle;
+        return;
+    }
+
+    match state.mode {
+        HudMode::AwaitingTarget(selected) => {
+            let mut enemies = living_enemies(&enemies_q);
+            if enemies.is_empty() {
+                return;
+            }
+            enemies.sort();
+            let forward = keys.just_pressed(KeyCode::ArrowRight)
+                || keys.just_pressed(KeyCode::Tab)
+                || keys.just_pressed(KeyCode::ArrowDown);
+            let backward = keys.just_pressed(KeyCode::ArrowLeft) || keys.just_pressed(KeyCode::ArrowUp);
+            if forward || backward {
+                let cur = state
+                    .target
+                    .and_then(|t| enemies.iter().position(|e| *e == t))
+                    .unwrap_or(0);
+                let len = enemies.len();
+                let next = if forward { (cur + 1) % len } else { (cur + len - 1) % len };
+                state.target = Some(enemies[next]);
+            }
+            if state.target.is_none() {
+                state.target = enemies.first().copied();
+            }
+            if keys.just_pressed(KeyCode::Enter) {
+                if let Some(target) = state.target {
+                    commit_target(selected, target, &mut state, &mut actions);
+                }
+            }
+        }
+        HudMode::Idle => {
+            let count = state.option_count.max(1);
+            if keys.just_pressed(KeyCode::ArrowDown) {
+                state.focus = (state.focus + 1) % count;
+            }
+            if keys.just_pressed(KeyCode::ArrowUp) {
+                state.focus = (state.focus + count - 1) % count;
+            }
+            // Number keys 1..=9 jump to an option.
+            for (key, idx) in NUMBER_KEYS.iter().copied() {
+                if keys.just_pressed(key) && idx < count {
+                    state.focus = idx;
+                }
+            }
+            if keys.just_pressed(KeyCode::Enter) {
+                let focus = state.focus;
+                if let Some(option) = options_q.iter().find(|o| o.index == focus).copied() {
+                    if let Some(ctx) =
+                        resolve_actor(actor, &stats_q, &status_q, &mult_q, ability_tree.as_deref())
+                    {
+                        choose_option(option.action, &ctx, &mut state, &enemies_q, &mut actions);
+                    }
+                }
+            }
+        }
+    }
+}
+
+const NUMBER_KEYS: &[(KeyCode, usize)] = &[
+    (KeyCode::Digit1, 0),
+    (KeyCode::Digit2, 1),
+    (KeyCode::Digit3, 2),
+    (KeyCode::Digit4, 3),
+    (KeyCode::Digit5, 4),
+    (KeyCode::Digit6, 5),
+    (KeyCode::Digit7, 6),
+    (KeyCode::Digit8, 7),
+    (KeyCode::Digit9, 8),
+];
+
+// ---------------------------------------------------------------------------
+// Choosing / committing actions
+// ---------------------------------------------------------------------------
+
+/// Resolve a chosen option: fire immediately, or arm target selection.
+fn choose_option(
+    action: HudAction,
+    ctx: &ActorCtx,
+    state: &mut CombatHudState,
+    enemies_q: &Query<(Entity, &BattleSide), With<BattleParticipant>>,
+    actions: &mut MessageWriter<PlayerActionEvent>,
+) {
+    if !ctx.usability(action).enabled {
+        return;
+    }
+    match action {
+        HudAction::Defend => {
+            actions.write(PlayerActionEvent { action: PlayerAction::Defend });
+            state.mode = HudMode::Idle;
+        }
+        HudAction::Wait => {
+            actions.write(PlayerActionEvent { action: PlayerAction::Wait });
+            state.mode = HudMode::Idle;
+        }
+        HudAction::Item(id) => {
+            // Self-target consumables for now.
+            actions.write(PlayerActionEvent {
+                action: PlayerAction::UseItem(id, None),
+            });
+            state.mode = HudMode::Idle;
+        }
+        HudAction::Attack => {
+            state.mode = HudMode::AwaitingTarget(SelectedAction::Attack);
+            state.target = first_enemy(enemies_q);
+        }
+        HudAction::Ability(id) => {
+            state.mode = HudMode::AwaitingTarget(SelectedAction::Ability(id));
+            state.target = first_enemy(enemies_q);
+        }
+    }
+}
+
+fn commit_target(
+    selected: SelectedAction,
+    target: Entity,
+    state: &mut CombatHudState,
+    actions: &mut MessageWriter<PlayerActionEvent>,
+) {
+    match selected {
+        SelectedAction::Attack => {
+            actions.write(PlayerActionEvent { action: PlayerAction::Attack(target) });
+        }
+        SelectedAction::Ability(id) => {
+            actions.write(PlayerActionEvent {
+                action: PlayerAction::UseAbility(id as u32, target),
+            });
+        }
+    }
+    state.mode = HudMode::Idle;
+    state.target = None;
+}
+
+// ---------------------------------------------------------------------------
+// World target click
+// ---------------------------------------------------------------------------
+
+/// When awaiting a target, a left-click inside [`TARGET_PICK_RADIUS`] of an
+/// enemy commits the chosen action. Right-click cancels. Consumes the click so
+/// it isn't also read as a move request.
 fn handle_target_click(
     mut state: ResMut<CombatHudState>,
     mut mouse_input: ResMut<ButtonInput<MouseButton>>,
@@ -317,6 +767,7 @@ fn handle_target_click(
 
     if mouse_input.just_pressed(MouseButton::Right) {
         state.mode = HudMode::Idle;
+        state.target = None;
         mouse_input.clear_just_pressed(MouseButton::Right);
         return;
     }
@@ -332,30 +783,29 @@ fn handle_target_click(
         return;
     };
 
-    let Some(target) = nearest_enemy_within(&enemies_q, cursor_world, TARGET_PICK_RADIUS) else {
-        // No enemy under the cursor; leave mode armed and don't consume the
-        // click, so the player can try again. Movement handler will see this
-        // click — that's fine in idle, but we're still in AwaitingTarget so
-        // we do want to swallow it to avoid accidental movement.
-        mouse_input.clear_just_pressed(MouseButton::Left);
-        return;
-    };
-
-    match selected {
-        SelectedAction::Attack => {
-            actions.write(PlayerActionEvent {
-                action: PlayerAction::Attack(target),
-            });
-        }
-        SelectedAction::Ability(id) => {
-            actions.write(PlayerActionEvent {
-                action: PlayerAction::UseAbility(id as u32, target),
-            });
-        }
+    if let Some(target) = nearest_enemy_within(&enemies_q, cursor_world, TARGET_PICK_RADIUS) {
+        commit_target(selected, target, &mut state, &mut actions);
     }
-
-    state.mode = HudMode::Idle;
+    // Swallow the click either way so we don't accidentally move the avatar.
     mouse_input.clear_just_pressed(MouseButton::Left);
+}
+
+fn living_enemies(
+    enemies_q: &Query<(Entity, &BattleSide), With<BattleParticipant>>,
+) -> Vec<Entity> {
+    enemies_q
+        .iter()
+        .filter(|(_, side)| **side == BattleSide::Enemy)
+        .map(|(e, _)| e)
+        .collect()
+}
+
+fn first_enemy(
+    enemies_q: &Query<(Entity, &BattleSide), With<BattleParticipant>>,
+) -> Option<Entity> {
+    let mut v = living_enemies(enemies_q);
+    v.sort();
+    v.first().copied()
 }
 
 fn nearest_enemy_within(
@@ -368,37 +818,275 @@ fn nearest_enemy_within(
         if *side != BattleSide::Enemy {
             continue;
         }
-        let pos = tf.translation.truncate();
-        let d = pos.distance(cursor_world);
+        let d = tf.translation.truncate().distance(cursor_world);
         if d > radius {
             continue;
         }
-        match best {
-            None => best = Some((entity, d)),
-            Some((_, prev)) if d < prev => best = Some((entity, d)),
-            _ => {}
+        if best.map(|(_, prev)| d < prev).unwrap_or(true) {
+            best = Some((entity, d));
         }
     }
     best.map(|(e, _)| e)
 }
 
-/// Esc clears any in-progress target selection without firing an action.
-fn cancel_targeting_on_escape(
-    mut state: ResMut<CombatHudState>,
-    keys: Res<ButtonInput<KeyCode>>,
+// ---------------------------------------------------------------------------
+// Visual sync (PostUpdate)
+// ---------------------------------------------------------------------------
+
+#[allow(clippy::too_many_arguments)]
+fn sync_combat_hud(
+    state: Res<CombatHudState>,
+    pending: Res<PendingPlayerAction>,
+    ability_tree: Option<Res<Ability_Tree>>,
+    stats_q: Query<&CombatStats>,
+    status_q: Query<&StatusEffects>,
+    mult_q: Query<&MagicCostMultipliers>,
+    name_q: Query<&Name>,
+    mut options_q: Query<(
+        &CombatHudOption,
+        &Interaction,
+        &mut BackgroundColor,
+        &mut BorderColor,
+        &Children,
+    )>,
+    mut text_q: Query<&mut TextColor, With<CombatHudOptionLabel>>,
+    mut header_q: Query<&mut Text, With<CombatHudHeader>>,
 ) {
-    if state.mode != HudMode::Idle && keys.just_pressed(KeyCode::Escape) {
-        state.mode = HudMode::Idle;
+    let Some(actor) = pending.entity else { return };
+    let Some(ctx) = resolve_actor(actor, &stats_q, &status_q, &mult_q, ability_tree.as_deref())
+    else {
+        return;
+    };
+
+    // Per-option appearance.
+    for (option, interaction, mut bg, mut border, children) in &mut options_q {
+        let usable = ctx.usability(option.action);
+        let focused = option.index == state.focus;
+        let hovered = *interaction == Interaction::Hovered;
+        let pressed = *interaction == Interaction::Pressed;
+
+        let (bg_c, border_c, text_c) = if !usable.enabled {
+            (
+                palette::BG_PANEL_SUNK,
+                palette::BORDER_SUBTLE,
+                palette::TEXT_DIM,
+            )
+        } else if pressed {
+            (
+                palette::BG_BUTTON_PRESSED,
+                palette::BORDER_PRESSED,
+                palette::TEXT_HEADING,
+            )
+        } else if focused || hovered {
+            (
+                palette::BG_BUTTON_HOVER,
+                palette::BORDER_ACCENT,
+                palette::TEXT_HEADING,
+            )
+        } else {
+            (palette::BG_BUTTON, palette::BORDER, palette::TEXT_PRIMARY)
+        };
+
+        bg.0 = bg_c;
+        set_border(&mut border, border_c);
+        for child in children.iter() {
+            if let Ok(mut tc) = text_q.get_mut(child) {
+                tc.0 = text_c;
+            }
+        }
+    }
+
+    // Header — actor name + live resources.
+    if let Ok(mut header) = header_q.single_mut() {
+        let name = name_q.get(actor).map(|n| n.0.as_str()).unwrap_or("Combatant");
+        let mut parts = vec![
+            name.to_string(),
+            format!(
+                "AP {}/{}",
+                ctx.stats.action_points.current, ctx.stats.action_points.base
+            ),
+        ];
+        for (school, label) in [
+            (MagicSchool::Kiho, "Ki"),
+            (MagicSchool::Onmyodo, "On"),
+            (MagicSchool::Yokaijutsu, "Yō"),
+            (MagicSchool::Kamishin, "Ka"),
+        ] {
+            let pool = ctx.stats.pool(school);
+            if pool.base > 0.0 {
+                parts.push(format!("{label} {:.0}/{:.0}", pool.current, pool.base));
+            }
+        }
+        let desired = parts.join("    ");
+        if header.0 != desired {
+            header.0 = desired;
+        }
     }
 }
 
-fn despawn_recursive(commands: &mut Commands, entity: Entity, children: &Query<&Children>) {
-    if let Ok(child_entities) = children.get(entity) {
-        for child in child_entities.iter() {
-            despawn_recursive(commands, child, children);
+/// Fill the bottom hint line: describe the focused option while idle, or the
+/// aimed target + estimate while picking. Kept separate from `sync_combat_hud`
+/// so it can read the option list immutably without fighting the appearance
+/// pass for the option text borrow.
+#[allow(clippy::too_many_arguments)]
+fn sync_hint(
+    state: Res<CombatHudState>,
+    pending: Res<PendingPlayerAction>,
+    ability_tree: Option<Res<Ability_Tree>>,
+    item_catalog: Option<Res<InventoryItemCatalog>>,
+    stats_q: Query<&CombatStats>,
+    status_q: Query<&StatusEffects>,
+    mult_q: Query<&MagicCostMultipliers>,
+    name_q: Query<&Name>,
+    options_q: Query<&CombatHudOption>,
+    mut hint_q: Query<&mut Text, With<CombatHudHint>>,
+) {
+    let Ok(mut hint) = hint_q.single_mut() else { return };
+    let Some(actor) = pending.entity else { return };
+    let Some(ctx) = resolve_actor(actor, &stats_q, &status_q, &mult_q, ability_tree.as_deref())
+    else {
+        return;
+    };
+
+    let desired = match state.mode {
+        HudMode::AwaitingTarget(selected) => {
+            let target_name = state
+                .target
+                .and_then(|t| name_q.get(t).ok())
+                .map(|n| n.0.clone())
+                .unwrap_or_else(|| "—".to_string());
+            let (what, est) = match selected {
+                SelectedAction::Attack => {
+                    ("Attack".to_string(), format!("≈{} dmg", ctx.stats.lethality.current))
+                }
+                SelectedAction::Ability(id) => match ctx.ability(id) {
+                    Some(a) => (a.name.clone(), ability_estimate(&a)),
+                    None => ("Ability".to_string(), String::new()),
+                },
+            };
+            format!(
+                "{what} → {target_name} {est}  ·  ←/→ cycle · Enter confirm · Esc cancel · or click an enemy"
+            )
+        }
+        HudMode::Idle => {
+            match options_q.iter().find(|o| o.index == state.focus) {
+                Some(option) => describe_action(option.action, &ctx, item_catalog.as_deref()),
+                None => "↑/↓ or 1–9 to choose · Enter to act · Space to wait".to_string(),
+            }
+        }
+    };
+
+    if hint.0 != desired {
+        hint.0 = desired;
+    }
+}
+
+/// One-line description of a focused option, with its cost / cooldown and, if
+/// it can't be used right now, the reason.
+fn describe_action(
+    action: HudAction,
+    ctx: &ActorCtx,
+    item_catalog: Option<&InventoryItemCatalog>,
+) -> String {
+    let body = match action {
+        HudAction::Attack => "Basic weapon attack on one enemy.".to_string(),
+        HudAction::Defend => "Brace: reduce incoming damage until your next turn.".to_string(),
+        HudAction::Wait => "Pass the rest of your turn.".to_string(),
+        HudAction::Item(id) => item_catalog
+            .and_then(|c| c.0.get(&id))
+            .map(|d| match &d.kind {
+                InventoryItemKind::Consumable { effect, .. } => match effect {
+                    crate::combat_plugin::ConsumableEffect::Heal { amount } => {
+                        format!("{}: restore {amount} health.", d.name)
+                    }
+                },
+                InventoryItemKind::Equipment(_) => format!("{}: equipment.", d.name),
+            })
+            .unwrap_or_else(|| "Use item.".to_string()),
+        HudAction::Ability(id) => match ctx.ability(id) {
+            Some(a) if !a.description.is_empty() => a.description.clone(),
+            Some(a) => format!("{}.", a.name),
+            None => "Ability.".to_string(),
+        },
+    };
+
+    match ctx.usability(action).reason {
+        Some(reason) => format!("⚠ {reason} — {body}"),
+        None => body,
+    }
+}
+
+fn ability_estimate(a: &Ability) -> String {
+    use crate::combat_ability::AbilityEffect;
+    for e in &a.effects {
+        match e {
+            AbilityEffect::Damage { floor, ceiling, .. } => {
+                return format!("≈{floor}–{ceiling} dmg");
+            }
+            AbilityEffect::Heal { floor, ceiling, .. } => {
+                return format!("≈{floor}–{ceiling} heal");
+            }
+            _ => {}
         }
     }
-    commands.entity(entity).despawn();
+    String::new()
+}
+
+fn set_border(border: &mut BorderColor, color: Color) {
+    border.top = color;
+    border.right = color;
+    border.bottom = color;
+    border.left = color;
+}
+
+// ---------------------------------------------------------------------------
+// Floating target marker
+// ---------------------------------------------------------------------------
+
+fn sync_target_marker(
+    mut commands: Commands,
+    state: Res<CombatHudState>,
+    game_state: Res<GameState>,
+    camera_q: Query<(&Camera, &GlobalTransform), With<MainCamera>>,
+    target_tf_q: Query<&Transform, With<BattleParticipant>>,
+    mut marker_q: Query<(Entity, &mut Node), With<CombatHudTargetMarker>>,
+) {
+    let active = game_state.0 == Game_State::Battle
+        && matches!(state.mode, HudMode::AwaitingTarget(_))
+        && state.target.is_some();
+
+    if !active {
+        for (e, _) in &marker_q {
+            commands.entity(e).despawn();
+        }
+        return;
+    }
+
+    let target = state.target.unwrap();
+    let Ok(tf) = target_tf_q.get(target) else { return };
+    let Some((camera, cam_tf)) = camera_q.iter().next() else { return };
+    let world = tf.translation + Vec3::new(0.0, 0.0, 48.0);
+    let Ok(screen) = camera.world_to_viewport(cam_tf, world) else {
+        return;
+    };
+
+    if let Some((_, mut node)) = marker_q.iter_mut().next() {
+        node.left = Val::Px(screen.x - 12.0);
+        node.top = Val::Px(screen.y - 24.0);
+    } else {
+        commands.spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                left: Val::Px(screen.x - 12.0),
+                top: Val::Px(screen.y - 24.0),
+                ..default()
+            },
+            Text::new("▼"),
+            TextFont { font_size: 28.0, ..default() },
+            TextColor(palette::ACCENT_DANGER),
+            CombatHudTargetMarker,
+        ));
+    }
 }
 
 #[cfg(test)]
@@ -407,8 +1095,7 @@ mod tests {
 
     #[test]
     fn idle_is_default() {
-        let state = CombatHudState::default();
-        assert_eq!(state.mode, HudMode::Idle);
+        assert_eq!(CombatHudState::default().mode, HudMode::Idle);
     }
 
     #[test]
@@ -419,5 +1106,20 @@ mod tests {
         assert_eq!(a, b);
         assert_ne!(a, c);
         assert_ne!(a, HudMode::Idle);
+    }
+
+    #[test]
+    fn group_matches_split_magic_and_techniques() {
+        let mut magic = placeholder_ability(1);
+        magic.magic_cost = 5.0;
+        magic.magic_school = MagicSchool::Onmyodo;
+        let technique = placeholder_ability(2); // magic_cost 0
+
+        let onmyodo = &ABILITY_GROUPS[1];
+        let techniques = &ABILITY_GROUPS[4];
+        assert!(onmyodo.matches(&magic));
+        assert!(!onmyodo.matches(&technique));
+        assert!(techniques.matches(&technique));
+        assert!(!techniques.matches(&magic));
     }
 }

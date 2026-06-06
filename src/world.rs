@@ -4,6 +4,7 @@ use crate::battle::{CombatMovePoints, EnemyEncounter, WorldAlly, WorldNpc, World
 use crate::city_data::CityCatalog;
 use crate::combat_plugin::{Bound, ResurrectionPoint, ResurrectionStanding};
 use crate::characters::{CharacterKind, SelectedParty};
+use crate::skill_tree::PartyProgression;
 use crate::core::{GameState, Game_State, MainCamera, Player};
 use crate::dialogue::{CachedInteractables, Interactable};
 use crate::economy::{MerchantNpc, Merchants};
@@ -64,7 +65,12 @@ pub fn setup(
     // Isometric 3D camera (XY ground, +Z up) focused on the player spawn, plus
     // a shadow-casting sun and an ambient fill so the dark scene reads.
     let camera = spawn_iso_camera(&mut commands, origin3);
-    commands.entity(camera).insert(MainCamera);
+    // `IsDefaultUiCamera` so all untargeted gameplay UI (HUD, pause, party
+    // select) renders here. The main menu lives on its own 2D camera and
+    // targets it explicitly via `UiTargetCamera`, so the two never collide.
+    commands
+        .entity(camera)
+        .insert((MainCamera, IsDefaultUiCamera));
     spawn_sun(&mut commands);
 
     // The player + party are NOT spawned here. `setup` runs at `Startup`,
@@ -526,10 +532,15 @@ pub fn update_cache(
 /// Deferred out of [`setup`] (a `Startup` system) because the roster isn't known
 /// until the party-selection screen has run. This runs every frame but no-ops
 /// while still in the menus and after it has spawned once.
+/// Skill points each party member starts the run with, so the skill screen
+/// (`K`) is usable immediately.
+const STARTING_SKILL_POINTS: u32 = 6;
+
 pub fn spawn_party(
     mut commands: Commands,
     game_state: Res<GameState>,
     selected: Res<SelectedParty>,
+    mut progression: ResMut<PartyProgression>,
     mut spawned: Local<bool>,
 ) {
     if *spawned {
@@ -538,6 +549,15 @@ pub fn spawn_party(
     // Hold until the player has left the menus into actual gameplay.
     if matches!(game_state.0, Game_State::MainMenu | Game_State::PartySelection) {
         return;
+    }
+
+    // Seed persistent skill progression for everyone in the party (idempotent:
+    // only fills in members that don't already have an entry).
+    for kind in selected.0.iter().copied() {
+        let progress = progression.entry_mut(kind);
+        if progress.learned.is_empty() && progress.spent == 0 && progress.available == 0 {
+            progress.available = STARTING_SKILL_POINTS;
+        }
     }
 
     let origin3 = tile_center_world(PLAYER_SPAWN_TILE).extend(0.0);

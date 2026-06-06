@@ -101,4 +101,84 @@
             UnlockAbility(ability_id: 40962), // 0xA002 (L20 s2)
         ],
     ),
+
+    // --- Expanded ki-arts pool (unlocks 0xC800-0xC805). ---
+    (
+        id: 57352, // 0xE008
+        tree: Kiho,
+        tier: 2,
+        name: "Spirit Shout",
+        description: "Learns to put the whole breath behind a single cry. Unlocks Kiai. +3 Lethality.",
+        cost: 2,
+        prerequisites: [57345],
+        effects: [
+            StatBonus(target: Lethality, amount: 3),
+            UnlockAbility(ability_id: 51200), // 0xC800 Kiai
+        ],
+    ),
+    (
+        id: 57353, // 0xE009
+        tree: Kiho,
+        tier: 2,
+        name: "Body Tempering",
+        description: "Cold rivers and the striking-post, until the flesh forgets to bruise. Unlocks Iron Body. +5 Armor.",
+        cost: 2,
+        prerequisites: [57346],
+        effects: [
+            StatBonus(target: Armor, amount: 5),
+            UnlockAbility(ability_id: 51201), // 0xC801 Iron Body
+        ],
+    ),
+    (
+        id: 57354, // 0xE00A
+        tree: Kiho,
+        tier: 2,
+        name: "Concentrated Force",
+        description: "Gathers the breath into the fist a heartbeat before it lands. Unlocks Ki-Charged Strike. +3 Lethality.",
+        cost: 2,
+        prerequisites: [57347],
+        effects: [
+            StatBonus(target: Lethality, amount: 3),
+            UnlockAbility(ability_id: 51202), // 0xC802 Ki-Charged Strike
+        ],
+    ),
+    (
+        id: 57355, // 0xE00B
+        tree: Kiho,
+        tier: 3,
+        name: "No-Mind",
+        description: "Lets thought fall away until only the trained body answers. Unlocks Mushin. +5 Mind.",
+        cost: 3,
+        prerequisites: [57347, 57349],
+        effects: [
+            StatBonus(target: Mind, amount: 5),
+            UnlockAbility(ability_id: 51203), // 0xC803 Mushin
+        ],
+    ),
+    (
+        id: 57356, // 0xE00C
+        tree: Kiho,
+        tier: 3,
+        name: "Rooted Will",
+        description: "Sets the weight so deep that nothing shifts it. Unlocks Immovable Stance. +5 Armor.",
+        cost: 3,
+        prerequisites: [57351],
+        effects: [
+            StatBonus(target: Armor, amount: 5),
+            UnlockAbility(ability_id: 51204), // 0xC804 Immovable Stance
+        ],
+    ),
+    (
+        id: 57357, // 0xE00D
+        tree: Kiho,
+        tier: 3,
+        name: "Resounding Force",
+        description: "Learns to loose the gathered ki outward as a ringing wave. Unlocks Resounding Ki. +5 max Kiho.",
+        cost: 3,
+        prerequisites: [57349],
+        effects: [
+            StatBonus(target: Kiho, amount: 5),
+            UnlockAbility(ability_id: 51205), // 0xC805 Resounding Ki
+        ],
+    ),
 ]

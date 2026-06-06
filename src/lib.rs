@@ -50,6 +50,7 @@ pub mod render3d;
 pub mod save;
 pub mod services;
 pub mod settings;
+pub mod skill_screen;
 pub mod skill_tree;
 pub mod status_effects;
 pub mod story_flags;
@@ -183,6 +184,7 @@ fn full_game_app() -> App {
         .add_plugins(party_select::PartySelectPlugin)
         .add_plugins(SettingsPlugin)
         .add_plugins(SkillTreePlugin)
+        .add_plugins(skill_screen::SkillScreenPlugin)
         .add_plugins(CombatHudPlugin)
         .add_plugins(AiDecisionPlugin)
         .add_plugins(creatures::CreaturesPlugin)

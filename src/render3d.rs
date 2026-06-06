@@ -479,7 +479,13 @@ pub fn hydrate_placeholders(
 /// combined with a milder distance falloff (further entities = thinner).
 pub fn scale_outline_width_by_distance(
     cam_q: Query<&GlobalTransform, With<crate::core::MainCamera>>,
-    mut q: Query<(&GlobalTransform, Option<&PlaceholderVisual>, &mut OutlineVolume)>,
+    // Menu-stage actors are framed by a separate camera far from the world, so
+    // distance-to-`MainCamera` is meaningless for them — they keep their
+    // hydrated outline width.
+    mut q: Query<
+        (&GlobalTransform, Option<&PlaceholderVisual>, &mut OutlineVolume),
+        Without<crate::menu::MenuActor>,
+    >,
 ) {
     const BASE_WIDTH: f32 = 2.0;
     const SIZE_REF: f32 = 50.0; // typical character footprint scale
@@ -610,6 +616,36 @@ pub fn debug_screenshot_once(
             "/tmp/iso_checkpoint.png",
         ));
     info!("ISO_SHOT: saved /tmp/iso_checkpoint.png");
+}
+
+/// Tighter orthographic zoom for the main-menu stage, so the cast reads as a
+/// hero shot rather than tiny distant figures.
+pub const MENU_VIEWPORT_HEIGHT: f32 = 210.0;
+
+/// A camera for the main-menu 3D stage. Reuses the game's full toon + post
+/// pipeline (via [`spawn_iso_camera`]) so the cast matches the in-game look,
+/// then zooms in and brightens the ambient fill for a title-screen feel. The
+/// returned entity keeps the default camera order/active flag — the menu plugin
+/// tags it and manages `is_active`.
+pub fn spawn_menu_stage_camera(commands: &mut Commands, focus: Vec3) -> Entity {
+    let cam = spawn_iso_camera(commands, focus);
+    commands.entity(cam).insert((
+        Projection::Orthographic(OrthographicProjection {
+            scaling_mode: ScalingMode::FixedVertical {
+                viewport_height: MENU_VIEWPORT_HEIGHT,
+            },
+            near: -ISO_DISTANCE * 2.0,
+            far: ISO_DISTANCE * 2.0,
+            ..OrthographicProjection::default_3d()
+        }),
+        // Warm, bright fill so the characters pop against the dark stage.
+        AmbientLight {
+            color: Color::srgb(0.90, 0.88, 1.0),
+            brightness: 700.0,
+            ..default()
+        },
+    ));
+    cam
 }
 
 /// Insert the directional "sun" (shadow-casting) for the scene.

@@ -22,7 +22,7 @@
 //!
 //! The numbers for the original four were lifted from the GDD-tuned (but
 //! previously unwired) `combat_plugin::spawn_examples`; the three later
-//! additions (Renjiro / Midori / Kanzo) are tuned to the same scale and pair
+//! additions (Renjiro / Suzuka / Kanzo) are tuned to the same scale and pair
 //! with the class trees of the same name under `assets/data/skills/`.
 
 use bevy::ecs::system::EntityCommands;
@@ -44,7 +44,8 @@ use crate::skill_tree::{
 /// can read who a unit is.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CharacterKind {
-    /// Rogue — Kiho skirmisher: stealth, knives, flintlock.
+    /// Rogue / kunoichi — Kiho shinobi: shinobigatana, bo-shuriken, matchlock
+    /// pistol, caltrops, smoke, and the substitution art.
     Rina,
     /// Cleric / Kitsune — Kamishin + Onmyodo support.
     Sayaka,
@@ -54,8 +55,9 @@ pub enum CharacterKind {
     Toshiko,
     /// Monk (yamabushi) — Kiho staff striker, mobile front-line.
     Renjiro,
-    /// Wildkeeper — Onmyodo living-nature sustain support.
-    Midori,
+    /// Onmyoji — Onmyodo controller/summoner: gogyō element seals, binding
+    /// ofuda, hexes, and a commanded paper shikigami.
+    Suzuka,
     /// Exorcist (biwa hōshi) — Kamishin back-line glass cannon.
     Kanzo,
 }
@@ -68,7 +70,7 @@ impl CharacterKind {
         CharacterKind::Houjou,
         CharacterKind::Toshiko,
         CharacterKind::Renjiro,
-        CharacterKind::Midori,
+        CharacterKind::Suzuka,
         CharacterKind::Kanzo,
     ];
 
@@ -81,7 +83,7 @@ impl CharacterKind {
             CharacterKind::Houjou => 3,
             CharacterKind::Toshiko => 4,
             CharacterKind::Renjiro => 5,
-            CharacterKind::Midori => 6,
+            CharacterKind::Suzuka => 6,
             CharacterKind::Kanzo => 7,
         }
     }
@@ -93,7 +95,7 @@ impl CharacterKind {
             CharacterKind::Houjou => "Houjou Utaka",
             CharacterKind::Toshiko => "Toshiko",
             CharacterKind::Renjiro => "Renjiro",
-            CharacterKind::Midori => "Midori",
+            CharacterKind::Suzuka => "Suzuka",
             CharacterKind::Kanzo => "Kanzo",
         }
     }
@@ -105,7 +107,7 @@ impl CharacterKind {
             CharacterKind::Houjou => "Samurai",
             CharacterKind::Toshiko => "Vessel",
             CharacterKind::Renjiro => "Monk",
-            CharacterKind::Midori => "Wildkeeper",
+            CharacterKind::Suzuka => "Onmyoji",
             CharacterKind::Kanzo => "Exorcist",
         }
     }
@@ -118,7 +120,7 @@ impl CharacterKind {
             CharacterKind::Houjou => Color::srgb(0.60, 0.20, 0.20),
             CharacterKind::Toshiko => Color::srgb(0.45, 0.30, 0.55),
             CharacterKind::Renjiro => Color::srgb(0.80, 0.50, 0.20),
-            CharacterKind::Midori => Color::srgb(0.35, 0.70, 0.40),
+            CharacterKind::Suzuka => Color::srgb(0.30, 0.32, 0.62),
             CharacterKind::Kanzo => Color::srgb(0.85, 0.85, 0.92),
         }
     }
@@ -131,7 +133,7 @@ impl CharacterKind {
             CharacterKind::Houjou => SkillTreeKind::HoujouSamurai,
             CharacterKind::Toshiko => SkillTreeKind::ToshikoVessel,
             CharacterKind::Renjiro => SkillTreeKind::RenjiroMonk,
-            CharacterKind::Midori => SkillTreeKind::MidoriWildkeeper,
+            CharacterKind::Suzuka => SkillTreeKind::SuzukaOnmyoji,
             CharacterKind::Kanzo => SkillTreeKind::KanzoExorcist,
         }
     }
@@ -144,7 +146,7 @@ impl CharacterKind {
             CharacterKind::Houjou => &[MagicSchool::Kiho, MagicSchool::Yokaijutsu],
             CharacterKind::Toshiko => &[MagicSchool::Yokaijutsu],
             CharacterKind::Renjiro => &[MagicSchool::Kiho],
-            CharacterKind::Midori => &[MagicSchool::Onmyodo],
+            CharacterKind::Suzuka => &[MagicSchool::Onmyodo],
             CharacterKind::Kanzo => &[MagicSchool::Kamishin],
         }
     }
@@ -160,25 +162,55 @@ impl CharacterKind {
     /// Starting abilities (ids into `assets/data/abilities/AbilitiesExample.ron`).
     pub fn abilities(self) -> Vec<u16> {
         match self {
-            // Quick slash, Throw knife, Shoot, Reload, Dodge, Get knife back,
-            // Invisibility, Surprise attack.
-            CharacterKind::Rina => vec![20480, 20481, 20482, 20483, 20484, 20485, 20486, 20487],
-            // Purifying strike, Sacred prayer, Barrier of faith, Cleanse, Ritual of stillness.
-            CharacterKind::Sayaka => vec![22528, 22529, 22530, 22531, 22532],
-            // Heavy strike, Wide slash, Counter stance, Blood draw, Forbidden cut,
-            // Sake drink, Bind spirit.
-            CharacterKind::Houjou => vec![24576, 24577, 24578, 24579, 24580, 24581, 24582],
-            // Shadow touch, Whisper, See unseen, Kuro's grasp, Night veil, Shared pain.
-            CharacterKind::Toshiko => vec![26624, 26625, 26626, 26627, 26628, 26629],
-            // Staff Sweep, Iron Palm, Mountain Breath, Flowing Guard, Pressure Point,
-            // Hundred Breaths (0x7000 block).
-            CharacterKind::Renjiro => vec![28672, 28673, 28674, 28675, 28676, 28677],
-            // Healing Poultice, Thorn Lash, Renewing Rain, Barkskin, Entangling Vines,
-            // Wild Vigor (0x7008 block).
-            CharacterKind::Midori => vec![28680, 28681, 28682, 28683, 28684, 28685],
-            // Word of Banishment, Purifying Flame, Rite of Warding, Sutra of Severance,
-            // Sealing Ward, Great Purification (0x7010 block).
-            CharacterKind::Kanzo => vec![28688, 28689, 28690, 28691, 28692, 28693],
+            // Core: Shinobigatana, Bo-shuriken, Tanzutsu, Ramrod, Kawarimi,
+            // Makibishi, Kemuri-dama, Ansatsu. Extras (0x5008+): Metsubushi,
+            // Kusarigama, Shinobi-aruki, Poisoned Blade, Happō Shuriken, Quickstep.
+            CharacterKind::Rina => vec![
+                20480, 20481, 20482, 20483, 20484, 20485, 20486, 20487,
+                20488, 20489, 20490, 20491, 20492, 20493,
+            ],
+            // Core: Kitsune-bi, Inari's Boon, Fox Glamour, Harae, Foxfire Lanterns.
+            // Extras (0x5805+): Dakini's Boon, Ninetail Foxfire, Beguile,
+            // Inari's Aegis, Searing Foxflame, Rite of Wards.
+            CharacterKind::Sayaka => vec![
+                22528, 22529, 22530, 22531, 22532,
+                22533, 22534, 22535, 22536, 22537, 22538,
+            ],
+            // Core: Kesa-giri, Yoko-giri, Iai, Sutemi, Magakiri, Sakazuki, Reibaku.
+            // Extras (0x6007+): Tsubame-gaeshi, Munen Musō, Zanshin, Kabuto-wari,
+            // Bloodthirst Blade, Oni's Roar.
+            CharacterKind::Houjou => vec![
+                24576, 24577, 24578, 24579, 24580, 24581, 24582,
+                24583, 24584, 24585, 24586, 24587, 24588,
+            ],
+            // Core: Kuro's Touch/Whisper, Reigan, Kuro's grasp, Tokoyo Veil, Shared
+            // pain. Extras (0x6806+): Kuro's Jaws, Maddening Whisper, Lend Me Your
+            // Strength, Umbral Step, Curse of Kuro, Two-Souls Surge.
+            CharacterKind::Toshiko => vec![
+                26624, 26625, 26626, 26627, 26628, 26629,
+                26630, 26631, 26632, 26633, 26634, 26635,
+            ],
+            // Core: Naginata Arc/Thrust, Yamabushi Breath, Hamaya, Kabura-ya,
+            // Fudō's Severance. Extras (0x7020+): Ishizuki, Tomoe Guard, Yatate
+            // Volley, Heart-Seeker, Goma Flame, Conch Blast.
+            CharacterKind::Renjiro => vec![
+                28672, 28673, 28674, 28675, 28676, 28677,
+                28704, 28705, 28706, 28707, 28708, 28709,
+            ],
+            // Core: Ofuda Dart, Cinnabar Bolt, Kekkai, Binding Seal, Curse Ofuda,
+            // Bind Shikigami. Extras (0x7028+): Gofu Volley, Kuji-kiri, Hitogata
+            // Transfer, Reading of Fate, Origami Blades, Greater Shikigami.
+            CharacterKind::Suzuka => vec![
+                28680, 28681, 28682, 28683, 28684, 28685,
+                28712, 28713, 28714, 28715, 28716, 28717,
+            ],
+            // Core: Kotodama, Kiyome Flame, Onusa Ward, Heike Dirge, Goryō Seal,
+            // Ōharae. Extras (0x7030+): Heart Sutra, Body Sutras, Gohei Sweep,
+            // Tama-shizume, Shakujō Toll, Chinkonsai.
+            CharacterKind::Kanzo => vec![
+                28688, 28689, 28690, 28691, 28692, 28693,
+                28720, 28721, 28722, 28723, 28724, 28725,
+            ],
         }
     }
 
@@ -212,17 +244,19 @@ impl CharacterKind {
                 (EquipmentSlotType::Armor, vec![Armor(Robe)]),
                 (EquipmentSlotType::Accessory, vec![Accessory(Charm), Accessory(Relic)]),
             ],
-            // Renjiro — yamabushi: the shakujo staff, monk's robe or light armor.
+            // Renjiro — sōhei/yamabushi: naginata in melee or the longbow at
+            // range, monk's robe or light armor.
             CharacterKind::Renjiro => vec![
-                (EquipmentSlotType::Weapon, vec![Weapon(Staff)]),
+                (EquipmentSlotType::Weapon, vec![Weapon(Naginata), Weapon(Bow)]),
                 (EquipmentSlotType::Armor, vec![Armor(Robe), Armor(LightArmor)]),
                 (EquipmentSlotType::Accessory, vec![Accessory(Charm)]),
             ],
-            // Midori — wildkeeper: a gnarled staff, robe or light armor.
-            CharacterKind::Midori => vec![
+            // Suzuka — onmyōji: a ritual shaku (staff), kariginu robe, and an
+            // ofuda relic or charm.
+            CharacterKind::Suzuka => vec![
                 (EquipmentSlotType::Weapon, vec![Weapon(Staff)]),
-                (EquipmentSlotType::Armor, vec![Armor(Robe), Armor(LightArmor)]),
-                (EquipmentSlotType::Accessory, vec![Accessory(Charm)]),
+                (EquipmentSlotType::Armor, vec![Armor(Robe)]),
+                (EquipmentSlotType::Accessory, vec![Accessory(Charm), Accessory(Relic)]),
             ],
             // Kanzo — exorcist: priest's staff, robe, and a relic or charm.
             CharacterKind::Kanzo => vec![
@@ -251,7 +285,9 @@ impl CharacterKind {
     pub fn growth_curve(self) -> GrowthCurve {
         match self {
             CharacterKind::Rina | CharacterKind::Renjiro => GrowthCurve::rogue_curve(),
-            CharacterKind::Toshiko | CharacterKind::Kanzo => GrowthCurve::spirit_mage_curve(),
+            CharacterKind::Toshiko | CharacterKind::Kanzo | CharacterKind::Suzuka => {
+                GrowthCurve::spirit_mage_curve()
+            }
             _ => GrowthCurve::default(),
         }
     }
@@ -420,25 +456,25 @@ impl CharacterKind {
                 yokaijutsu_per_rest_hour: 0.0,
                 kamishin_per_rest_hour: 0.0,
             },
-            // Midori — Onmyodo living-nature sustain support: tanky-ish,
-            // high Mind, strong rest regen. A second healer with a wholly
-            // different source than Sayaka's divine work.
-            CharacterKind::Midori => CombatStats {
-                health: s(56),
-                morale: s(66),
+            // Suzuka — Onmyodo controller/summoner: a fragile back-line caster
+            // (deep Onmyodo + high Mind, light armour) who wins through seals,
+            // hexes, and a commanded shikigami rather than direct damage.
+            CharacterKind::Suzuka => CombatStats {
+                health: s(46),
+                morale: s(64),
                 action_points: s(DEFAULT_ACTION_POINTS),
                 movement: s(5),
                 kiho: m(0.0),
                 onmyodo: m(6.0),
                 yokaijutsu: m(0.0),
                 kamishin: m(0.0),
-                lethality: s(12),
-                hit: s(20),
-                armor: s(11),
+                lethality: s(9),
+                hit: s(24),
+                armor: s(7),
                 speed: s(18),
                 evasion: s(18),
-                mind: s(20),
-                health_per_rest_hour: 3,
+                mind: s(24),
+                health_per_rest_hour: 1,
                 morale_per_rest_hour: 5,
                 kiho_per_rest_hour: 0.0,
                 onmyodo_per_rest_hour: 0.6,
@@ -510,10 +546,10 @@ impl CharacterKind {
                 celerity: 12, reflex: 11, insight: 6, resolve: 11,
                 magic_distribution: dist(21, 0, 0, 0),
             },
-            CharacterKind::Midori => GrowthAttributes {
-                vitality: 11, endurance: 12, spirit: 11, power: 7, control: 8,
-                celerity: 8, reflex: 9, insight: 11, resolve: 9,
-                magic_distribution: dist(0, 27, 0, 6),
+            CharacterKind::Suzuka => GrowthAttributes {
+                vitality: 8, endurance: 6, spirit: 13, power: 6, control: 11,
+                celerity: 8, reflex: 9, insight: 13, resolve: 9,
+                magic_distribution: dist(0, 39, 0, 0),
             },
             CharacterKind::Kanzo => GrowthAttributes {
                 vitality: 7, endurance: 6, spirit: 13, power: 6, control: 11,
@@ -615,7 +651,7 @@ mod tests {
         let party = SelectedParty(vec![
             CharacterKind::Kanzo,
             CharacterKind::Rina,
-            CharacterKind::Midori,
+            CharacterKind::Suzuka,
             CharacterKind::Houjou,
             CharacterKind::Sayaka, // one beyond a 4-slot party
         ]);

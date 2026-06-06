@@ -47,6 +47,7 @@ use std::collections::HashMap;
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
+use crate::characters::CharacterKind;
 use crate::combat_ability::MagicSchool;
 use crate::combat_plugin::{Abilities, CombatStats, GrowthTarget, LevelUpEvent};
 
@@ -112,7 +113,7 @@ pub enum SkillTreeKind {
     HoujouSamurai,
     ToshikoVessel,
     RenjiroMonk,
-    MidoriWildkeeper,
+    SuzukaOnmyoji,
     KanzoExorcist,
 }
 
@@ -178,6 +179,61 @@ pub struct SkillPoints {
     pub available: u32,
     pub spent: u32,
 }
+
+/// Persistent, per-character skill progression that survives between battles.
+/// Keyed by [`CharacterKind`] so the *same* store backs both the overworld skill
+/// screen (`crate::skill_screen`) and every fresh combatant spawned for that
+/// character. Combat entities are rebuilt from `CharacterKind` each battle, so
+/// without this their learned skills would not carry over — the replay in
+/// [`apply_party_progression_system`] closes that gap.
+#[derive(Resource, Default, Debug, Clone)]
+pub struct PartyProgression(pub HashMap<CharacterKind, CharacterProgress>);
+
+impl PartyProgression {
+    /// The progress for `kind`, creating an empty entry if absent.
+    pub fn entry_mut(&mut self, kind: CharacterKind) -> &mut CharacterProgress {
+        self.0.entry(kind).or_default()
+    }
+}
+
+/// One character's persistent progression: available / spent points and the
+/// skills they've learned (in learn order, so effect replay is deterministic).
+#[derive(Debug, Clone, Default)]
+pub struct CharacterProgress {
+    pub available: u32,
+    pub spent: u32,
+    pub learned: Vec<u16>,
+}
+
+impl CharacterProgress {
+    pub fn has(&self, id: u16) -> bool {
+        self.learned.iter().any(|s| *s == id)
+    }
+
+    /// Whether `node` can be learned right now: not already known, prerequisites
+    /// satisfied, and affordable.
+    pub fn can_learn(&self, node: &SkillNode) -> bool {
+        !self.has(node.id)
+            && node.prerequisites.iter().all(|p| self.has(*p))
+            && self.available >= node.cost
+    }
+
+    /// Spend points and record `node` as learned. No-op if [`Self::can_learn`]
+    /// is false, so callers can call it unconditionally.
+    pub fn learn(&mut self, node: &SkillNode) {
+        if !self.can_learn(node) {
+            return;
+        }
+        self.available -= node.cost;
+        self.spent += node.cost;
+        self.learned.push(node.id);
+    }
+}
+
+/// Tag a freshly-spawned combatant so [`apply_party_progression_system`] replays
+/// its persistent learned skills onto its combat components next frame.
+#[derive(Component, Debug, Default)]
+pub struct ProgressionPending;
 
 /// Skill ids the character has already learned. Order is learn order.
 #[derive(Component, Debug, Default, Clone)]
@@ -325,7 +381,7 @@ const SKILL_RON_FILES: &[(SkillTreeKind, &str)] = &[
     (SkillTreeKind::HoujouSamurai, "assets/data/skills/houjou_samurai.ron"),
     (SkillTreeKind::ToshikoVessel, "assets/data/skills/toshiko_vessel.ron"),
     (SkillTreeKind::RenjiroMonk, "assets/data/skills/renjiro_monk.ron"),
-    (SkillTreeKind::MidoriWildkeeper, "assets/data/skills/midori_wildkeeper.ron"),
+    (SkillTreeKind::SuzukaOnmyoji, "assets/data/skills/suzuka_onmyoji.ron"),
     (SkillTreeKind::KanzoExorcist, "assets/data/skills/kanzo_exorcist.ron"),
 ];
 
@@ -477,6 +533,75 @@ fn apply_skill_effect(
     }
 }
 
+/// Apply a skill effect's *combat* impact (stats, regen, ability unlocks, cost
+/// reductions) to already-spawned components. Unlike [`apply_skill_effect`] this
+/// never fires a [`SkillTriggerEvent`]: one-shot `Trigger` effects belong to the
+/// moment a skill is first learned, not to every battle a character is replayed
+/// into. Used by [`apply_party_progression_system`].
+pub fn apply_combat_skill_effect(
+    effect: &SkillEffect,
+    stats: &mut CombatStats,
+    abilities: &mut Abilities,
+    mults: &mut MagicCostMultipliers,
+) {
+    match effect {
+        SkillEffect::StatBonus { target, amount } => apply_stat_bonus(stats, *target, *amount),
+        SkillEffect::MagicRegenBonus { school, amount } => match school {
+            MagicSchool::Kiho => stats.kiho_per_rest_hour += amount,
+            MagicSchool::Onmyodo => stats.onmyodo_per_rest_hour += amount,
+            MagicSchool::Yokaijutsu => stats.yokaijutsu_per_rest_hour += amount,
+            MagicSchool::Kamishin => stats.kamishin_per_rest_hour += amount,
+        },
+        SkillEffect::UnlockAbility { ability_id } => {
+            if !abilities.0.contains(ability_id) {
+                abilities.0.push(*ability_id);
+            }
+        }
+        SkillEffect::MagicCostReduction { school, percent } => mults.reduce(*school, *percent),
+        SkillEffect::Trigger { .. } => {}
+    }
+}
+
+/// Replay each combatant's persistent [`CharacterProgress`] onto its freshly
+/// spawned combat components. Runs the frame after [`ProgressionPending`] is
+/// inserted (battle spawn), then removes the tag so it applies exactly once.
+fn apply_party_progression_system(
+    mut commands: Commands,
+    data: Res<SkillTreeData>,
+    progression: Res<PartyProgression>,
+    mut q: Query<
+        (
+            Entity,
+            &CharacterKind,
+            &mut CombatStats,
+            &mut Abilities,
+            &mut MagicCostMultipliers,
+            &mut LearnedSkills,
+            &mut SkillPoints,
+        ),
+        With<ProgressionPending>,
+    >,
+) {
+    for (entity, kind, mut stats, mut abilities, mut mults, mut learned, mut sp) in &mut q {
+        if let Some(progress) = progression.0.get(kind) {
+            for &id in &progress.learned {
+                if learned.has(id) {
+                    continue;
+                }
+                if let Some(node) = data.get(id) {
+                    for effect in &node.effects {
+                        apply_combat_skill_effect(effect, &mut stats, &mut abilities, &mut mults);
+                    }
+                    learned.0.push(id);
+                }
+            }
+            sp.available = progress.available;
+            sp.spent = progress.spent;
+        }
+        commands.entity(entity).remove::<ProgressionPending>();
+    }
+}
+
 /// Mirror of `combat_plugin::apply_growth` but for flat skill-tree bonuses.
 /// Kept local so the combat module doesn't need to expose its internal helper.
 fn apply_stat_bonus(stats: &mut CombatStats, target: GrowthTarget, amount: i32) {
@@ -509,11 +634,13 @@ pub struct SkillTreePlugin;
 impl Plugin for SkillTreePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<SkillTreeData>()
+            .init_resource::<PartyProgression>()
             .add_message::<LearnSkillEvent>()
             .add_message::<SkillTriggerEvent>()
             .add_systems(Startup, load_skill_trees_system)
             .add_systems(Update, award_skill_points_on_levelup_system)
-            .add_systems(Update, learn_skill_system);
+            .add_systems(Update, learn_skill_system)
+            .add_systems(Update, apply_party_progression_system);
     }
 }
 

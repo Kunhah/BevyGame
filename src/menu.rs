@@ -5,12 +5,14 @@ use bevy::input::keyboard::KeyCode;
 use bevy::input::mouse::MouseButton;
 use bevy::prelude::*;
 
-use crate::core::{GameState, Game_State};
+use crate::characters::CharacterKind;
+use crate::core::{GameState, Game_State, MainCamera};
+use crate::render3d::{iso_camera_offset, spawn_menu_stage_camera, PlaceholderVisual, CHAR_HEIGHT};
 use crate::save::{AutoSaveSettings, SaveAction, SaveRequest, SaveSlot};
 use crate::settings::{GraphicsSettings, GraphicsToggle, GRAPHICS_TOGGLES};
 use crate::ui_style::{
-    button_node, button_text, button_text_lg, button_visual, label_text, overlay_root, palette,
-    panel, spacing, title_text,
+    bottom_scrim, button_node, button_text, button_text_lg, button_visual, font_size, label_text,
+    menu_scene_overlay, overlay_root, palette, panel, scene_glow, scene_vignette, spacing, top_scrim,
 };
 
 pub struct MenuPlugin;
@@ -20,16 +22,168 @@ impl Plugin for MenuPlugin {
         app.init_resource::<ResumeState>()
             .init_resource::<MainMenuPage>()
             .init_resource::<PauseMenuPage>()
+            .add_systems(Startup, spawn_menu_scene)
+            .add_systems(Update, manage_scene_cameras)
+            .add_systems(Update, animate_menu_actors)
+            .add_systems(Update, orbit_menu_camera)
             .add_systems(Update, sync_main_menu_page)
             .add_systems(Update, sync_pause_menu_page)
             .add_systems(Update, spawn_main_menu_ui)
             .add_systems(Update, spawn_pause_menu_ui)
+            .add_systems(Update, animate_title)
             .add_systems(Update, toggle_pause_state)
             .add_systems(Update, handle_menu_actions)
             .add_systems(Update, update_autosave_status_text)
             .add_systems(Update, update_graphics_toggle_text)
             .add_systems(Update, update_load_slot_status);
     }
+}
+
+/// Entity of the dedicated 3D camera that frames the main-menu stage. Stored so
+/// the menu UI can target it explicitly while the gameplay world camera is
+/// switched off (see [`manage_scene_cameras`]).
+#[derive(Resource)]
+struct MenuSceneCamera(Entity);
+
+/// Tag for the menu stage's camera.
+#[derive(Component)]
+struct MenuViewCamera;
+
+/// One of the roster characters posing on the menu stage. Drives the idle
+/// animation in [`animate_menu_actors`]. Public so the outline-width system in
+/// `render3d` can exclude these (they're framed by a different camera).
+#[derive(Component)]
+pub struct MenuActor {
+    /// Resting position (capsule centre) on the stage.
+    home: Vec3,
+    /// Per-actor phase offset so the cast doesn't move in lockstep.
+    phase: f32,
+    /// How far this one sways, in radians.
+    sway: f32,
+}
+
+/// The menu's 3D stage lives far from the gameplay world so neither camera ever
+/// sees the other's geometry. Lights are global, so the cast is still lit by the
+/// scene sun; the menu camera adds its own brighter ambient fill.
+const MENU_STAGE_ORIGIN: Vec3 = Vec3::new(0.0, -60_000.0, 0.0);
+/// Height of the dais the cast stands on (a low prop box, base on z = 0).
+const MENU_DAIS_HEIGHT: f32 = 14.0;
+/// Spacing between adjacent cast members along the line-up axis.
+const MENU_ACTOR_SPACING: f32 = 46.0;
+/// How far the centre of the line-up bulges toward the camera (a shallow arc).
+const MENU_ARC_BULGE: f32 = 34.0;
+
+/// Build the 3D title-screen stage once at startup: a dedicated toon camera, a
+/// dais, and the seven-strong roster arranged in a shallow arc facing the
+/// camera. Animated by [`animate_menu_actors`] / [`orbit_menu_camera`].
+fn spawn_menu_scene(mut commands: Commands) {
+    let origin = MENU_STAGE_ORIGIN;
+    // Resting capsule-centre height: standing on top of the dais.
+    let stand_z = MENU_DAIS_HEIGHT + CHAR_HEIGHT * 0.5;
+    // Frame a touch above the dais so the cast sits in the lower-middle third.
+    let focus = origin + Vec3::new(0.0, 0.0, CHAR_HEIGHT * 0.55);
+
+    let cam = spawn_menu_stage_camera(&mut commands, focus);
+    commands.entity(cam).insert((
+        MenuViewCamera,
+        // Order above the world camera (0); only one is active at a time anyway.
+        Camera {
+            order: 1,
+            ..default()
+        },
+        Name::new("MenuStageCamera"),
+    ));
+    commands.insert_resource(MenuSceneCamera(cam));
+
+    // Dais: a low, dark plinth for the cast to stand on. Rotated -45° about Z so
+    // its long axis runs under the diagonal line-up (the `line` axis below).
+    commands.spawn((
+        PlaceholderVisual::prop(
+            Color::srgb(0.10, 0.11, 0.17),
+            Vec2::new(MENU_ACTOR_SPACING * 8.0, 132.0),
+            MENU_DAIS_HEIGHT,
+        ),
+        Transform::from_translation(origin)
+            .with_rotation(Quat::from_rotation_z(-std::f32::consts::FRAC_PI_4)),
+        Name::new("MenuDais"),
+    ));
+
+    // Screen-horizontal axis on the ground for the iso camera is roughly
+    // (1,-1); the toward-camera axis is roughly (1,1). Spread the cast along the
+    // former and bulge the middle along the latter for a shallow arc.
+    let line = Vec3::new(1.0, -1.0, 0.0).normalize();
+    let toward_cam = Vec3::new(1.0, 1.0, 0.0).normalize();
+
+    let roster = CharacterKind::ALL;
+    let last = (roster.len() - 1) as f32;
+    let mid = last * 0.5;
+    for (i, kind) in roster.into_iter().enumerate() {
+        let k = i as f32 - mid; // centred index, e.g. -3..3
+        let arc = (1.0 - (k / mid).powi(2)) * MENU_ARC_BULGE; // 0 at ends, max at centre
+        let ground = origin + line * (k * MENU_ACTOR_SPACING) + toward_cam * arc;
+        let home = ground + Vec3::Z * stand_z;
+        commands.spawn((
+            PlaceholderVisual::character(kind.color()).toon(),
+            Transform::from_translation(home),
+            kind,
+            MenuActor {
+                home,
+                // Spread phases around the circle so the idle looks organic.
+                phase: i as f32 * 0.9,
+                sway: 0.10 + (i % 3) as f32 * 0.04,
+            },
+            Name::new(format!("MenuActor({})", kind.display_name())),
+        ));
+    }
+}
+
+/// Keep exactly one scene camera active: the 3D menu camera in `MainMenu`, the
+/// gameplay world camera everywhere else. This is what makes "New Game" actually
+/// leave the title screen for the world rather than peel back an overlay.
+fn manage_scene_cameras(
+    game_state: Res<GameState>,
+    mut menu_cam: Query<&mut Camera, (With<MenuViewCamera>, Without<MainCamera>)>,
+    mut world_cam: Query<&mut Camera, (With<MainCamera>, Without<MenuViewCamera>)>,
+) {
+    let in_menu = game_state.0 == Game_State::MainMenu;
+    if let Ok(mut cam) = menu_cam.single_mut() {
+        if cam.is_active != in_menu {
+            cam.is_active = in_menu;
+        }
+    }
+    if let Ok(mut cam) = world_cam.single_mut() {
+        if cam.is_active == in_menu {
+            cam.is_active = !in_menu;
+        }
+    }
+}
+
+/// Idle animation for the cast: a soft vertical bob, a gentle yaw sway, a slight
+/// forward/back tilt, and a breathing scale — each offset by the actor's phase.
+fn animate_menu_actors(time: Res<Time>, mut actors: Query<(&MenuActor, &mut Transform)>) {
+    let t = time.elapsed_secs();
+    for (actor, mut tf) in &mut actors {
+        let p = t * 1.4 + actor.phase;
+        let bob = p.sin() * 3.0;
+        let yaw = (p * 0.6).sin() * actor.sway;
+        let tilt = (p * 0.5).cos() * 0.05;
+        let breathe = 1.0 + (p * 1.1).sin() * 0.03;
+        tf.translation = actor.home + Vec3::Z * bob;
+        tf.rotation = Quat::from_rotation_z(yaw) * Quat::from_rotation_x(tilt);
+        tf.scale = Vec3::new(1.0, 1.0, breathe);
+    }
+}
+
+/// Slowly sway the menu camera around the stage for a living, cinematic title
+/// screen. A gentle oscillation (±~20°) rather than a full spin.
+fn orbit_menu_camera(time: Res<Time>, mut cam: Query<&mut Transform, With<MenuViewCamera>>) {
+    let Ok(mut tf) = cam.single_mut() else {
+        return;
+    };
+    let focus = MENU_STAGE_ORIGIN + Vec3::new(0.0, 0.0, CHAR_HEIGHT * 0.55);
+    let yaw = (time.elapsed_secs() * 0.12).sin() * 0.35;
+    let offset = Quat::from_rotation_z(yaw) * iso_camera_offset();
+    *tf = Transform::from_translation(focus + offset).looking_at(focus, Vec3::Z);
 }
 
 #[derive(Resource)]
@@ -102,7 +256,7 @@ struct LoadSlotStatusText(SaveSlot);
 const HERO_BTN: f32 = 56.0;
 const ROW_BTN: f32 = 44.0;
 const TOGGLE_BTN: f32 = 40.0;
-const TITLE_PANEL_WIDTH: f32 = 460.0;
+const BUTTON_COLUMN_WIDTH: f32 = 320.0;
 const SUB_PANEL_WIDTH: f32 = 520.0;
 const PAUSE_PANEL_WIDTH: f32 = 420.0;
 
@@ -128,6 +282,7 @@ fn spawn_main_menu_ui(
     mut commands: Commands,
     game_state: Res<GameState>,
     page: Res<MainMenuPage>,
+    menu_camera: Res<MenuSceneCamera>,
     existing: Query<(Entity, &MainMenuRoot)>,
     children: Query<&Children>,
 ) {
@@ -145,7 +300,27 @@ fn spawn_main_menu_ui(
         despawn_recursive(&mut commands, entity, &children);
     }
 
-    let root = commands.spawn((overlay_root(), MainMenuRoot(*page))).id();
+    // The menu UI is rendered by the dedicated 3D stage camera, so target it
+    // explicitly — the gameplay world camera is disabled while we're here. The
+    // root is transparent so the animated 3D cast shows through behind the UI.
+    let root = commands
+        .spawn((
+            menu_scene_overlay(),
+            UiTargetCamera(menu_camera.0),
+            MainMenuRoot(*page),
+        ))
+        .id();
+
+    // Backdrop layers, spawned first so foreground content renders on top: a
+    // soft centre bloom + framing scrims for text legibility over the cast,
+    // then a footer strip.
+    commands.entity(root).with_children(|bg| {
+        bg.spawn(scene_glow());
+        bg.spawn(scene_vignette());
+        bg.spawn(top_scrim());
+        bg.spawn(bottom_scrim());
+        spawn_scene_footer(bg);
+    });
 
     match *page {
         MainMenuPage::Title => spawn_title_page(&mut commands, root),
@@ -156,29 +331,122 @@ fn spawn_main_menu_ui(
     }
 }
 
+/// Bottom strip shown on every main-menu page: version on the left, a control
+/// hint on the right.
+fn spawn_scene_footer(parent: &mut ChildSpawnerCommands) {
+    parent
+        .spawn(Node {
+            position_type: PositionType::Absolute,
+            bottom: Val::Px(spacing::LG),
+            left: Val::Px(spacing::XL),
+            right: Val::Px(spacing::XL),
+            display: Display::Flex,
+            flex_direction: FlexDirection::Row,
+            justify_content: JustifyContent::SpaceBetween,
+            align_items: AlignItems::Center,
+            ..default()
+        })
+        .with_children(|row| {
+            row.spawn((
+                Text::new(concat!("Seirei Kuni  v", env!("CARGO_PKG_VERSION"))),
+                TextFont {
+                    font_size: font_size::SMALL,
+                    ..default()
+                },
+                TextColor(palette::TEXT_DIM),
+            ));
+            row.spawn((
+                Text::new("Esc — back"),
+                TextFont {
+                    font_size: font_size::SMALL,
+                    ..default()
+                },
+                TextColor(palette::TEXT_DIM),
+            ));
+        });
+}
+
 fn spawn_title_page(commands: &mut Commands, root: Entity) {
     commands.entity(root).with_children(|parent| {
-        parent.spawn(panel(TITLE_PANEL_WIDTH)).with_children(|col| {
-            col.spawn(title_text("Seirei Kuni"));
-            col.spawn((
-                Text::new("A journey through spirits and steel."),
-                TextFont {
-                    font_size: 18.0,
-                    ..default()
+        // Fill the screen and push the wordmark to the top and the buttons to
+        // the bottom, leaving the animated 3D cast on show in between.
+        parent
+            .spawn(Node {
+                width: Val::Percent(100.0),
+                height: Val::Percent(100.0),
+                display: Display::Flex,
+                flex_direction: FlexDirection::Column,
+                justify_content: JustifyContent::SpaceBetween,
+                align_items: AlignItems::Center,
+                padding: UiRect {
+                    top: Val::Px(64.0),
+                    bottom: Val::Px(72.0),
+                    ..UiRect::all(Val::Px(spacing::XL))
                 },
-                TextColor(palette::TEXT_SECONDARY),
-                Node {
-                    margin: UiRect::bottom(Val::Px(spacing::LG)),
+                ..default()
+            })
+            .with_children(|col| {
+                // --- Top: wordmark + tagline ---
+                col.spawn(Node {
+                    display: Display::Flex,
+                    flex_direction: FlexDirection::Column,
+                    align_items: AlignItems::Center,
+                    row_gap: Val::Px(spacing::SM),
                     ..default()
-                },
-            ));
+                })
+                .with_children(|head| {
+                    head.spawn((
+                        Text::new("SEIREI KUNI"),
+                        TextFont {
+                            font_size: font_size::TITLE,
+                            ..default()
+                        },
+                        TextColor(palette::BRAND),
+                        TitlePulse,
+                    ));
+                    head.spawn((
+                        Text::new("A journey through spirits and steel"),
+                        TextFont {
+                            font_size: font_size::BODY,
+                            ..default()
+                        },
+                        TextColor(palette::TEXT_SECONDARY),
+                    ));
+                });
 
-            spawn_hero_button(col, "New Game", MenuButtonAction::StartGame);
-            spawn_hero_button(col, "Load Game", MenuButtonAction::OpenLoadPage);
-            spawn_hero_button(col, "Settings", MenuButtonAction::OpenSettingsPage);
-            spawn_hero_button(col, "Quit", MenuButtonAction::QuitGame);
-        });
+                // --- Bottom: buttons in one fixed-width, stretched column so
+                // they line up regardless of label length. ---
+                col.spawn(Node {
+                    width: Val::Px(BUTTON_COLUMN_WIDTH),
+                    display: Display::Flex,
+                    flex_direction: FlexDirection::Column,
+                    align_items: AlignItems::Stretch,
+                    row_gap: Val::Px(spacing::MD),
+                    ..default()
+                })
+                .with_children(|menu| {
+                    spawn_hero_button(menu, "New Game", MenuButtonAction::StartGame);
+                    spawn_hero_button(menu, "Load Game", MenuButtonAction::OpenLoadPage);
+                    spawn_hero_button(menu, "Settings", MenuButtonAction::OpenSettingsPage);
+                    spawn_hero_button(menu, "Quit", MenuButtonAction::QuitGame);
+                });
+            });
     });
+}
+
+/// Marks the title wordmark so [`animate_title`] can pulse its colour.
+#[derive(Component)]
+struct TitlePulse;
+
+/// Gently breathe the title between the brand gold and a brighter tint so the
+/// screen feels alive without being distracting.
+fn animate_title(time: Res<Time>, mut titles: Query<&mut TextColor, With<TitlePulse>>) {
+    // ~0.18 Hz sine, eased into [0, 1].
+    let t = 0.5 + 0.5 * (time.elapsed_secs() * 1.1).sin();
+    let color = palette::BRAND.mix(&palette::BRAND_BRIGHT, t);
+    for mut text_color in &mut titles {
+        text_color.0 = color;
+    }
 }
 
 fn spawn_load_page(commands: &mut Commands, root: Entity) {

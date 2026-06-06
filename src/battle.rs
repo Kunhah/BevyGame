@@ -21,7 +21,9 @@ use crate::governance::{
 use crate::combat_ability::{MagicSchool, SummonKind};
 use crate::pathfinding::is_walkable_move;
 use crate::quadtree::QuadTree;
-use crate::skill_tree::{LearnedSkills, MagicCostMultipliers, SkillPoints, SkillTreeAccess};
+use crate::skill_tree::{
+    LearnedSkills, MagicCostMultipliers, ProgressionPending, SkillPoints, SkillTreeAccess,
+};
 
 #[derive(Component, Clone, Copy, Debug)]
 pub struct EnemyEncounter {
@@ -233,6 +235,8 @@ fn spawn_player_combat(
     // legacy/skipped flow) fall back to the original generalist block.
     if let Some(k) = kind {
         k.insert_combat_components(&mut e);
+        // Replay this character's persistent skill progression next frame.
+        e.insert(ProgressionPending);
         return e.id();
     }
 
@@ -501,7 +505,11 @@ fn spawn_ally_combat(
     match kind {
         // Named protagonist: full authored identity (stats, abilities, skills,
         // equipment, signature mechanics).
-        Some(k) => k.insert_combat_components(&mut e),
+        Some(k) => {
+            k.insert_combat_components(&mut e);
+            // Replay this character's persistent skill progression next frame.
+            e.insert(ProgressionPending);
+        }
         // Ambient/test ally: generic support block, universal trees only.
         None => {
             e.insert(generic_ally_stats());
@@ -1004,7 +1012,10 @@ pub fn combat_end_turn_input(
     if pending.entity.is_none() {
         return;
     }
-    if input.just_pressed(KeyCode::Enter) || input.just_pressed(KeyCode::Space) {
+    // Space is the quick "end turn / wait" shortcut. Enter is reserved for the
+    // combat HUD (confirm focused action / target), so it is no longer handled
+    // here.
+    if input.just_pressed(KeyCode::Space) {
         actions.write(PlayerActionEvent {
             action: PlayerAction::Wait,
         });

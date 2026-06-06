@@ -164,4 +164,84 @@
             UnlockAbility(ability_id: 43014), // 0xA806 (L21 s6)
         ],
     ),
+
+    // --- Expanded gogyō pool (unlocks 0xD000-0xD005). ---
+    (
+        id: 57612, // 0xE10C
+        tree: Onmyodo,
+        tier: 2,
+        name: "Frost Line",
+        description: "Deepens the water line (sui) until a seal can call a dragging cold. Unlocks Frost Sigil. +3 Mind.",
+        cost: 2,
+        prerequisites: [57610],
+        effects: [
+            StatBonus(target: Mind, amount: 3),
+            UnlockAbility(ability_id: 53248), // 0xD000 Frost Sigil
+        ],
+    ),
+    (
+        id: 57613, // 0xE10D
+        tree: Onmyodo,
+        tier: 2,
+        name: "Pyre Line",
+        description: "Lets the fire line (ka) leap from a whole fan of talismans at once. Unlocks Ember Storm. +3 Mind.",
+        cost: 2,
+        prerequisites: [57608],
+        effects: [
+            StatBonus(target: Mind, amount: 3),
+            UnlockAbility(ability_id: 53249), // 0xD001 Ember Storm
+        ],
+    ),
+    (
+        id: 57614, // 0xE10E
+        tree: Onmyodo,
+        tier: 2,
+        name: "Bulwark Seal",
+        description: "An earth-line (do) ward set over another, not oneself. Unlocks Earthen Ward. +4 Armor.",
+        cost: 2,
+        prerequisites: [57602],
+        effects: [
+            StatBonus(target: Armor, amount: 4),
+            UnlockAbility(ability_id: 53250), // 0xD002 Earthen Ward
+        ],
+    ),
+    (
+        id: 57615, // 0xE10F
+        tree: Onmyodo,
+        tier: 2,
+        name: "Effigy Craft",
+        description: "Cuts a katashiro effigy true enough to carry a curse. Unlocks Katashiro Curse. +3 Mind.",
+        cost: 2,
+        prerequisites: [57606],
+        effects: [
+            StatBonus(target: Mind, amount: 3),
+            UnlockAbility(ability_id: 53251), // 0xD003 Katashiro Curse
+        ],
+    ),
+    (
+        id: 57616, // 0xE110
+        tree: Onmyodo,
+        tier: 2,
+        name: "Star Reckoning",
+        description: "Reads the rikujin tables fast enough to act on them. Unlocks Six-Lines Divination. +3 Mind.",
+        cost: 2,
+        prerequisites: [57604],
+        effects: [
+            StatBonus(target: Mind, amount: 3),
+            UnlockAbility(ability_id: 53252), // 0xD004 Six-Lines Divination
+        ],
+    ),
+    (
+        id: 57617, // 0xE111
+        tree: Onmyodo,
+        tier: 3,
+        name: "Twin Folding",
+        description: "Folds and names two servants where most can hold one. Unlocks Twin Shikigami. +5 max Onmyodo.",
+        cost: 3,
+        prerequisites: [57611],
+        effects: [
+            StatBonus(target: Onmyodo, amount: 5),
+            UnlockAbility(ability_id: 53253), // 0xD005 Twin Shikigami
+        ],
+    ),
 ]
