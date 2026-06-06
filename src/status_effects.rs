@@ -125,6 +125,40 @@ pub enum StatusKind {
     Contract(ContractDebuffKind),
 }
 
+/// The signature status an on-wheel hit applies, by its phase + polarity
+/// (§7 of `docs/gogyo_elemental_system.md`). Yō phases lean *offensive*, In
+/// phases lean *control / drain*.
+///
+/// **Interim mapping:** these reuse the closest *existing* status kinds rather
+/// than introducing dedicated Burn / Soak / Bloom / etc. (which would each need
+/// their own tick/effect wiring). The flavour is approximate — e.g. Fire-Yō
+/// "Burn" rides the Bleeding DoT engine, Water-Yō "Soak" uses Exposed
+/// (next-hit-amplified). Dedicated statuses are future content.
+pub fn phase_proc_status(
+    phase: crate::gogyo::Phase,
+    polarity: crate::gogyo::Polarity,
+) -> Option<(StatusKind, Tier)> {
+    use crate::gogyo::{Phase, Polarity};
+    let kind = match (phase, polarity) {
+        // Fire — Yō burns (DoT), In smoulders (impaired recovery).
+        (Phase::Fire, Polarity::Yo) => StatusKind::BadCondition(BadConditionKind::Bleeding),
+        (Phase::Fire, Polarity::In) => StatusKind::Debuff(DebuffKind::SlowRegeneration),
+        // Water — Yō soaks (next hit amplified), In chills (slow).
+        (Phase::Water, Polarity::Yo) => StatusKind::BadCondition(BadConditionKind::Exposed),
+        (Phase::Water, Polarity::In) => StatusKind::BadCondition(BadConditionKind::Slowed),
+        // Metal — Yō severs (DoT), In dulls (accuracy down).
+        (Phase::Metal, Polarity::Yo) => StatusKind::BadCondition(BadConditionKind::Bleeding),
+        (Phase::Metal, Polarity::In) => StatusKind::BadCondition(BadConditionKind::Blinded),
+        // Wood — Yō blooms (vulnerability), In entangles (root ≈ slow).
+        (Phase::Wood, Polarity::Yo) => StatusKind::Debuff(DebuffKind::Fragile),
+        (Phase::Wood, Polarity::In) => StatusKind::BadCondition(BadConditionKind::Slowed),
+        // Earth — Yō staggers, In weighs down.
+        (Phase::Earth, Polarity::Yo) => StatusKind::BadCondition(BadConditionKind::Staggered),
+        (Phase::Earth, Polarity::In) => StatusKind::Debuff(DebuffKind::Sluggish),
+    };
+    Some((kind, 1))
+}
+
 /// Single-resource selector for effects like Crippled Spirit and Starved.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ResourceKind {

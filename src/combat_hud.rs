@@ -26,9 +26,11 @@ use bevy::prelude::*;
 use crate::battle::{BattleParticipant, BattleSide};
 use crate::combat_ability::{Ability, Ability_Tree, MagicSchool};
 use crate::combat_plugin::{
-    Abilities, CombatStats, Inventory, InventoryItemCatalog, InventoryItemKind, Name,
-    PendingPlayerAction, PlayerAction, PlayerActionEvent,
+    effective_element, Abilities, Attunement, CombatStats, ElementalAffinity, Inventory,
+    InventoryItemCatalog, InventoryItemKind, Name, PendingPlayerAction, PlayerAction,
+    PlayerActionEvent, PolarityFlip, OVERLOAD_THRESHOLD,
 };
+use crate::gogyo::{damage_multiplier_overloaded, Element, Phase, Polarity};
 use crate::constants::{BASIC_ATTACK_ACTION_POINT_COST, ITEM_ACTION_POINT_COST};
 use crate::core::{GameState, Game_State, MainCamera};
 use crate::skill_tree::MagicCostMultipliers;
@@ -57,7 +59,8 @@ impl Plugin for CombatHudPlugin {
             // over the shared `update_standard_button_visuals` hover restyling
             // and always reflect the current frame's affordability.
             .add_systems(PostUpdate, (sync_combat_hud, sync_hint))
-            .add_systems(PostUpdate, sync_target_marker.after(sync_combat_hud));
+            .add_systems(PostUpdate, sync_target_marker.after(sync_combat_hud))
+            .add_systems(PostUpdate, sync_element_wheel);
     }
 }
 
@@ -133,6 +136,27 @@ struct CombatHudHint;
 #[derive(Component)]
 struct CombatHudTargetMarker;
 
+// --- 五行 element wheel widget (§10 of docs/gogyo_elemental_system.md) -------
+
+/// Root of the top-anchored Gogyō wheel widget. Spawned/despawned with the HUD.
+#[derive(Component)]
+struct ElementWheelRoot;
+
+/// One phase node in the pentagon. `sync_element_wheel` highlights the one that
+/// matches the aimed target's (or, when idle, the actor's) effective phase.
+#[derive(Component, Clone, Copy)]
+struct WheelPip {
+    phase: Phase,
+}
+
+/// The central live-multiplier readout ("×1.5" / "×0.66" / "—").
+#[derive(Component)]
+struct WheelMultiplier;
+
+/// The element label under the wheel (e.g. "Fire · Yō").
+#[derive(Component)]
+struct WheelElementLabel;
+
 // ---------------------------------------------------------------------------
 // Lifetime
 // ---------------------------------------------------------------------------
@@ -150,6 +174,7 @@ fn manage_combat_hud_lifetime(
     abilities_q: Query<&Abilities>,
     inventory_q: Query<&Inventory>,
     hud_q: Query<Entity, With<CombatHudRoot>>,
+    wheel_q: Query<Entity, With<ElementWheelRoot>>,
 ) {
     let should_show = game_state.0 == Game_State::Battle && pending.entity.is_some();
     let already_shown = !hud_q.is_empty();
@@ -168,12 +193,16 @@ fn manage_combat_hud_lifetime(
             ability_tree.as_deref(),
             item_catalog.as_deref(),
         );
+        spawn_element_wheel(&mut commands);
         state.mode = HudMode::Idle;
         state.focus = 0;
         state.option_count = count;
         state.target = None;
     } else if !should_show && already_shown {
         for entity in hud_q.iter() {
+            commands.entity(entity).despawn();
+        }
+        for entity in wheel_q.iter() {
             commands.entity(entity).despawn();
         }
         *state = CombatHudState::default();
@@ -283,6 +312,137 @@ fn spawn_combat_hud(
     });
 
     index
+}
+
+// ---------------------------------------------------------------------------
+// 五行 element wheel
+// ---------------------------------------------------------------------------
+
+/// Phase tint for a pip (linear sRGB), matching the §10 colour intent.
+fn phase_color(phase: Phase) -> Color {
+    match phase {
+        Phase::Wood => Color::srgb(0.32, 0.62, 0.34),
+        Phase::Fire => Color::srgb(0.82, 0.36, 0.26),
+        Phase::Earth => Color::srgb(0.74, 0.58, 0.30),
+        Phase::Metal => Color::srgb(0.68, 0.71, 0.78),
+        Phase::Water => Color::srgb(0.34, 0.54, 0.84),
+    }
+}
+
+/// `木 Wood` etc. — kanji + name, short enough for a 48px pip.
+fn phase_label(phase: Phase) -> &'static str {
+    match phase {
+        Phase::Wood => "木 Wood",
+        Phase::Fire => "火 Fire",
+        Phase::Earth => "土 Earth",
+        Phase::Metal => "金 Metal",
+        Phase::Water => "水 Water",
+    }
+}
+
+/// (left, top) for each phase inside the 176×140 pentagon box — Wood at the
+/// apex, then clockwise (Fire, Earth, Metal, Water), matching the §2 diagram.
+fn pip_offset(phase: Phase) -> (f32, f32) {
+    match phase {
+        Phase::Wood => (64.0, 2.0),
+        Phase::Fire => (122.0, 44.0),
+        Phase::Earth => (100.0, 110.0),
+        Phase::Metal => (28.0, 110.0),
+        Phase::Water => (6.0, 44.0),
+    }
+}
+
+const WHEEL_PHASES: [Phase; 5] =
+    [Phase::Wood, Phase::Fire, Phase::Earth, Phase::Metal, Phase::Water];
+
+/// Build the top-anchored wheel widget. Pips, a central multiplier readout, and
+/// an element label; `sync_element_wheel` fills in highlight/values each frame.
+fn spawn_element_wheel(commands: &mut Commands) {
+    let panel = (
+        Node {
+            position_type: PositionType::Absolute,
+            top: Val::Px(spacing::XL),
+            left: Val::Percent(50.0),
+            margin: UiRect::left(Val::Px(-98.0)),
+            width: Val::Px(196.0),
+            display: Display::Flex,
+            flex_direction: FlexDirection::Column,
+            align_items: AlignItems::Center,
+            row_gap: Val::Px(spacing::XS),
+            padding: UiRect::all(Val::Px(spacing::SM)),
+            border: UiRect::all(Val::Px(1.5)),
+            border_radius: BorderRadius::all(Val::Px(radius::LG)),
+            ..default()
+        },
+        BackgroundColor(palette::BG_PANEL),
+        BorderColor::all(palette::BORDER_ACCENT),
+        ElementWheelRoot,
+    );
+
+    commands.spawn(panel).with_children(|col| {
+        col.spawn(text_node("五行 — Elements", font_size::SMALL, palette::ACCENT_PRIMARY));
+
+        // Pentagon box: pips positioned absolutely, multiplier in the centre.
+        col.spawn(Node {
+            position_type: PositionType::Relative,
+            width: Val::Px(176.0),
+            height: Val::Px(140.0),
+            ..default()
+        })
+        .with_children(|wheel| {
+            for phase in WHEEL_PHASES {
+                let (left, top) = pip_offset(phase);
+                wheel
+                    .spawn((
+                        Node {
+                            position_type: PositionType::Absolute,
+                            left: Val::Px(left),
+                            top: Val::Px(top),
+                            width: Val::Px(48.0),
+                            height: Val::Px(24.0),
+                            display: Display::Flex,
+                            align_items: AlignItems::Center,
+                            justify_content: JustifyContent::Center,
+                            border: UiRect::all(Val::Px(1.5)),
+                            border_radius: BorderRadius::all(Val::Px(radius::SM)),
+                            ..default()
+                        },
+                        BackgroundColor(phase_color(phase).with_alpha(0.30)),
+                        BorderColor::all(palette::BORDER_SUBTLE),
+                        WheelPip { phase },
+                    ))
+                    .with_children(|pip| {
+                        pip.spawn(text_node(phase_label(phase), 11.0, palette::TEXT_PRIMARY));
+                    });
+            }
+
+            // Centre readout — the live multiplier.
+            wheel
+                .spawn(Node {
+                    position_type: PositionType::Absolute,
+                    left: Val::Px(58.0),
+                    top: Val::Px(52.0),
+                    width: Val::Px(60.0),
+                    height: Val::Px(36.0),
+                    display: Display::Flex,
+                    align_items: AlignItems::Center,
+                    justify_content: JustifyContent::Center,
+                    ..default()
+                })
+                .with_children(|c| {
+                    c.spawn((
+                        text_node("—", font_size::BODY_LG, palette::TEXT_DIM),
+                        WheelMultiplier,
+                    ));
+                });
+        });
+
+        // Element label (target's effective element, or the actor's own).
+        col.spawn((
+            text_node("", font_size::SMALL, palette::TEXT_SECONDARY),
+            WheelElementLabel,
+        ));
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -434,6 +594,7 @@ fn placeholder_ability(id: u16) -> Ability {
         health_cost: 0,
         magic_cost: 0.0,
         magic_school: MagicSchool::Kiho,
+        element: None,
         action_point_cost: 0,
         cooldown: 0,
         description: String::new(),
@@ -981,6 +1142,109 @@ fn sync_hint(
     }
 }
 
+/// Drive the 五行 wheel widget: highlight the phase pip for the aimed target's
+/// (or, when idle, the actor's own) **effective** element, and show the live
+/// 剋 multiplier of the selected on-wheel ability against that target. Reads
+/// the same `effective_element` + `damage_multiplier_overloaded` the damage
+/// pipeline uses, so the readout matches what the hit will actually do.
+#[allow(clippy::type_complexity)]
+fn sync_element_wheel(
+    state: Res<CombatHudState>,
+    pending: Res<PendingPlayerAction>,
+    ability_tree: Option<Res<Ability_Tree>>,
+    affinity_q: Query<&ElementalAffinity>,
+    attune_q: Query<&Attunement>,
+    flip_q: Query<(), With<PolarityFlip>>,
+    stats_q: Query<&CombatStats>,
+    mut pip_q: Query<(&WheelPip, &mut BackgroundColor, &mut BorderColor)>,
+    mut mult_q: Query<
+        (&mut Text, &mut TextColor),
+        (With<WheelMultiplier>, Without<WheelElementLabel>),
+    >,
+    mut label_q: Query<&mut Text, (With<WheelElementLabel>, Without<WheelMultiplier>)>,
+) {
+    let Some(actor) = pending.entity else { return };
+
+    let eff = |e: Entity| {
+        effective_element(affinity_q.get(e).ok(), attune_q.get(e).ok(), flip_q.get(e).is_ok())
+    };
+
+    // The chosen action's element (None for a basic attack / off-wheel) + target.
+    let (sel_element, target): (Option<Element>, Option<Entity>) = match state.mode {
+        HudMode::AwaitingTarget(SelectedAction::Ability(id)) => (
+            ability_tree.as_deref().and_then(|t| t.0.find(id)).and_then(|a| a.element),
+            state.target,
+        ),
+        HudMode::AwaitingTarget(SelectedAction::Attack) => (None, state.target),
+        HudMode::Idle => (None, None),
+    };
+
+    // Highlight the target's element while aiming; otherwise the actor's own.
+    let highlight = match target {
+        Some(t) => eff(t),
+        None => eff(actor),
+    };
+
+    // Live multiplier — only when an on-wheel ability is aimed at an element-bearing target.
+    let (mult_text, mult_color) = match (sel_element, target.and_then(|t| eff(t).map(|d| (t, d)))) {
+        (Some(s), Some((t, d))) => {
+            let ap = stats_q.get(actor).map(|cs| cs.mind.current as f32).unwrap_or(0.0);
+            let dp = stats_q.get(t).map(|cs| cs.mind.current as f32).unwrap_or(0.0);
+            let m = damage_multiplier_overloaded(s, d, ap, dp, OVERLOAD_THRESHOLD);
+            let color = if m > 1.001 {
+                palette::ACCENT_SUCCESS
+            } else if m < 0.999 {
+                palette::ACCENT_DANGER
+            } else {
+                palette::TEXT_DIM
+            };
+            (format!("×{m:.2}"), color)
+        }
+        _ => ("—".to_string(), palette::TEXT_DIM),
+    };
+
+    for (pip, mut bg, mut border) in &mut pip_q {
+        let is_hi = highlight.map(|e| e.phase == pip.phase).unwrap_or(false);
+        let base = phase_color(pip.phase);
+        if is_hi {
+            bg.0 = base.with_alpha(0.85);
+            let bc = if target.is_some() && sel_element.is_some() {
+                mult_color
+            } else {
+                palette::BORDER_ACCENT
+            };
+            set_border(&mut border, bc);
+        } else {
+            bg.0 = base.with_alpha(0.30);
+            set_border(&mut border, palette::BORDER_SUBTLE);
+        }
+    }
+
+    if let Ok((mut text, mut color)) = mult_q.single_mut() {
+        if text.0 != mult_text {
+            text.0 = mult_text;
+        }
+        color.0 = mult_color;
+    }
+
+    if let Ok(mut label) = label_q.single_mut() {
+        let desired = match highlight {
+            Some(e) => {
+                let pol = match e.polarity {
+                    Polarity::In => "In 陰",
+                    Polarity::Yo => "Yō 陽",
+                };
+                let who = if target.is_some() { "target" } else { "you" };
+                format!("{} · {pol}  ({who})", phase_label(e.phase))
+            }
+            None => "no element".to_string(),
+        };
+        if label.0 != desired {
+            label.0 = desired;
+        }
+    }
+}
+
 /// One-line description of a focused option, with its cost / cooldown and, if
 /// it can't be used right now, the reason.
 fn describe_action(
@@ -1025,6 +1289,9 @@ fn ability_estimate(a: &Ability) -> String {
             }
             AbilityEffect::Heal { floor, ceiling, .. } => {
                 return format!("≈{floor}–{ceiling} heal");
+            }
+            AbilityEffect::DrainMorale { floor, ceiling, .. } => {
+                return format!("≈{floor}–{ceiling} sanity");
             }
             _ => {}
         }

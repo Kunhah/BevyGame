@@ -33,6 +33,7 @@ pub mod debug_console;
 pub mod dialogue;
 pub mod economy;
 pub mod effects;
+pub mod gogyo;
 pub mod governance;
 pub mod hud;
 pub mod kegare;

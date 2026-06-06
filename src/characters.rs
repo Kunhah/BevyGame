@@ -30,10 +30,11 @@ use bevy::prelude::*;
 
 use crate::combat_ability::MagicSchool;
 use crate::combat_plugin::{
-    Abilities, AccessoryType, ArmorType, CharacterId, CombatStats, EquipmentLoadout,
-    EquipmentSlotType, EquipmentType, ExtraHp, GrowthAttributes, GrowthCurve, Inventory,
-    MagicDistribution, RogueBehavior, SpiritMediumBehavior, StatPool, WeaponType,
+    Abilities, AccessoryType, ArmorType, CharacterId, CombatStats, ElementalAffinity,
+    EquipmentLoadout, EquipmentSlotType, EquipmentType, ExtraHp, GrowthAttributes, GrowthCurve,
+    Inventory, MagicDistribution, RogueBehavior, SpiritMediumBehavior, StatPool, WeaponType,
 };
+use crate::gogyo::{Element, Phase, Polarity};
 use crate::constants::DEFAULT_ACTION_POINTS;
 use crate::skill_tree::{
     LearnedSkills, MagicCostMultipliers, SkillPoints, SkillTreeAccess, SkillTreeKind,
@@ -151,6 +152,35 @@ impl CharacterKind {
         }
     }
 
+    /// The character's innate place on the 五行 Gogyō wheel — their natural
+    /// element. Distinct from [`Self::magic_affinities`] (the *schools* they
+    /// channel through): this is the phase/polarity their own body resonates
+    /// with, used by Kiho abilities and incoming-matchup resist.
+    ///
+    /// Assignments follow each protagonist's class fantasy:
+    /// * **Rina** (rogue) — `Metal-In`: the hidden, precise blade.
+    /// * **Sayaka** (cleric) — `Earth-Yō`: the nourishing support hub that
+    ///   feeds allies down the 生 cycle.
+    /// * **Houjou** (samurai) — `Fire-Yō`: aggressive front-line burst.
+    /// * **Toshiko** (vessel) — `Water-Yō`: the dangerous, surging deep.
+    /// * **Renjiro** (monk) — `Wood-Yō`: vital, regenerating, bamboo-flexible.
+    /// * **Suzuka** (onmyoji) — `Water-In`: flowing control and seals (the
+    ///   yin mirror of Toshiko's surging Water-Yō).
+    /// * **Kanzo** (exorcist) — `Fire-In`: the controlled, purifying ritual
+    ///   flame (the yin mirror of Houjou's aggressive Fire-Yō).
+    pub fn innate_element(self) -> Element {
+        let (phase, polarity) = match self {
+            CharacterKind::Rina => (Phase::Metal, Polarity::In),
+            CharacterKind::Sayaka => (Phase::Earth, Polarity::Yo),
+            CharacterKind::Houjou => (Phase::Fire, Polarity::Yo),
+            CharacterKind::Toshiko => (Phase::Water, Polarity::Yo),
+            CharacterKind::Renjiro => (Phase::Wood, Polarity::Yo),
+            CharacterKind::Suzuka => (Phase::Water, Polarity::In),
+            CharacterKind::Kanzo => (Phase::Fire, Polarity::In),
+        };
+        Element { phase, polarity }
+    }
+
     /// Full learn allowlist: universal trees + magic affinities + class tree.
     pub fn skill_access(self) -> SkillTreeAccess {
         SkillTreeAccess::new()
@@ -185,10 +215,12 @@ impl CharacterKind {
             ],
             // Core: Kuro's Touch/Whisper, Reigan, Kuro's grasp, Tokoyo Veil, Shared
             // pain. Extras (0x6806+): Kuro's Jaws, Maddening Whisper, Lend Me Your
-            // Strength, Umbral Step, Curse of Kuro, Two-Souls Surge.
+            // Strength, Umbral Step, Curse of Kuro, Two-Souls Surge. Sanity
+            // specialists (0x680C+): Hollow the Heart, Feast on Despair.
             CharacterKind::Toshiko => vec![
                 26624, 26625, 26626, 26627, 26628, 26629,
                 26630, 26631, 26632, 26633, 26634, 26635,
+                26636, 26637,
             ],
             // Core: Naginata Arc/Thrust, Yamabushi Breath, Hamaya, Kabura-ya,
             // Fudō's Severance. Extras (0x7020+): Ishizuki, Tomoe Guard, Yatate
@@ -308,6 +340,10 @@ impl CharacterKind {
         e.insert(SkillPoints::default());
         e.insert(LearnedSkills::default());
         e.insert(MagicCostMultipliers::default());
+        e.insert(ElementalAffinity {
+            innate: self.innate_element(),
+            resist: 0.0,
+        });
         e.insert(CharacterId(self.character_id()));
         e.insert(self); // the CharacterKind tag itself
         if let Some(extra) = self.extra_hp() {

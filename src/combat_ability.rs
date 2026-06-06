@@ -6,9 +6,10 @@ use rand::Rng;
 use serde::{Deserialize, Serialize};
 
 use crate::combat_plugin::{
-    ActionCause, AttackIntentEvent, ApplyBuffEvent, DamageQueue, DamageTag, DamageType, HealEvent,
-    QueuedDamage, Stat, SummonEvent,
+    ActionCause, ApplyAttunementEvent, ApplyBuffEvent, ApplyPolarityFlipEvent, AttackIntentEvent,
+    DamageQueue, DamageTag, DamageType, DrainMoraleEvent, HealEvent, QueuedDamage, Stat, SummonEvent,
 };
+use crate::gogyo::{Element, Phase};
 use crate::status_effects::{ApplyStatusEvent, RemoveStatusEvent, ResourceKind, StatusKind};
 
 /// Which kind of temporary combatant a [`AbilityEffect::Summon`] brings onto
@@ -59,7 +60,22 @@ pub enum AbilityEffect {
         damage_type: DamageType,
         scaled_with: Stat,
         defended_with: Stat,
+        /// "Sanity pressure" — how much the hit is amplified as the target's
+        /// morale (their will/capacity to fight) is depleted. `0.0` (the
+        /// default) means no scaling. `1.0` means up to +100% damage against a
+        /// target at zero morale, scaling linearly: a target at full morale
+        /// takes the unmodified hit, one at half morale takes +`factor/2`, etc.
+        /// Toshiko's Kuro abilities use this to punish foes she has unnerved.
+        #[serde(default)]
+        amplify_low_morale: f32,
     },
+    /// Directly siphon a target's **morale** — the mental "capacity to fight"
+    /// resource (see [`crate::combat_plugin::CombatStats::morale`]). Unlike
+    /// `Damage` (which drains health) this taps the will to fight itself, and
+    /// pairs with `Damage { amplify_low_morale }` so softening a target's
+    /// resolve makes the follow-up bite harder. `scaled_with` adds half the
+    /// caster's stat on top of the rolled `floor..ceiling` base.
+    DrainMorale { floor: u32, ceiling: u32, scaled_with: Stat },
     Buff {
         stat: Stat,
         multiplier: f32,
@@ -84,6 +100,13 @@ pub enum AbilityEffect {
     /// turn-order / expiry wiring lives in `crate::battle`. Fired once per cast,
     /// not per target.
     Summon { kind: SummonKind, lifetime_turns: u8 },
+    /// 五行 lever — temporarily re-attune each target to `phase` on the Gogyō
+    /// wheel for `duration` turns (changes their effective element for matchups
+    /// and 生 support; see `crate::gogyo`). Onmyōdō's attunement seals.
+    Attune { phase: Phase, duration: u8 },
+    /// 五行 lever — temporarily flip each target's In/Yō polarity for `duration`
+    /// turns (the Reversal Seal etc.; §3a of the design doc).
+    FlipPolarity { duration: u8 },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -112,6 +135,14 @@ pub struct Ability {
     pub magic_cost: f32,
     #[serde(default)]
     pub magic_school: MagicSchool,
+    /// 五行 elemental nature of this ability on the Gogyō wheel, orthogonal to
+    /// `magic_school` (the *source*) — it decides 剋/生 matchups and which
+    /// phase-status it can proc. `None` = elementally neutral (no wheel
+    /// interaction). Kiho abilities ignore this and inherit the caster's innate
+    /// [`crate::combat_plugin::ElementalAffinity`]. Defaults to `None` so older
+    /// ability data deserialises unchanged.
+    #[serde(default)]
+    pub element: Option<Element>,
     #[serde(alias = "stamina_cost")]
     pub action_point_cost: i32,
     pub cooldown: u8,
@@ -345,6 +376,9 @@ pub fn handle_ability(
     apply_status_events: &mut MessageWriter<ApplyStatusEvent>,
     remove_status_events: &mut MessageWriter<RemoveStatusEvent>,
     summon_events: &mut MessageWriter<SummonEvent>,
+    attune_events: &mut MessageWriter<ApplyAttunementEvent>,
+    flip_events: &mut MessageWriter<ApplyPolarityFlipEvent>,
+    drain_morale_events: &mut MessageWriter<DrainMoraleEvent>,
 ) {
     for (target_index, &target) in affected.iter().enumerate() {
         let cause = ActionCause::Ability { id: ability.id };
@@ -356,6 +390,17 @@ pub fn handle_ability(
                         healer: caster,
                         target,
                         amount,
+                        element: ability.element,
+                        cause: cause.clone(),
+                    });
+                }
+                AbilityEffect::DrainMorale { floor, ceiling, scaled_with } => {
+                    let base = rand::rng().gen_range(*floor..*ceiling) as i32;
+                    drain_morale_events.write(DrainMoraleEvent {
+                        drainer: caster,
+                        target,
+                        amount: base,
+                        scaled_with: *scaled_with,
                         cause: cause.clone(),
                     });
                 }
@@ -365,19 +410,26 @@ pub fn handle_ability(
                     damage_type,
                     scaled_with,
                     defended_with,
+                    amplify_low_morale,
                 } => {
                     let base = rand::rng().gen_range(*floor..*ceiling) as i32;
+
+                    let mut tags = vec![DamageTag::FromAbility(ability.id)];
+                    if *amplify_low_morale > 0.0 {
+                        tags.push(DamageTag::AmplifyLowMorale(*amplify_low_morale));
+                    }
 
                     dq.0.push(QueuedDamage {
                         attacker: caster,
                         target,
                         amount: base,
                         damage_type: *damage_type,
+                        element: ability.element,
                         scaled_with: vec![(*scaled_with, 1.0)],
                         defended_with: vec![(*defended_with, 1.0)],
                         accuracy_override: None,
                         crit_multiplier: 1.0,
-                        tags: vec![DamageTag::FromAbility(ability.id)],
+                        tags,
                         cause: cause.clone(),
                     });
 
@@ -406,6 +458,7 @@ pub fn handle_ability(
                         duration_in_ticks: ability.duration as u32,
                         additional_effects: effects.clone(),
                         applied_at: now,
+                        element: ability.element,
                         cause: cause.clone(),
                     });
                 }
@@ -440,6 +493,21 @@ pub fn handle_ability(
                             target: affected.first().copied(),
                         });
                     }
+                }
+                AbilityEffect::Attune { phase, duration } => {
+                    attune_events.write(ApplyAttunementEvent {
+                        target,
+                        phase: *phase,
+                        duration: *duration as u32,
+                        source: Some(caster),
+                    });
+                }
+                AbilityEffect::FlipPolarity { duration } => {
+                    flip_events.write(ApplyPolarityFlipEvent {
+                        target,
+                        duration: *duration as u32,
+                        source: Some(caster),
+                    });
                 }
             }
         }

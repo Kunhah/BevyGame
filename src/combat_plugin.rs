@@ -80,6 +80,71 @@ pub enum DamageType {
     True,
 }
 
+/// A combatant's innate place on the 五行 Gogyō wheel (see [`crate::gogyo`]).
+///
+/// Part of the *hybrid* elemental carrier: this is the unit's natural element
+/// (its "self" point), while individual abilities carry their own optional
+/// [`Element`](crate::gogyo::Element). Kiho abilities lock to `innate`; other
+/// schools may act off it. A combatant with no `ElementalAffinity` is treated
+/// as elementally neutral.
+#[derive(Component, Debug, Clone, Copy, PartialEq)]
+pub struct ElementalAffinity {
+    /// The unit's natural element on the wheel.
+    pub innate: crate::gogyo::Element,
+    /// `0.0..=1.0` — how much of the incoming 剋 matchup swing this unit shrugs
+    /// off (consumed in the damage step, added in a later build step). `0.0` =
+    /// full swings apply.
+    pub resist: f32,
+}
+
+impl ElementalAffinity {
+    /// Construct an affinity from a phase + polarity with no innate resist.
+    pub fn new(phase: crate::gogyo::Phase, polarity: crate::gogyo::Polarity) -> Self {
+        Self { innate: crate::gogyo::Element { phase, polarity }, resist: 0.0 }
+    }
+}
+
+/// Temporary phase **attunement** — overrides a combatant's phase (but not its
+/// polarity) on the wheel until `expiry` (a `Timestamp`). Applied by Onmyōdō
+/// rites/terrain/statuses; reverts to the innate phase when it expires or is
+/// removed. See `effective_element` and `expire_elemental_modifiers_system`.
+#[derive(Component, Debug, Clone, Copy, PartialEq)]
+pub struct Attunement {
+    pub phase: crate::gogyo::Phase,
+    /// `Timestamp` at/after which this attunement is removed.
+    pub expiry: u32,
+}
+
+/// Temporary **polarity flip** — while present, the combatant's In/Yō is
+/// inverted on every channel, until `expiry`. Presence = flipped (re-applying
+/// just refreshes the timer; it does not double-flip).
+#[derive(Component, Debug, Clone, Copy, PartialEq)]
+pub struct PolarityFlip {
+    /// `Timestamp` at/after which the flip is removed.
+    pub expiry: u32,
+}
+
+/// Resolve a combatant's **effective element** (§4c of the Gogyō design doc):
+/// innate affinity, with its phase overridden by any [`Attunement`] and its
+/// polarity inverted if a [`PolarityFlip`] is present. Returns `None` when the
+/// unit has neither an affinity nor an attunement — i.e. elementally neutral,
+/// so no 剋 matchup applies. A bare attunement (no innate) defaults to Yō.
+pub fn effective_element(
+    affinity: Option<&ElementalAffinity>,
+    attunement: Option<&Attunement>,
+    flipped: bool,
+) -> Option<crate::gogyo::Element> {
+    let innate = affinity.map(|a| a.innate);
+    // Phase comes from the attunement if any, else the innate phase; if neither
+    // exists the unit is off the wheel entirely.
+    let phase = attunement.map(|a| a.phase).or_else(|| innate.map(|e| e.phase))?;
+    let mut polarity = innate.map(|e| e.polarity).unwrap_or(crate::gogyo::Polarity::Yo);
+    if flipped {
+        polarity = polarity.opposite();
+    }
+    Some(crate::gogyo::Element { phase, polarity })
+}
+
 /// Generic current/base pair for stats. `base` is the natural ceiling that
 /// permanent changes (level-up, equipment) modify. `current` is the live
 /// gameplay value, which can drop below `base` (depletion, debuffs) or, with
@@ -595,6 +660,13 @@ pub enum DamageSignal {
 pub enum DamageTag {
     FromAbility(u16),
     Critical,
+    /// "Sanity pressure" carried from an [`crate::combat_ability::AbilityEffect::Damage`]
+    /// with `amplify_low_morale > 0`. The payload is the amplification factor:
+    /// `process_damage_queue_system` multiplies the hit by
+    /// `1.0 + factor * morale_depletion`, where depletion is `1 - current/base`
+    /// of the target's morale. So the hit is unchanged at full morale and up to
+    /// `+factor` at zero morale.
+    AmplifyLowMorale(f32),
 }
 
 /// Per-target multipliers for incoming damage by type. `1.0` is neutral,
@@ -632,6 +704,12 @@ pub struct QueuedDamage {
     pub target: Entity,
     pub amount: i32,                 // Pre-defense damage (>= 0). Negative reserved for signals.
     pub damage_type: DamageType,
+
+    /// 五行 elemental nature of this hit on the Gogyō wheel (see [`crate::gogyo`]).
+    /// `Some(..)` for an on-wheel attack (an Onmyōdō pick or any innate-phase
+    /// ability); `None` for off-wheel damage (plain weapon, status DoTs, true
+    /// damage) — those skip the 剋 multiplier in `process_damage_queue_system`.
+    pub element: Option<crate::gogyo::Element>,
 
     /// Attacker-side scaling: (stat, multiplier). These should be used when constructing
     /// the amount (we fill them here but process_attack_intent will apply them immediately).
@@ -1158,6 +1236,27 @@ pub struct HealEvent {
     pub healer: Entity,
     pub target: Entity,
     pub amount: u32,
+    /// 生 support element of the casting ability (see [`crate::gogyo`]). When the
+    /// caster's phase generates the target's effective phase, the heal is
+    /// amplified. `None` = elementally neutral heal (no amplification).
+    pub element: Option<crate::gogyo::Element>,
+    pub cause: ActionCause,
+}
+
+/// Request to siphon a target's **morale** (the mental capacity to fight).
+/// Emitted by [`crate::combat_ability::handle_ability`] for
+/// [`crate::combat_ability::AbilityEffect::DrainMorale`] and applied by
+/// `apply_morale_drain_system`, which subtracts `amount` plus half the
+/// drainer's `scaled_with` stat from the target's `morale.current` (floored at
+/// zero). Distinct from `DamageEvent`, which drains health.
+#[derive(Debug, Clone, Message)]
+pub struct DrainMoraleEvent {
+    pub drainer: Entity,
+    pub target: Entity,
+    /// Pre-scaling base, rolled from the effect's `floor..ceiling`.
+    pub amount: i32,
+    /// Drainer-side stat that adds (at half weight) to the base drain.
+    pub scaled_with: Stat,
     pub cause: ActionCause,
 }
 
@@ -1170,7 +1269,34 @@ pub struct ApplyBuffEvent {
     pub duration_in_ticks: u32,
     pub additional_effects: Option<Vec<u16>>,
     pub applied_at: u32,
+    /// 生 support element of the casting ability (see [`crate::gogyo`]). A
+    /// beneficial buff (multiplier > 1.0) is amplified when the caster's phase
+    /// generates the target's effective phase. `None` = neutral.
+    pub element: Option<crate::gogyo::Element>,
     pub cause: ActionCause,
+}
+
+/// Request to temporarily **attune** a target to a phase on the Gogyō wheel
+/// (§3a / §8). Applied by `apply_attunement_system`, which stamps an expiry
+/// `duration` turns out and inserts/refreshes an [`Attunement`] component.
+#[derive(Debug, Clone, Message)]
+pub struct ApplyAttunementEvent {
+    pub target: Entity,
+    pub phase: crate::gogyo::Phase,
+    /// Turns the attunement lasts (added to the current `Timestamp`).
+    pub duration: u32,
+    pub source: Option<Entity>,
+}
+
+/// Request to temporarily **flip** a target's In/Yō polarity (§3a). Applied by
+/// `apply_polarity_flip_system`. Presence of the resulting [`PolarityFlip`]
+/// means "flipped"; re-applying just refreshes the timer.
+#[derive(Debug, Clone, Message)]
+pub struct ApplyPolarityFlipEvent {
+    pub target: Entity,
+    /// Turns the flip lasts (added to the current `Timestamp`).
+    pub duration: u32,
+    pub source: Option<Entity>,
 }
 
 #[derive(Debug, Clone, Message)]
@@ -1853,6 +1979,7 @@ fn spirit_medium_absorb_system(
                     target: ev.target,
                     amount: 0,
                     damage_type: ev.damage_type,
+                    element: None,
                     scaled_with: vec![],
                     defended_with: vec![],
                     accuracy_override: None,
@@ -1872,6 +1999,7 @@ fn spirit_medium_absorb_system(
                 target: ev.target,
                 amount: applied,
                 damage_type: ev.damage_type,
+                element: None,
                 scaled_with: vec![],
                 defended_with: vec![],
                 accuracy_override: None,
@@ -1908,6 +2036,7 @@ fn paladin_damage_reduction_system(
                 target: ev.target,
                 amount: reduced as i32,
                 damage_type: ev.damage_type,
+                element: None,
                 scaled_with: vec![],
                 defended_with: vec![],
                 accuracy_override: None,
@@ -1953,6 +2082,7 @@ fn rogue_dodge_system(
                     target: ev.target,
                     amount: 0,
                     damage_type: ev.damage_type,
+                    element: None,
                     scaled_with: vec![],
                     defended_with: vec![],
                     accuracy_override: None,
@@ -1970,6 +2100,7 @@ fn rogue_dodge_system(
             target: ev.target,
             amount: ev.amount as i32,
             damage_type: ev.damage_type,
+            element: None,
             scaled_with: vec![],
             defended_with: vec![],
             accuracy_override: None,
@@ -2373,10 +2504,13 @@ fn queue_damage_from_before_attack(
                         defended_with.push((*dw, 1.0));
                     }
                     AbilityEffect::Heal { .. }
+                    | AbilityEffect::DrainMorale { .. }
                     | AbilityEffect::Buff { .. }
                     | AbilityEffect::ApplyStatus { .. }
                     | AbilityEffect::RemoveStatus { .. }
-                    | AbilityEffect::Summon { .. } => {}
+                    | AbilityEffect::Summon { .. }
+                    | AbilityEffect::Attune { .. }
+                    | AbilityEffect::FlipPolarity { .. } => {}
                 }
             }
         }
@@ -2456,6 +2590,7 @@ fn queue_damage_from_before_attack(
                 target,
                 amount: DamageSignal::Miss as i32,
                 damage_type: ev.context.damage_type.unwrap_or(DamageType::Physical),
+                element: None,
                 scaled_with: vec![],
                 defended_with: vec![],
                 accuracy_override: None,
@@ -2480,6 +2615,9 @@ fn queue_damage_from_before_attack(
             target,
             amount: pre_def_damage,
             damage_type: ev.context.damage_type.unwrap_or(DamageType::Physical),
+            // On-wheel only when the originating ability carries an element;
+            // basic attacks (ability == None) stay off-wheel Physical.
+            element: ev.ability.as_ref().and_then(|a| a.element),
             scaled_with: vec![],
             defended_with,
             accuracy_override: None,
@@ -2491,12 +2629,20 @@ fn queue_damage_from_before_attack(
 }
 
 
+/// Mind-stat margin (attacker − defender) at which a losing 剋 matchup inverts
+/// via 相乘 overload (see [`crate::gogyo::damage_multiplier_overloaded`]).
+pub const OVERLOAD_THRESHOLD: f32 = 12.0;
+
 fn process_damage_queue_system(
     mut dq: ResMut<DamageQueue>,
     stats_q: Query<&CombatStats>,
     mut status_q: Query<&mut crate::status_effects::StatusEffects>,
     weaknesses_q: Query<&DamageWeaknesses>,
+    affinity_q: Query<&ElementalAffinity>,
+    attune_q: Query<&Attunement>,
+    flip_q: Query<(), With<PolarityFlip>>,
     mut damage_writer: MessageWriter<DamageEvent>,
+    mut status_writer: MessageWriter<crate::status_effects::ApplyStatusEvent>,
 ) {
     for mut entry in dq.0.drain(..) {
         // SPECIAL NEGATIVE VALUES -------------------------------------------
@@ -2552,6 +2698,24 @@ fn process_damage_queue_system(
         // INCOMING MULTIPLIERS (Fragile, Broken Body, Haunted) ---------------
         entry.amount = ((entry.amount as f32) * inc.damage_mult).round() as i32;
 
+        // SANITY PRESSURE — a hit tagged AmplifyLowMorale deals more the more
+        // the target's morale (will to fight) is depleted. 0 bonus at full
+        // morale, up to +factor at zero. Pairs with DrainMorale: soften the
+        // resolve first, then strike for amplified damage.
+        if let Some(t) = tgt {
+            if t.morale.base > 0 {
+                if let Some(factor) = entry.tags.iter().find_map(|tag| match tag {
+                    DamageTag::AmplifyLowMorale(f) => Some(*f),
+                    _ => None,
+                }) {
+                    let ratio = (t.morale.current.max(0) as f32 / t.morale.base as f32).clamp(0.0, 1.0);
+                    let depletion = 1.0 - ratio;
+                    let mult = 1.0 + factor * depletion;
+                    entry.amount = ((entry.amount as f32) * mult).round() as i32;
+                }
+            }
+        }
+
         // EXPOSED is consumed on hit (one-shot multiplier, regardless of tier
         // duration which is only 1 turn anyway).
         if entry.amount > 0 {
@@ -2563,18 +2727,75 @@ fn process_damage_queue_system(
             }
         }
 
-        // CRIT × WEAKNESS — both are multiplicative final modifiers, so they
-        // stack. Defaults are 1.0 (no-op) when neither applies.
+        // CRIT × WEAKNESS × GOGYŌ — all three are multiplicative final
+        // modifiers, so they stack. Defaults are 1.0 (no-op) when none applies.
         let weakness_mult = weaknesses_q
             .get(entry.target)
             .map(|w| w.multiplier_for(entry.damage_type))
             .unwrap_or(1.0);
-        let final_mult = entry.crit_multiplier * weakness_mult;
+
+        // 五行 剋 channel: an on-wheel attack (entry.element is Some) compares
+        // its element against the *defender's effective element* (innate +
+        // attunement + polarity flip). Off-wheel hits, or a target with no
+        // element, resolve to 1.0. The defender's `resist` shrinks the swing
+        // toward neutral.
+        let gogyo_mult = match entry.element {
+            Some(atk_el) => {
+                let def_el = effective_element(
+                    affinity_q.get(entry.target).ok(),
+                    attune_q.get(entry.target).ok(),
+                    flip_q.get(entry.target).is_ok(),
+                );
+                match def_el {
+                    Some(def_el) => {
+                        // 相乘 overload: a powered-up losing matchup can invert.
+                        // "Elemental power" is the Mind stat (drives magic).
+                        let atk_power = atk.map(|s| s.mind.current as f32).unwrap_or(0.0);
+                        let def_power = tgt.map(|s| s.mind.current as f32).unwrap_or(0.0);
+                        let raw = crate::gogyo::damage_multiplier_overloaded(
+                            atk_el, def_el, atk_power, def_power, OVERLOAD_THRESHOLD,
+                        );
+                        let resist = affinity_q
+                            .get(entry.target)
+                            .map(|a| a.resist.clamp(0.0, 1.0))
+                            .unwrap_or(0.0);
+                        1.0 + (raw - 1.0) * (1.0 - resist)
+                    }
+                    None => 1.0,
+                }
+            }
+            None => 1.0,
+        };
+
+        let final_mult = entry.crit_multiplier * weakness_mult * gogyo_mult;
         if (final_mult - 1.0).abs() > f32::EPSILON {
             entry.amount = ((entry.amount as f32) * final_mult).round() as i32;
         }
 
         entry.amount = entry.amount.max(0);
+
+        // 五行 PHASE STATUS PROC ----------------------------------------------
+        // An on-wheel hit applies its phase's signature status (§7). Skip
+        // status-caused hits (no self-chaining, like the Bleeding aggravation
+        // system) and whiffs that dealt no damage.
+        if entry.amount > 0
+            && !matches!(entry.cause, ActionCause::StatusEffect { .. })
+        {
+            if let Some(atk_el) = entry.element {
+                if let Some((kind, tier)) =
+                    crate::status_effects::phase_proc_status(atk_el.phase, atk_el.polarity)
+                {
+                    status_writer.write(crate::status_effects::ApplyStatusEvent {
+                        target: entry.target,
+                        kind,
+                        tier,
+                        source: Some(entry.attacker),
+                        expiry_override: None,
+                        resource_focus: None,
+                    });
+                }
+            }
+        }
 
         // FINAL DAMAGE --------------------------------------------------------
         damage_writer.send(DamageEvent {
@@ -2721,14 +2942,55 @@ fn apply_heal_system(
     mut reader: MessageReader<HealEvent>,
     mut stats_q: Query<&mut CombatStats>,
     status_q: Query<&crate::status_effects::StatusEffects>,
+    affinity_q: Query<&ElementalAffinity>,
+    attune_q: Query<&Attunement>,
+    flip_q: Query<(), With<PolarityFlip>>,
 ) {
     for ev in reader.iter() {
+        // 生 support amplification: if the casting element generates the
+        // target's *effective* element, the heal scales up (§6).
+        let support_mult = match (ev.element, effective_element(
+            affinity_q.get(ev.target).ok(),
+            attune_q.get(ev.target).ok(),
+            flip_q.get(ev.target).is_ok(),
+        )) {
+            (Some(caster_el), Some(target_el)) => {
+                crate::gogyo::support_multiplier(caster_el, target_el)
+            }
+            _ => 1.0,
+        };
+
         if let Ok(mut stats) = stats_q.get_mut(ev.target) {
             let gate = crate::status_effects::heal_gate(status_q.get(ev.target).ok());
-            let amount = ((ev.amount as f32) * gate.mult).round() as i32;
+            let amount = ((ev.amount as f32) * gate.mult * support_mult).round() as i32;
             if amount > 0 {
                 stats.health.restore_to_base(amount);
             }
+        }
+    }
+}
+
+/// Applies [`DrainMoraleEvent`]: subtracts the rolled base plus half the
+/// drainer's `scaled_with` stat from the target's `morale.current`, floored at
+/// zero. Read once up front so the drainer/target stat borrows don't overlap.
+fn apply_morale_drain_system(
+    mut reader: MessageReader<DrainMoraleEvent>,
+    mut stats_q: Query<&mut CombatStats>,
+) {
+    for ev in reader.iter() {
+        // Half the drainer's chosen stat is added on top of the base roll; copy
+        // it out before the mutable target borrow.
+        let bonus = stats_q
+            .get(ev.drainer)
+            .ok()
+            .map(|s| get_stat_value(ev.scaled_with, Some(s)) / 2)
+            .unwrap_or(0);
+        let total = (ev.amount + bonus).max(0);
+        if total == 0 {
+            continue;
+        }
+        if let Ok(mut stats) = stats_q.get_mut(ev.target) {
+            stats.morale.current = (stats.morale.current - total).max(0);
         }
     }
 }
@@ -3093,11 +3355,34 @@ fn apply_buff_system(
     mut commands: Commands,
     mut reader: MessageReader<ApplyBuffEvent>,
     mut modifiers_q: Query<&mut StatModifiers>,
+    affinity_q: Query<&ElementalAffinity>,
+    attune_q: Query<&Attunement>,
+    flip_q: Query<(), With<PolarityFlip>>,
 ) {
     for ev in reader.iter() {
+        // 生 support amplification (§6): only a *beneficial* buff
+        // (multiplier > 1.0) whose casting element generates the target's
+        // effective element gets its bonus fraction scaled up. Debuffs
+        // (multiplier < 1.0) are left untouched.
+        let support_mult = match (ev.element, effective_element(
+            affinity_q.get(ev.target).ok(),
+            attune_q.get(ev.target).ok(),
+            flip_q.get(ev.target).is_ok(),
+        )) {
+            (Some(caster_el), Some(target_el)) => {
+                crate::gogyo::support_multiplier(caster_el, target_el)
+            }
+            _ => 1.0,
+        };
+        let multiplier = if ev.multiplier > 1.0 && support_mult > 1.0 {
+            1.0 + (ev.multiplier - 1.0) * support_mult
+        } else {
+            ev.multiplier
+        };
+
         let modifier = StatModifier {
             stat: ev.stat,
-            multiplier: ev.multiplier,
+            multiplier,
             expires_at_timestamp: Some(ev.applied_at.saturating_add(ev.duration_in_ticks)),
             source: None,
         };
@@ -3110,10 +3395,59 @@ fn apply_buff_system(
 
         commands.spawn(Buff {
             stat: ev.stat,
-            multiplier: ev.multiplier,
+            multiplier,
             ends_at_timestamp: ev.applied_at.saturating_add(ev.duration_in_ticks),
             source: Some(ev.applier),
         });
+    }
+}
+
+/// Apply (or refresh) a temporary [`Attunement`] from an [`ApplyAttunementEvent`].
+/// Inserting overwrites any existing attunement on the target.
+fn apply_attunement_system(
+    mut commands: Commands,
+    mut reader: MessageReader<ApplyAttunementEvent>,
+    timestamp: Res<Timestamp>,
+) {
+    for ev in reader.read() {
+        commands.entity(ev.target).insert(Attunement {
+            phase: ev.phase,
+            expiry: timestamp.0.saturating_add(ev.duration),
+        });
+    }
+}
+
+/// Apply (or refresh) a temporary [`PolarityFlip`] from an [`ApplyPolarityFlipEvent`].
+fn apply_polarity_flip_system(
+    mut commands: Commands,
+    mut reader: MessageReader<ApplyPolarityFlipEvent>,
+    timestamp: Res<Timestamp>,
+) {
+    for ev in reader.read() {
+        commands.entity(ev.target).insert(PolarityFlip {
+            expiry: timestamp.0.saturating_add(ev.duration),
+        });
+    }
+}
+
+/// Remove temporary elemental modifiers ([`Attunement`] / [`PolarityFlip`])
+/// once the global `Timestamp` has reached their expiry. Cheap presence scan;
+/// the timestamp only advances on turns/rest so this settles immediately.
+fn expire_elemental_modifiers_system(
+    mut commands: Commands,
+    timestamp: Res<Timestamp>,
+    attune_q: Query<(Entity, &Attunement)>,
+    flip_q: Query<(Entity, &PolarityFlip)>,
+) {
+    for (e, att) in attune_q.iter() {
+        if timestamp.0 >= att.expiry {
+            commands.entity(e).remove::<Attunement>();
+        }
+    }
+    for (e, flip) in flip_q.iter() {
+        if timestamp.0 >= flip.expiry {
+            commands.entity(e).remove::<PolarityFlip>();
+        }
     }
 }
 
@@ -3754,6 +4088,7 @@ struct PlayerActionWriters<'w> {
     intent: MessageWriter<'w, AttackIntentEvent>,
     use_item: MessageWriter<'w, UseItemIntentEvent>,
     heal: MessageWriter<'w, HealEvent>,
+    drain_morale: MessageWriter<'w, DrainMoraleEvent>,
     buff: MessageWriter<'w, ApplyBuffEvent>,
     apply_status: MessageWriter<'w, crate::status_effects::ApplyStatusEvent>,
     remove_status: MessageWriter<'w, crate::status_effects::RemoveStatusEvent>,
@@ -3761,6 +4096,8 @@ struct PlayerActionWriters<'w> {
     wait: MessageWriter<'w, WaitIntentEvent>,
     turn_end: MessageWriter<'w, TurnEndEvent>,
     summon: MessageWriter<'w, SummonEvent>,
+    attune: MessageWriter<'w, ApplyAttunementEvent>,
+    flip: MessageWriter<'w, ApplyPolarityFlipEvent>,
 }
 
 fn process_player_action_system(
@@ -3896,6 +4233,9 @@ fn process_player_action_system(
                     &mut writers.apply_status,
                     &mut writers.remove_status,
                     &mut writers.summon,
+                    &mut writers.attune,
+                    &mut writers.flip,
+                    &mut writers.drain_morale,
                 );
             }
 
@@ -4565,7 +4905,10 @@ impl Plugin for CombatPlugin {
             .add_message::<AttackExecuteEvent>()
             .add_message::<BeforeHitEvent>()
             .add_message::<HealEvent>()
+            .add_message::<DrainMoraleEvent>()
             .add_message::<ApplyBuffEvent>()
+            .add_message::<ApplyAttunementEvent>()
+            .add_message::<ApplyPolarityFlipEvent>()
             .add_message::<DamageEvent>()
             .add_message::<UseItemIntentEvent>()
             .add_message::<GiveItemIntentEvent>()
@@ -4623,7 +4966,11 @@ impl Plugin for CombatPlugin {
             )
             .add_systems(Update, before_hit_listeners.after(before_to_execute))
             .add_systems(Update, apply_heal_system)
+            .add_systems(Update, apply_morale_drain_system)
             .add_systems(Update, apply_buff_system)
+            .add_systems(Update, apply_attunement_system)
+            .add_systems(Update, apply_polarity_flip_system)
+            .add_systems(Update, expire_elemental_modifiers_system)
             .add_systems(Update, process_damage_queue_system.after(queue_damage_from_before_attack))
             .add_systems(Update, apply_damage_system.after(process_damage_queue_system))
             .add_systems(Update, after_hit_listeners.after(apply_damage_system))
@@ -4660,3 +5007,55 @@ impl Plugin for CombatPlugin {
 //         .add_plugin(CombatPlugin)
 //         .run();
 // }
+
+#[cfg(test)]
+mod gogyo_combat_tests {
+    use super::{effective_element, Attunement, ElementalAffinity};
+    use crate::gogyo::{Element, Phase, Polarity};
+
+    #[test]
+    fn no_affinity_no_attunement_is_neutral() {
+        assert_eq!(effective_element(None, None, false), None);
+    }
+
+    #[test]
+    fn affinity_alone_is_the_innate_element() {
+        let aff = ElementalAffinity::new(Phase::Fire, Polarity::Yo);
+        assert_eq!(
+            effective_element(Some(&aff), None, false),
+            Some(Element { phase: Phase::Fire, polarity: Polarity::Yo })
+        );
+    }
+
+    #[test]
+    fn polarity_flip_inverts_only_polarity() {
+        let aff = ElementalAffinity::new(Phase::Fire, Polarity::Yo);
+        assert_eq!(
+            effective_element(Some(&aff), None, true),
+            Some(Element { phase: Phase::Fire, polarity: Polarity::In })
+        );
+    }
+
+    #[test]
+    fn attunement_overrides_phase_but_keeps_polarity() {
+        let aff = ElementalAffinity::new(Phase::Fire, Polarity::In);
+        let att = Attunement { phase: Phase::Water, expiry: 0 };
+        assert_eq!(
+            effective_element(Some(&aff), Some(&att), false),
+            Some(Element { phase: Phase::Water, polarity: Polarity::In })
+        );
+    }
+
+    #[test]
+    fn attunement_without_affinity_defaults_yo_and_respects_flip() {
+        let att = Attunement { phase: Phase::Metal, expiry: 0 };
+        assert_eq!(
+            effective_element(None, Some(&att), false),
+            Some(Element { phase: Phase::Metal, polarity: Polarity::Yo })
+        );
+        assert_eq!(
+            effective_element(None, Some(&att), true),
+            Some(Element { phase: Phase::Metal, polarity: Polarity::In })
+        );
+    }
+}

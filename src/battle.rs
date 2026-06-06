@@ -6,11 +6,12 @@ use bevy::prelude::Messages;
 use crate::characters::CharacterKind;
 use crate::combat_plugin::{
     Abilities, AccumulatedSpeed, ActionCause, AttackContext, AttackIntentEvent, Bound, CombatStats,
-    DamageEvent, DamageType, DeathEvent, Experience, GrowthAttributes, Level, MagicDistribution,
-    PendingPlayerAction, PlayerAction, PlayerActionEvent, PlayerControlled, ResurrectionStanding,
-    RoundEndEvent, StatModifiers, StatPool, SummonEvent, TurnEndEvent, TurnInProgress, TurnManager,
-    TurnOrder, TurnStartEvent, WaitIntentEvent,
+    DamageEvent, DamageType, DeathEvent, ElementalAffinity, Experience, GrowthAttributes, Level,
+    MagicDistribution, PendingPlayerAction, PlayerAction, PlayerActionEvent, PlayerControlled,
+    ResurrectionStanding, RoundEndEvent, StatModifiers, StatPool, SummonEvent, TurnEndEvent,
+    TurnInProgress, TurnManager, TurnOrder, TurnStartEvent, WaitIntentEvent,
 };
+use crate::gogyo::{Phase, Polarity};
 use crate::status_effects::{ApplyStatusEvent, BadConditionKind, StatusKind, Tier};
 use std::collections::HashSet;
 use crate::dialogue::{DialogueBoxTriggerEvent, DialogueCatalog, DialogueRuntime};
@@ -386,8 +387,18 @@ fn spawn_enemy_combat(
         _ => (60, 8, 65, 4, 7),
     };
 
+    // 五行 innate element (defence side of the wheel). Picked to give the
+    // player's tagged elemental spells visible matchups: a Metal-armoured
+    // soldier melts to Fire (×1.5), a water-warded one shrugs it off (×0.66).
+    let (phase, polarity) = match enemy_id {
+        1 => (Phase::Metal, Polarity::In),
+        2 => (Phase::Water, Polarity::Yo),
+        _ => (Phase::Wood, Polarity::In),
+    };
+
     let mut e = commands.spawn_empty();
     e.insert(Name::new(format!("EnemyCombat({})", enemy_id)));
+    e.insert(ElementalAffinity::new(phase, polarity));
     e.insert(BattleParticipant);
     e.insert(BattleSide::Enemy);
     e.insert(Transform::from_translation(world_pos));
@@ -509,8 +520,19 @@ pub fn spawn_yokai_combatant(
         YokaiKind::Kasha => (55, 8, 60, 6, 12, 18, 8.0_f32),
     };
 
+    // 五行 innate element, by species nature: Onibi (鬼火) is a darting flame,
+    // Kasha (火車) a corpse-stealing fire-cart, Kappa (河童) a river spirit.
+    // So fire spells are wasted on the fire yokai but Water seals melt them,
+    // while the Kappa shrugs off fire and wants a different answer.
+    let (phase, polarity) = match kind {
+        YokaiKind::Onibi => (Phase::Fire, Polarity::Yo),
+        YokaiKind::Kappa => (Phase::Water, Polarity::In),
+        YokaiKind::Kasha => (Phase::Fire, Polarity::In),
+    };
+
     let mut e = commands.spawn_empty();
     e.insert(Name::new(format!("Yokai({})", kind.label())));
+    e.insert(ElementalAffinity::new(phase, polarity));
     e.insert(BattleParticipant);
     e.insert(BattleSide::Enemy);
     e.insert(Transform::from_translation(world_pos));
