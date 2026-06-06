@@ -201,8 +201,8 @@ impl CharacterKind {
             // Bind Shikigami. Extras (0x7028+): Gofu Volley, Kuji-kiri, Hitogata
             // Transfer, Reading of Fate, Origami Blades, Greater Shikigami.
             CharacterKind::Suzuka => vec![
-                28680, 28681, 28682, 28683, 28684, 28685,
-                28712, 28713, 28714, 28715, 28716, 28717,
+                28680, 28681, 28682, 28683, 28684, 28685, 28686, 28687,
+                28712, 28713, 28714, 28715, 28716, 28717, 28718, 28719,
             ],
             // Core: Kotodama, Kiyome Flame, Onusa Ward, Heike Dirge, Goryō Seal,
             // Ōharae. Extras (0x7030+): Heart Sutra, Body Sutras, Gohei Sweep,

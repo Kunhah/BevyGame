@@ -19,6 +19,35 @@ pub enum SummonKind {
     /// The onmyōji's paper familiar — a fragile, fast ally-side striker that
     /// acts on its own and expires after a few turns.
     Shikigami,
+    /// A temporary impassable barrier conjured onto the field. Unlike a
+    /// combatant it has no stats and never takes a turn — it is just a
+    /// `Collider` (so pathfinding routes around it) that dissolves after a few
+    /// *rounds*. Spawned by `crate::battle::spawn_summoned_obstacle`.
+    SpiritWard,
+    /// Passable hazard terrain: it does not block movement but slows anything
+    /// crossing it and bites whoever steps onto it (on-pass damage).
+    ThornBramble,
+    /// Impassable wall that also burns: a damage aura singes enemies standing
+    /// nearby at the end of each round.
+    EmberWard,
+    /// Passable cloud that does not slow or block, but afflicts enemies lingering
+    /// within it with the Slowed bad condition each round (a status aura).
+    HexMiasma,
+}
+
+impl SummonKind {
+    /// Whether this summon is an inert obstacle (no stat block, no turn) rather
+    /// than an autonomous combatant. Obstacles take a different spawn path and
+    /// tick their lifetime on round-end instead of on their own turn-end.
+    pub fn is_obstacle(self) -> bool {
+        matches!(
+            self,
+            SummonKind::SpiritWard
+                | SummonKind::ThornBramble
+                | SummonKind::EmberWard
+                | SummonKind::HexMiasma
+        )
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -408,6 +437,7 @@ pub fn handle_ability(
                             summoner: caster,
                             kind: *kind,
                             lifetime_turns: *lifetime_turns,
+                            target: affected.first().copied(),
                         });
                     }
                 }

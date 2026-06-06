@@ -1313,6 +1313,74 @@
         duration: 0,
         targets: 1,
     ),
+    (
+        id: 28686, // 0x700E (L14 s14) Spirit Ward — conjured barrier (obstacle summon)
+        next_id: None,
+        name: "Spirit Ward",
+        health_cost: 0,
+        magic_cost: 10.0,
+        magic_school: Onmyodo,
+        action_point_cost: 3,
+        cooldown: 4,
+        description: "Folds a standing talisman into the lane between her and her foe; the paper hardens into a barrier none may step through until it wears thin.",
+        effects: [
+            Summon(kind: SpiritWard, lifetime_turns: 3),
+        ],
+        shape: Select,
+        duration: 0,
+        targets: 1,
+    ),
+    (
+        id: 28687, // 0x700F (L14 s15) Thorn Bramble — passable hazard (slow + on-pass bite)
+        next_id: None,
+        name: "Thorn Bramble",
+        health_cost: 0,
+        magic_cost: 9.0,
+        magic_school: Onmyodo,
+        action_point_cost: 3,
+        cooldown: 4,
+        description: "Strews a snarl of conjured briar across the ground; foes may push through, but the thorns drag at their steps and rake any who enter.",
+        effects: [
+            Summon(kind: ThornBramble, lifetime_turns: 3),
+        ],
+        shape: Select,
+        duration: 0,
+        targets: 1,
+    ),
+    (
+        id: 28718, // 0x702E (L14 s46) Ember Ward — impassable wall + fire aura
+        next_id: None,
+        name: "Ember Ward",
+        health_cost: 0,
+        magic_cost: 14.0,
+        magic_school: Onmyodo,
+        action_point_cost: 4,
+        cooldown: 5,
+        description: "Folds a talisman that hardens into a smouldering wall; none may pass, and the heat sears those who linger beside it each round.",
+        effects: [
+            Summon(kind: EmberWard, lifetime_turns: 3),
+        ],
+        shape: Select,
+        duration: 0,
+        targets: 1,
+    ),
+    (
+        id: 28719, // 0x702F (L14 s47) Hex Miasma — passable cloud + Slowed status aura
+        next_id: None,
+        name: "Hex Miasma",
+        health_cost: 0,
+        magic_cost: 12.0,
+        magic_school: Onmyodo,
+        action_point_cost: 4,
+        cooldown: 5,
+        description: "Breathes out a creeping pall of cursed mist; it neither blocks nor bites, but the dread within saps the swiftness of any foe who tarries in it.",
+        effects: [
+            Summon(kind: HexMiasma, lifetime_turns: 3),
+        ],
+        shape: Select,
+        duration: 0,
+        targets: 1,
+    ),
 
     // ====================================================================
     // Kanzo — Exorcist (biwa-hōshi, Kamishin back-line). ids 0x7010. A blind

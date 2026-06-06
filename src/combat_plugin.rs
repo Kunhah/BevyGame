@@ -1720,6 +1720,10 @@ pub struct SummonEvent {
     pub summoner: Entity,
     pub kind: SummonKind,
     pub lifetime_turns: u8,
+    /// The cast's primary target, if any. Combatant summons ignore this and
+    /// spawn beside the caster; obstacle summons place themselves between the
+    /// caster and this target (so a ward walls off the chosen lane).
+    pub target: Option<Entity>,
 }
 
 pub trait DeathBehavior: Send + Sync + 'static {

@@ -5,11 +5,13 @@ use bevy::prelude::Messages;
 
 use crate::characters::CharacterKind;
 use crate::combat_plugin::{
-    Abilities, AccumulatedSpeed, Bound, CombatStats, DeathEvent, Experience, GrowthAttributes,
-    Level, MagicDistribution, PendingPlayerAction, PlayerAction, PlayerActionEvent,
-    PlayerControlled, ResurrectionStanding, StatModifiers, StatPool, SummonEvent, TurnEndEvent,
-    TurnManager, TurnOrder, TurnStartEvent,
+    Abilities, AccumulatedSpeed, ActionCause, Bound, CombatStats, DamageEvent, DamageType,
+    DeathEvent, Experience, GrowthAttributes, Level, MagicDistribution, PendingPlayerAction,
+    PlayerAction, PlayerActionEvent, PlayerControlled, ResurrectionStanding, RoundEndEvent,
+    StatModifiers, StatPool, SummonEvent, TurnEndEvent, TurnManager, TurnOrder, TurnStartEvent,
 };
+use crate::status_effects::{ApplyStatusEvent, BadConditionKind, StatusKind, Tier};
+use std::collections::HashSet;
 use crate::dialogue::{DialogueBoxTriggerEvent, DialogueCatalog, DialogueRuntime};
 use crate::quests::HuntRegistry;
 use crate::constants::{DEFAULT_ACTION_POINTS, GRID_HEIGHT, GRID_WIDTH, PLAYER_SPEED};
@@ -75,6 +77,59 @@ pub struct CombatMovePoints {
 pub struct SummonLifetime {
     pub remaining_turns: u8,
 }
+
+/// Marks a summoned, non-combatant obstacle (e.g. a Spirit Ward). It has a
+/// `Collider` but no `CombatStats`, so it never enters turn order and never
+/// receives a `TurnEndEvent` — instead `tick_obstacle_lifetime_system`
+/// decrements `remaining_rounds` once per battle round and despawns it at zero.
+#[derive(Component, Clone, Copy, Debug)]
+pub struct SummonedObstacle {
+    pub remaining_rounds: u8,
+}
+
+/// Movement-interaction effects of a summoned obstacle. A non-`passable`
+/// obstacle gets a hard `Collider` and blocks pathing; a passable one is walked
+/// over but may slow the crosser and/or bite them on entry.
+#[derive(Component, Clone, Copy, Debug)]
+pub struct ObstacleEffects {
+    /// If false, the obstacle carries a `Collider` and blocks movement.
+    pub passable: bool,
+    /// Movement-speed multiplier applied while a mover overlaps it (`< 1.0`
+    /// slows). Only meaningful when `passable`.
+    pub slow: Option<f32>,
+    /// `(amount, type)` damage dealt once when an entity first steps onto the
+    /// footprint. Only meaningful when `passable`.
+    pub on_pass: Option<(i32, DamageType)>,
+}
+
+/// Which combatants an [`ObstacleAura`] touches, relative to the battle sides.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AuraTargets {
+    Enemies,
+    Allies,
+    All,
+}
+
+/// What an [`ObstacleAura`] does to each combatant in range, once per round.
+#[derive(Clone, Copy, Debug)]
+pub enum AuraEffect {
+    Damage { amount: i32, damage_type: DamageType },
+    Status { kind: StatusKind, tier: Tier },
+}
+
+/// A per-round area effect emanating from an obstacle. Resolved by
+/// `obstacle_aura_tick_system` on `RoundEndEvent`.
+#[derive(Component, Clone, Copy, Debug)]
+pub struct ObstacleAura {
+    pub radius: f32,
+    pub effect: AuraEffect,
+    pub affects: AuraTargets,
+}
+
+/// Tracks which combatant entities are currently standing on a passable
+/// `on_pass` obstacle, so the bite fires once per entry rather than every frame.
+#[derive(Component, Clone, Default, Debug)]
+pub struct ObstacleOccupants(pub HashSet<Entity>);
 
 #[derive(Component, Clone, Copy, Debug)]
 pub struct CombatMoveTarget {
@@ -541,6 +596,12 @@ pub fn spawn_summoned_combatant(
     // that lands hits reliably and carries no magic pools of its own.
     let (name, hp, lethality, hit, armor, speed, mind) = match kind {
         SummonKind::Shikigami => ("Shikigami", 22, 16, 72, 3, 17, 4),
+        // Obstacle kinds are routed to `spawn_summoned_obstacle`; if one reaches
+        // here it's a wiring bug, so fall back to the fragile shikigami block.
+        SummonKind::SpiritWard
+        | SummonKind::ThornBramble
+        | SummonKind::EmberWard
+        | SummonKind::HexMiasma => ("Shikigami", 22, 16, 72, 3, 17, 4),
     };
 
     let mut e = commands.spawn_empty();
@@ -585,14 +646,177 @@ pub fn spawn_summoned_combatant(
     e.id()
 }
 
-/// Consumes [`SummonEvent`]s: spawns the requested combatant beside its summoner
-/// and registers it for end-of-battle cleanup. Turn-order inclusion is automatic
-/// — `register_participants_system` re-scans every `CombatStats` entity each
-/// frame, so the new unit enters the order on the next tick.
+/// Static design data for a summoned obstacle archetype: its visual footprint
+/// and its gameplay effects. Keeping it in one place (the way
+/// `spawn_summoned_combatant` keeps stat blocks inline) makes each ward's
+/// identity legible at a glance.
+struct ObstaclePreset {
+    name: &'static str,
+    footprint: f32,
+    height: f32,
+    effects: ObstacleEffects,
+    aura: Option<ObstacleAura>,
+}
+
+fn obstacle_preset(kind: SummonKind) -> ObstaclePreset {
+    let wall = ObstacleEffects {
+        passable: false,
+        slow: None,
+        on_pass: None,
+    };
+    match kind {
+        SummonKind::SpiritWard => ObstaclePreset {
+            name: "Spirit Ward",
+            footprint: 32.0,
+            height: 48.0,
+            effects: wall,
+            aura: None,
+        },
+        SummonKind::ThornBramble => ObstaclePreset {
+            name: "Thorn Bramble",
+            footprint: 32.0,
+            height: 22.0,
+            effects: ObstacleEffects {
+                passable: true,
+                slow: Some(0.45),
+                on_pass: Some((8, DamageType::Physical)),
+            },
+            aura: None,
+        },
+        SummonKind::EmberWard => ObstaclePreset {
+            name: "Ember Ward",
+            footprint: 32.0,
+            height: 48.0,
+            effects: wall,
+            aura: Some(ObstacleAura {
+                radius: 96.0,
+                effect: AuraEffect::Damage {
+                    amount: 6,
+                    damage_type: DamageType::Fire,
+                },
+                affects: AuraTargets::Enemies,
+            }),
+        },
+        SummonKind::HexMiasma => ObstaclePreset {
+            name: "Hex Miasma",
+            footprint: 48.0,
+            height: 16.0,
+            effects: ObstacleEffects {
+                passable: true,
+                slow: None,
+                on_pass: None,
+            },
+            aura: Some(ObstacleAura {
+                radius: 112.0,
+                effect: AuraEffect::Status {
+                    kind: StatusKind::BadCondition(BadConditionKind::Slowed),
+                    tier: 1,
+                },
+                affects: AuraTargets::Enemies,
+            }),
+        },
+        // Combatant kinds never reach the obstacle path; treat as a plain wall.
+        SummonKind::Shikigami => ObstaclePreset {
+            name: "Summoned Obstacle",
+            footprint: 32.0,
+            height: 48.0,
+            effects: wall,
+            aura: None,
+        },
+    }
+}
+
+/// Spawn a temporary obstacle at `world_pos` per its [`obstacle_preset`]. Impassable
+/// presets carry a world-space [`Collider`] (so `crate::world::update_cache` folds
+/// them into the `QuadTree` and pathfinding routes around them); passable presets
+/// skip the collider and instead hang their `ObstacleEffects`/`ObstacleAura` for
+/// the slow / on-pass / aura systems to read. No `CombatStats`/turn-order
+/// membership — a [`SummonedObstacle`] drives round-based expiry.
+pub fn spawn_summoned_obstacle(
+    commands: &mut Commands,
+    placeholders: &crate::render3d::PlaceholderAssets,
+    kind: SummonKind,
+    world_pos: Vec3,
+    lifetime_rounds: u8,
+) -> Entity {
+    let preset = obstacle_preset(kind);
+    let bounds = Rect::from_center_size(world_pos.truncate(), Vec2::splat(preset.footprint));
+
+    let mut e = commands.spawn((
+        Mesh3d(placeholders.unit_cube.clone()),
+        MeshMaterial3d(placeholders.obstacle_mat.clone()),
+        Transform::from_translation(Vec3::new(world_pos.x, world_pos.y, preset.height * 0.5))
+            .with_scale(Vec3::new(preset.footprint, preset.footprint, preset.height)),
+        SummonedObstacle {
+            remaining_rounds: lifetime_rounds.max(1),
+        },
+        preset.effects,
+        Name::new(preset.name),
+    ));
+
+    if !preset.effects.passable {
+        // Walls block pathing and cast shadows.
+        e.insert((
+            crate::quadtree::Collider { bounds },
+            crate::light_plugin::Occluder::new(Vec2::splat(preset.footprint)),
+        ));
+    }
+    if preset.effects.on_pass.is_some() {
+        e.insert(ObstacleOccupants::default());
+    }
+    if let Some(aura) = preset.aura {
+        e.insert(aura);
+    }
+    e.id()
+}
+
+/// Find a walkable world position near `desired` for an obstacle footprint,
+/// spiralling outward in collider-sized steps so a ward never lands on top of
+/// an existing collider. Returns `None` if everything nearby is blocked.
+fn nearest_free_world_pos(desired: Vec3, quad_tree: &QuadTree) -> Option<Vec3> {
+    const STEP: f32 = 32.0;
+    const MAX_RING: i32 = 4;
+    let walkable = |p: Vec3| {
+        is_walkable_move(
+            Position {
+                x: p.x as i32,
+                y: p.y as i32,
+            },
+            quad_tree,
+        )
+    };
+    if walkable(desired) {
+        return Some(desired);
+    }
+    for ring in 1..=MAX_RING {
+        for dy in -ring..=ring {
+            for dx in -ring..=ring {
+                // Only the outer shell of each ring is new.
+                if dx.abs() != ring && dy.abs() != ring {
+                    continue;
+                }
+                let candidate =
+                    desired + Vec3::new(dx as f32 * STEP, dy as f32 * STEP, 0.0);
+                if walkable(candidate) {
+                    return Some(candidate);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Consumes [`SummonEvent`]s. Combatant summons spawn beside the caster and join
+/// turn order automatically (`register_participants_system` re-scans every
+/// `CombatStats` entity each frame). Obstacle summons take a separate path:
+/// placed between caster and target, nudged to a free tile, and cleaned up at
+/// battle end via the [`SummonedObstacle`] marker.
 pub fn resolve_summon_system(
     mut commands: Commands,
     mut events: MessageReader<SummonEvent>,
     mut battle_state: ResMut<BattleState>,
+    placeholders: Res<crate::render3d::PlaceholderAssets>,
+    quad_tree: Res<QuadTree>,
     transforms: Query<&Transform>,
 ) {
     for ev in events.read() {
@@ -600,11 +824,163 @@ pub fn resolve_summon_system(
             .get(ev.summoner)
             .map(|t| t.translation)
             .unwrap_or(Vec3::ZERO);
-        // Offset slightly so the familiar doesn't spawn exactly on its caster.
-        let pos = base + Vec3::new(1.0, 1.0, 0.0);
-        let summoned = spawn_summoned_combatant(&mut commands, ev.kind, pos, ev.lifetime_turns);
-        battle_state.participants.push(summoned);
-        info!("Summoned {:?} (lifetime {} turns)", ev.kind, ev.lifetime_turns);
+
+        if ev.kind.is_obstacle() {
+            // Place the ward between caster and target so it walls off the lane;
+            // with no target, drop it just ahead of the caster.
+            let desired = match ev.target.and_then(|t| transforms.get(t).ok()) {
+                Some(tt) => base.lerp(tt.translation, 0.5),
+                None => base + Vec3::new(32.0, 32.0, 0.0),
+            };
+            match nearest_free_world_pos(desired, &quad_tree) {
+                Some(pos) => {
+                    spawn_summoned_obstacle(
+                        &mut commands,
+                        &placeholders,
+                        ev.kind,
+                        pos,
+                        ev.lifetime_turns,
+                    );
+                    info!(
+                        "Summoned obstacle {:?} (lifetime {} rounds)",
+                        ev.kind, ev.lifetime_turns
+                    );
+                }
+                None => info!(
+                    "Summon {:?} fizzled — no free tile near {:?}",
+                    ev.kind, desired
+                ),
+            }
+        } else {
+            // Offset slightly so the familiar doesn't spawn exactly on its caster.
+            let pos = base + Vec3::new(1.0, 1.0, 0.0);
+            let summoned =
+                spawn_summoned_combatant(&mut commands, ev.kind, pos, ev.lifetime_turns);
+            battle_state.participants.push(summoned);
+            info!("Summoned {:?} (lifetime {} turns)", ev.kind, ev.lifetime_turns);
+        }
+    }
+}
+
+/// Obstacles never take a turn, so they can't tick on `TurnEndEvent` the way
+/// summoned combatants do. Count them down once per full battle round
+/// (`RoundEndEvent`) and despawn at zero — the removed `Collider` triggers a
+/// `QuadTree` rebuild in `crate::world::update_cache`, reopening the lane.
+pub fn tick_obstacle_lifetime_system(
+    mut commands: Commands,
+    mut round_ends: MessageReader<crate::combat_plugin::RoundEndEvent>,
+    mut obstacles: Query<(Entity, &mut SummonedObstacle)>,
+) {
+    // One decrement per round regardless of how many RoundEndEvents coalesce.
+    if round_ends.read().count() == 0 {
+        return;
+    }
+    for (entity, mut ob) in obstacles.iter_mut() {
+        ob.remaining_rounds = ob.remaining_rounds.saturating_sub(1);
+        if ob.remaining_rounds == 0 {
+            commands.entity(entity).despawn();
+        }
+    }
+}
+
+/// Per-round area effects emanating from obstacles. For each [`ObstacleAura`],
+/// every combatant of the matching side within `radius` takes the aura's damage
+/// or gains its status. Fires on `RoundEndEvent` (once per round) so a static
+/// hazard pulses predictably without needing a turn of its own.
+pub fn obstacle_aura_tick_system(
+    mut round_ends: MessageReader<RoundEndEvent>,
+    auras: Query<(Entity, &Transform, &ObstacleAura)>,
+    combatants: Query<(Entity, &Transform, &BattleSide), With<BattleParticipant>>,
+    mut damage_writer: MessageWriter<DamageEvent>,
+    mut status_writer: MessageWriter<ApplyStatusEvent>,
+) {
+    if round_ends.read().count() == 0 {
+        return;
+    }
+    for (src, atf, aura) in auras.iter() {
+        let origin = atf.translation.truncate();
+        for (target, ttf, side) in combatants.iter() {
+            let matches_side = match aura.affects {
+                AuraTargets::Enemies => matches!(side, BattleSide::Enemy),
+                AuraTargets::Allies => matches!(side, BattleSide::Ally),
+                AuraTargets::All => true,
+            };
+            if !matches_side {
+                continue;
+            }
+            if origin.distance(ttf.translation.truncate()) > aura.radius {
+                continue;
+            }
+            match aura.effect {
+                AuraEffect::Damage {
+                    amount,
+                    damage_type,
+                } => {
+                    damage_writer.write(DamageEvent {
+                        attacker: src,
+                        target,
+                        amount,
+                        damage_type,
+                        cause: ActionCause::World,
+                    });
+                }
+                AuraEffect::Status { kind, tier } => {
+                    status_writer.write(ApplyStatusEvent {
+                        target,
+                        kind,
+                        tier,
+                        source: Some(src),
+                        expiry_override: None,
+                        resource_focus: None,
+                    });
+                }
+            }
+        }
+    }
+}
+
+/// Bites whoever steps onto a passable `on_pass` obstacle. Occupancy is tracked
+/// per obstacle so the hit lands once on *entry* rather than every frame the
+/// mover stands on it. Only the player physically moves in combat, so this maps
+/// the moving world entity back to its combat participant (which holds health)
+/// via [`BattleWorldLink`] and damages that.
+pub fn obstacle_on_pass_system(
+    game_state: Res<GameState>,
+    players: Query<(Entity, &BattleWorldLink), (With<BattleParticipant>, With<PlayerControlled>)>,
+    world_tf: Query<&Transform, With<Player>>,
+    mut obstacles: Query<(Entity, &Transform, &ObstacleEffects, &mut ObstacleOccupants)>,
+    mut damage_writer: MessageWriter<DamageEvent>,
+) {
+    if game_state.0 != Game_State::Battle {
+        return;
+    }
+    for (obs, otf, effects, mut occ) in obstacles.iter_mut() {
+        let Some((amount, damage_type)) = effects.on_pass else {
+            continue;
+        };
+        let half = otf.scale.truncate() * 0.5;
+        let center = otf.translation.truncate();
+        let (min, max) = (center - half, center + half);
+        for (combat_entity, link) in players.iter() {
+            let Ok(ptf) = world_tf.get(link.world_entity) else {
+                continue;
+            };
+            let p = ptf.translation.truncate();
+            let inside = p.x >= min.x && p.x <= max.x && p.y >= min.y && p.y <= max.y;
+            let was_inside = occ.0.contains(&combat_entity);
+            if inside && !was_inside {
+                occ.0.insert(combat_entity);
+                damage_writer.write(DamageEvent {
+                    attacker: obs,
+                    target: combat_entity,
+                    amount,
+                    damage_type,
+                    cause: ActionCause::World,
+                });
+            } else if !inside && was_inside {
+                occ.0.remove(&combat_entity);
+            }
+        }
     }
 }
 
@@ -754,6 +1130,7 @@ pub fn combat_movement_system(
     )>,
     game_state: Res<GameState>,
     quad_tree: Res<QuadTree>,
+    obstacles: Query<(&Transform, &ObstacleEffects), (Without<Player>, Without<MainCamera>)>,
     input: Res<ButtonInput<KeyCode>>,
     time: Res<Time>,
 ) {
@@ -813,12 +1190,14 @@ pub fn combat_movement_system(
                 };
 
                 if is_walkable_move(new_pos, &quad_tree) {
-                    let step = diagonal_speed.min(mp.remaining);
-                    let final_x = transform.translation.x + direction.x * step;
-                    let final_y = transform.translation.y + direction.y * step;
+                    let mult = obstacle_slow_mult(transform.translation.truncate(), &obstacles);
+                    let charge = diagonal_speed.min(mp.remaining);
+                    let dist = charge * mult;
+                    let final_x = transform.translation.x + direction.x * dist;
+                    let final_y = transform.translation.y + direction.y * dist;
                     transform.translation.x = final_x;
                     transform.translation.y = final_y;
-                    mp.remaining -= step;
+                    mp.remaining -= charge;
                     info!("Combat move points remaining: {:.2}", mp.remaining);
                     new_x_out = Some(final_x);
                     new_y_out = Some(final_y);
@@ -849,12 +1228,14 @@ pub fn combat_movement_system(
                 };
 
                 if is_walkable_move(new_pos, &quad_tree) {
-                    let step = movement_speed.min(mp.remaining);
-                    let final_x = transform.translation.x + direction.x * step;
-                    let final_y = transform.translation.y + direction.y * step;
+                    let mult = obstacle_slow_mult(transform.translation.truncate(), &obstacles);
+                    let charge = movement_speed.min(mp.remaining);
+                    let dist = charge * mult;
+                    let final_x = transform.translation.x + direction.x * dist;
+                    let final_y = transform.translation.y + direction.y * dist;
                     transform.translation.x = final_x;
                     transform.translation.y = final_y;
-                    mp.remaining -= step;
+                    mp.remaining -= charge;
                     info!("Combat move points remaining: {:.2}", mp.remaining);
                     new_x_out = Some(final_x);
                     new_y_out = Some(final_y);
@@ -866,6 +1247,34 @@ pub fn combat_movement_system(
         // old 2D snap-to-player here fought it and caused jitter.
         let _ = (new_x_out, new_y_out, camera_locked);
     }
+}
+
+/// Slowest movement multiplier among passable slow-obstacles overlapping `pos`
+/// (`1.0` if none). Crossing such terrain covers `mult`× the ground for full
+/// move-point cost — i.e. it costs `1/mult`× the points per tile.
+fn obstacle_slow_mult(
+    pos: Vec2,
+    obstacles: &Query<(&Transform, &ObstacleEffects), (Without<Player>, Without<MainCamera>)>,
+) -> f32 {
+    let mut mult = 1.0_f32;
+    for (tf, eff) in obstacles.iter() {
+        if !eff.passable {
+            continue;
+        }
+        let Some(slow) = eff.slow else {
+            continue;
+        };
+        let half = tf.scale.truncate() * 0.5;
+        let c = tf.translation.truncate();
+        if pos.x >= c.x - half.x
+            && pos.x <= c.x + half.x
+            && pos.y >= c.y - half.y
+            && pos.y <= c.y + half.y
+        {
+            mult = mult.min(slow);
+        }
+    }
+    mult
 }
 
 fn rotate_to_direction(start_x: f32, start_y: f32, destination_x: f32, destination_y: f32) -> f32 {
@@ -1290,6 +1699,7 @@ pub fn end_battle_on_death(
     mut tm: ResMut<TurnManager>,
     mut turn_order: ResMut<TurnOrder>,
     participants_q: Query<&BattleSide, With<BattleParticipant>>,
+    obstacles_q: Query<Entity, With<SummonedObstacle>>,
 ) {
     if !battle_state.active || game_state.0 != Game_State::Battle {
         return;
@@ -1310,6 +1720,10 @@ pub fn end_battle_on_death(
     }
 
     for entity in battle_state.participants.drain(..) {
+        commands.entity(entity).despawn();
+    }
+    // Summoned obstacles aren't combat participants, so despawn them by marker.
+    for entity in obstacles_q.iter() {
         commands.entity(entity).despawn();
     }
     tm.participants.clear();
