@@ -19,6 +19,10 @@ pub enum Game_State {
     /// The character / skill-tree overlay, opened with `K` while exploring.
     /// Lets the player browse and spend skill points on the party leader.
     SkillTree,
+    /// Resting in progress: time advances 4 minutes at a time toward the
+    /// chosen duration, rolling random events between steps. Entered from the
+    /// rest selector (inn / camp / ritual); see `crate::rest`.
+    Resting,
 }
 
 #[derive(Resource)]

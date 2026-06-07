@@ -81,6 +81,28 @@ impl ActivityKind {
         }
     }
 
+    /// Whether this ritual can only be performed at a consecrated place (a
+    /// shrine, temple, or sacred site / service NPC) rather than at a roadside
+    /// camp. Place-bound rites count as resting but are never interrupted by
+    /// random events; camp-able rites can be interrupted. Defaults here are a
+    /// starting point — tune freely.
+    pub fn requires_place(self) -> bool {
+        matches!(
+            self,
+            ActivityKind::Harae
+                | ActivityKind::Misogi
+                | ActivityKind::ShrineFocus
+                | ActivityKind::ShrineOffering
+                | ActivityKind::FormalRite
+                | ActivityKind::TempleBlessing
+                | ActivityKind::Pilgrimage
+                | ActivityKind::TendSacredGrove
+                | ActivityKind::BindingCircle
+                | ActivityKind::HauntedLocation
+                | ActivityKind::RestFertileTerrain
+        )
+    }
+
     /// The purification rite this activity performs, if any. Purification
     /// activities reduce the performer's kegare instead of restoring magic.
     pub fn purification(self) -> Option<crate::kegare::Purification> {

@@ -194,29 +194,29 @@ impl CharacterKind {
         match self {
             // Core: Shinobigatana, Bo-shuriken, Tanzutsu, Ramrod, Kawarimi,
             // Makibishi, Kemuri-dama, Ansatsu. Extras (0x5008+): Metsubushi,
-            // Kusarigama, Shinobi-aruki, Poisoned Blade, Happō Shuriken, Quickstep.
+            // Kusarigama, Shinobi-aruki, Dokutō, Happō Shuriken, Shukuchi.
             CharacterKind::Rina => vec![
                 20480, 20481, 20482, 20483, 20484, 20485, 20486, 20487,
                 20488, 20489, 20490, 20491, 20492, 20493,
             ],
             // Core: Kitsune-bi, Inari's Boon, Fox Glamour, Harae, Foxfire Lanterns.
-            // Extras (0x5805+): Dakini's Boon, Ninetail Foxfire, Beguile,
-            // Inari's Aegis, Searing Foxflame, Rite of Wards.
+            // Extras (0x5805+): Dakini's Boon, Ninetail Foxfire, Bakashi,
+            // Inari's Aegis, Searing Foxflame, Majinai.
             CharacterKind::Sayaka => vec![
                 22528, 22529, 22530, 22531, 22532,
                 22533, 22534, 22535, 22536, 22537, 22538,
             ],
             // Core: Kesa-giri, Yoko-giri, Iai, Sutemi, Magakiri, Sakazuki, Reibaku.
             // Extras (0x6007+): Tsubame-gaeshi, Munen Musō, Zanshin, Kabuto-wari,
-            // Bloodthirst Blade, Oni's Roar.
+            // Chisuigatana, Oni-no-Hōkō.
             CharacterKind::Houjou => vec![
                 24576, 24577, 24578, 24579, 24580, 24581, 24582,
                 24583, 24584, 24585, 24586, 24587, 24588,
             ],
-            // Core: Kuro's Touch/Whisper, Reigan, Kuro's grasp, Tokoyo Veil, Shared
-            // pain. Extras (0x6806+): Kuro's Jaws, Maddening Whisper, Lend Me Your
-            // Strength, Umbral Step, Curse of Kuro, Two-Souls Surge. Sanity
-            // specialists (0x680C+): Hollow the Heart, Feast on Despair.
+            // Core: Kuro's Touch/Whisper, Reigan, Kuro's Grasp, Tokoyo Veil,
+            // Chi-no-Kizuna. Extras (0x6806+): Kuro's Jaws, Kuruwase,
+            // Kuro-no-Chikara, Kagefumi, Kuro-no-Noroi, Niko-no-Issen. Sanity
+            // specialists (0x680C+): Utsuro, Kuro's Feast.
             CharacterKind::Toshiko => vec![
                 26624, 26625, 26626, 26627, 26628, 26629,
                 26630, 26631, 26632, 26633, 26634, 26635,
@@ -224,20 +224,20 @@ impl CharacterKind {
             ],
             // Core: Naginata Arc/Thrust, Yamabushi Breath, Hamaya, Kabura-ya,
             // Fudō's Severance. Extras (0x7020+): Ishizuki, Tomoe Guard, Yatate
-            // Volley, Heart-Seeker, Goma Flame, Conch Blast.
+            // Volley, Tōshin-ya, Goma Flame, Horagai.
             CharacterKind::Renjiro => vec![
                 28672, 28673, 28674, 28675, 28676, 28677,
                 28704, 28705, 28706, 28707, 28708, 28709,
             ],
             // Core: Ofuda Dart, Cinnabar Bolt, Kekkai, Binding Seal, Curse Ofuda,
             // Bind Shikigami. Extras (0x7028+): Gofu Volley, Kuji-kiri, Hitogata
-            // Transfer, Reading of Fate, Origami Blades, Greater Shikigami.
+            // Transfer, Mikuji, Origami Blades, Greater Shikigami.
             CharacterKind::Suzuka => vec![
                 28680, 28681, 28682, 28683, 28684, 28685, 28686, 28687,
                 28712, 28713, 28714, 28715, 28716, 28717, 28718, 28719,
             ],
             // Core: Kotodama, Kiyome Flame, Onusa Ward, Heike Dirge, Goryō Seal,
-            // Ōharae. Extras (0x7030+): Heart Sutra, Body Sutras, Gohei Sweep,
+            // Ōharae. Extras (0x7030+): Hannya Shingyō, Kyōkatabira, Gohei Sweep,
             // Tama-shizume, Shakujō Toll, Chinkonsai.
             CharacterKind::Kanzo => vec![
                 28688, 28689, 28690, 28691, 28692, 28693,

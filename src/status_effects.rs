@@ -1334,7 +1334,9 @@ pub fn rest_regen_system(
     )>,
 ) {
     for ev in reader.read() {
-        let hours = ev.hours as f32;
+        // Derive fractional hours from elapsed ticks. A 4-minute rest is 30
+        // ticks ≈ 0.067 h.
+        let hours = ev.ticks as f32 / TIMESTAMP_TICKS_PER_HOUR as f32;
         if hours <= 0.0 {
             continue;
         }
@@ -1346,7 +1348,11 @@ pub fn rest_regen_system(
         let m_mult = regen_multiplier(se, ResourceKind::Magic);
         let mor_mult = regen_multiplier(se, ResourceKind::Morale);
 
-        let h_gain = ((stats.health_per_rest_hour as f32) * h_mult * hours).round() as i32;
+        // The location's per-stat rates are added on top of the entity's own.
+        let loc = ev.location;
+
+        let h_gain =
+            ((stats.health_per_rest_hour as f32 + loc.health) * h_mult * hours).round() as i32;
         stats.health.restore_to_base(h_gain);
 
         // Prophetic Calm adds +1/2/3 morale per rest hour on top of the
@@ -1356,7 +1362,8 @@ pub fn rest_regen_system(
             .and_then(|s| s.tier_of(StatusKind::Buff(BuffKind::PropheticCalm)))
             .map(|t| t as i32)
             .unwrap_or(0);
-        let base_morale_rate = (stats.morale_per_rest_hour + prophetic_bonus) as f32;
+        let base_morale_rate =
+            (stats.morale_per_rest_hour + prophetic_bonus) as f32 + loc.morale;
         let mor_gain = (base_morale_rate * mor_mult * hours).round() as i32;
         stats.morale.restore_to_base(mor_gain);
 
@@ -1367,7 +1374,7 @@ pub fn rest_regen_system(
         if let Some(tier) =
             se.and_then(|s| s.tier_of(StatusKind::Debuff(DebuffKind::HauntedDreams)))
         {
-            let loss = (tier as i32) * (ev.hours as i32);
+            let loss = (tier as i32) * ((ev.ticks / TIMESTAMP_TICKS_PER_HOUR) as i32);
             stats.morale.current = (stats.morale.current - loss).max(0);
         }
 
@@ -1379,21 +1386,31 @@ pub fn rest_regen_system(
                 .map(|d| crate::kegare::regen_multiplier(*d, school))
                 .unwrap_or(1.0)
         };
-        let kiho_gain = stats.kiho_per_rest_hour * m_mult * hours * kegare_mult(MagicSchool::Kiho);
+        let kiho_gain = (stats.kiho_per_rest_hour + loc.kiho)
+            * m_mult
+            * hours
+            * kegare_mult(MagicSchool::Kiho);
         stats.kiho.restore_to_base(kiho_gain);
-        let chi_gain =
-            stats.onmyodo_per_rest_hour * m_mult * hours * kegare_mult(MagicSchool::Onmyodo);
+        let chi_gain = (stats.onmyodo_per_rest_hour + loc.onmyodo)
+            * m_mult
+            * hours
+            * kegare_mult(MagicSchool::Onmyodo);
         stats.onmyodo.restore_to_base(chi_gain);
-        let yo_gain =
-            stats.yokaijutsu_per_rest_hour * m_mult * hours * kegare_mult(MagicSchool::Yokaijutsu);
+        let yo_gain = (stats.yokaijutsu_per_rest_hour + loc.yokaijutsu)
+            * m_mult
+            * hours
+            * kegare_mult(MagicSchool::Yokaijutsu);
         stats.yokaijutsu.restore_to_base(yo_gain);
-        let kami_gain =
-            stats.kamishin_per_rest_hour * m_mult * hours * kegare_mult(MagicSchool::Kamishin);
+        let kami_gain = (stats.kamishin_per_rest_hour + loc.kamishin)
+            * m_mult
+            * hours
+            * kegare_mult(MagicSchool::Kamishin);
         stats.kamishin.restore_to_base(kami_gain);
 
         writer.write(AfterRestEvent {
             target: ev.target,
-            hours: ev.hours,
+            ticks: ev.ticks,
+            location: ev.location,
             cause: ev.cause.clone(),
         });
     }
@@ -1485,8 +1502,9 @@ pub fn starved_rest_interruption_system(
         let Some(tier) = se.tier_of(StatusKind::Debuff(DebuffKind::Starved)) else {
             continue;
         };
-        let lost = tier as u32;
-        ev.hours = ev.hours.saturating_sub(lost);
+        // Starvation costs `tier` hours of effective rest.
+        let lost = tier as u32 * TIMESTAMP_TICKS_PER_HOUR;
+        ev.ticks = ev.ticks.saturating_sub(lost);
     }
 }
 

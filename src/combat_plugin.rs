@@ -320,35 +320,58 @@ impl CombatStats {
     }
 }
 
-/// Request to rest for `hours`. Pipeline: external code fires `RestEvent`,
-/// `expand_rest_intent_system` fans it out into one `BeforeRestEvent` per
-/// affected entity (mutable so listeners may modify hours), `rest_regen_system`
-/// reads `BeforeRestEvent` and applies regen, then writes `AfterRestEvent` for
-/// post-rest reactions (status cleanups, world-time advance, etc.).
+/// Per-hour regen contributed by *where* the rest happens, added on top of each
+/// entity's own `*_per_rest_hour` rates. Lets an inn restore more health and
+/// magic than a roadside camp, and a ritual restore little bodily rest. All
+/// fields are amount-per-hour.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct RestRates {
+    pub health: f32,
+    pub morale: f32,
+    pub kiho: f32,
+    pub onmyodo: f32,
+    pub yokaijutsu: f32,
+    pub kamishin: f32,
+}
+
+/// Request to rest for `ticks` of game time. Pipeline: external code fires
+/// `RestEvent`, `expand_rest_intent_system` fans it out into one
+/// `BeforeRestEvent` per affected entity (mutable so listeners may modify the
+/// duration), `rest_regen_system` reads `BeforeRestEvent` and applies regen,
+/// then writes `AfterRestEvent` for post-rest reactions (status cleanups,
+/// world-time advance, etc.).
+///
+/// `ticks` is the actual elapsed game-time (`Timestamp` units); regen derives
+/// fractional hours from it, so any duration works (a 4-minute rest is 30
+/// ticks). `location` adds per-stat per-hour regen on top of each entity's own
+/// rates, capturing how restful the place is.
 #[derive(Debug, Clone, Message)]
 pub struct RestEvent {
     /// Optional target. When `None`, applies to every entity with `CombatStats`.
     pub target: Option<Entity>,
-    pub hours: u32,
+    pub ticks: u32,
+    pub location: RestRates,
     pub cause: ActionCause,
 }
 
 /// Fires once per affected entity, before regen is applied. Listeners may
-/// mutate `hours` (e.g. rest interruption from `Starved` debuff, equipment
+/// mutate `ticks` (e.g. rest interruption from `Starved` debuff, equipment
 /// that grants extra rest, sleep-quality buffs).
 #[derive(Debug, Clone, Message)]
 pub struct BeforeRestEvent {
     pub target: Entity,
-    pub hours: u32,
+    pub ticks: u32,
+    pub location: RestRates,
     pub cause: ActionCause,
 }
 
-/// Fires once per affected entity, after regen has been applied. `hours` is
+/// Fires once per affected entity, after regen has been applied. `ticks` is
 /// the value that was actually used (post any `BeforeRestEvent` mutation).
 #[derive(Debug, Clone, Message)]
 pub struct AfterRestEvent {
     pub target: Entity,
-    pub hours: u32,
+    pub ticks: u32,
+    pub location: RestRates,
     pub cause: ActionCause,
 }
 
@@ -3523,7 +3546,8 @@ pub fn expand_rest_intent_system(
             Some(t) => {
                 writer.write(BeforeRestEvent {
                     target: t,
-                    hours: ev.hours,
+                    ticks: ev.ticks,
+                    location: ev.location,
                     cause: ev.cause.clone(),
                 });
             }
@@ -3531,7 +3555,8 @@ pub fn expand_rest_intent_system(
                 for e in targets_q.iter() {
                     writer.write(BeforeRestEvent {
                         target: e,
-                        hours: ev.hours,
+                        ticks: ev.ticks,
+                        location: ev.location,
                         cause: ev.cause.clone(),
                     });
                 }

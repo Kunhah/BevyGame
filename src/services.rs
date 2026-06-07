@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use bevy::input::keyboard::KeyCode;
 use bevy::prelude::*;
 
-use crate::activities::{ActivityKind, PerformActivityEvent};
+use crate::activities::ActivityKind;
 use crate::city_data::{City, CityAuthorityState, CityCatalog};
 use crate::core::{GameState, Game_State, Player};
 use crate::economy::{PlayerWallet, TradeLogEvent};
@@ -15,13 +15,6 @@ use crate::map::{tile_center_world, CurrentArea, MapTiles, TILE_WORLD_SIZE};
 use crate::ui_style::{font_size, palette, radius, spacing};
 
 const SERVICE_INTERACT_DISTANCE: f32 = 96.0;
-const INN_REST_COST: u32 = 280;
-const INN_REST_HOURS: u32 = 8;
-/// Coin offering for a shrine purification rite (GDD: "offering worth 50").
-const SHRINE_RITE_COST: u32 = 50;
-/// Hours the harae rite takes; also satisfies the activity system's `hours > 0`
-/// gate so the purification fires.
-const SHRINE_RITE_HOURS: u32 = 1;
 type RegionId = u16;
 type CityId = u16;
 
@@ -93,7 +86,44 @@ impl Plugin for ServicesPlugin {
             .add_systems(Update, service_interaction_input)
             .add_systems(Update, ensure_transport_ui_root)
             .add_systems(Update, update_transport_ui_text)
-            .add_systems(Update, handle_transport_ui_input);
+            .add_systems(Update, handle_transport_ui_input)
+            .add_systems(Update, apply_inn_rest_effects);
+    }
+}
+
+/// Inn rests improve the local town and wash off some notoriety. Runs off the
+/// generic [`crate::rest::RestCompletedEvent`] so the rest module stays
+/// decoupled from governance/city state. Effects scale with hours rested.
+fn apply_inn_rest_effects(
+    mut reader: MessageReader<crate::rest::RestCompletedEvent>,
+    mut cities: ResMut<CityCatalog>,
+    current_area: Res<CurrentArea>,
+    mut crime: ResMut<PlayerCrimeStatus>,
+    punish: Res<GlobalPunishmentState>,
+    mut assault_clock: ResMut<CastleAssaultClock>,
+    mut logs: MessageWriter<TradeLogEvent>,
+) {
+    for ev in reader.read() {
+        if !matches!(ev.context, crate::rest::RestContext::Inn) {
+            continue;
+        }
+        let hours = ev.ticks / TIMESTAMP_TICKS_PER_HOUR;
+        crime.infamy = crime.infamy.saturating_sub(2 * hours);
+        crime.wanted_tier = wanted_tier_from_infamy(crime.infamy, punish.assassinations_total);
+        assault_clock.next_allowed_timestamp = assault_clock
+            .next_allowed_timestamp
+            .saturating_sub((hours / 4) * TIMESTAMP_TICKS_PER_HOUR);
+        if let Some(local_city) = city_for_region_mut(&mut cities, current_area.0) {
+            local_city.stability = local_city.stability.saturating_add(8).min(1000);
+            local_city.security = local_city.security.saturating_add(6).min(1000);
+            local_city.prosperity = local_city.prosperity.saturating_add(3).min(1000);
+        }
+        logs.write(TradeLogEvent {
+            message: format!(
+                "inn stay done: rested {}h, infamy={} wanted={:?}",
+                hours, crime.infamy, crime.wanted_tier
+            ),
+        });
     }
 }
 
@@ -337,23 +367,19 @@ fn build_transport_routes(source_city: &City, cities: &CityCatalog) -> Vec<Trans
 
 fn service_interaction_input(
     input: Res<ButtonInput<KeyCode>>,
-    mut game_state: ResMut<GameState>,
+    game_state: Res<GameState>,
     current_area: Res<CurrentArea>,
     map: Res<MapTiles>,
-    mut cities: ResMut<CityCatalog>,
+    cities: Res<CityCatalog>,
     reputation: Res<ReputationLedger>,
-    mut crime: ResMut<PlayerCrimeStatus>,
-    punish: Res<GlobalPunishmentState>,
-    mut wallet: ResMut<PlayerWallet>,
-    mut assault_clock: ResMut<CastleAssaultClock>,
-    mut timestamp: ResMut<crate::core::Timestamp>,
-    player_q: Query<(Entity, &Transform), With<Player>>,
+    crime: Res<PlayerCrimeStatus>,
+    player_q: Query<&Transform, With<Player>>,
     service_q: Query<(&Transform, &ServiceNpc)>,
     mut transport_ui: ResMut<TransportUiState>,
+    mut rest_ui: ResMut<crate::rest::RestUi>,
     mut logs: MessageWriter<TradeLogEvent>,
-    mut activity_writer: MessageWriter<PerformActivityEvent>,
 ) {
-    if game_state.0 != Game_State::Exploring || transport_ui.open {
+    if game_state.0 != Game_State::Exploring || transport_ui.open || rest_ui.is_open() {
         return;
     }
 
@@ -374,7 +400,7 @@ fn service_interaction_input(
         return;
     };
 
-    let Ok((player_entity, player_tf)) = player_q.single() else {
+    let Ok(player_tf) = player_q.single() else {
         return;
     };
     let Some(service) = nearest_service_of_kind(
@@ -417,30 +443,13 @@ fn service_interaction_input(
 
     match service_kind {
         ServiceKind::Inn => {
-            if wallet.coins < INN_REST_COST {
-                logs.write(TradeLogEvent {
-                    message: format!("inn denied: need {} coins", INN_REST_COST),
-                });
-                return;
-            }
-            wallet.coins = wallet.coins.saturating_sub(INN_REST_COST);
-            timestamp.0 = timestamp
-                .0
-                .saturating_add(INN_REST_HOURS * TIMESTAMP_TICKS_PER_HOUR);
-            crime.infamy = crime.infamy.saturating_sub(16);
-            crime.wanted_tier = wanted_tier_from_infamy(crime.infamy, punish.assassinations_total);
-            assault_clock.next_allowed_timestamp = assault_clock
-                .next_allowed_timestamp
-                .saturating_sub(2 * TIMESTAMP_TICKS_PER_HOUR);
-            if let Some(local_city) = city_for_region_mut(&mut cities, service.region_id) {
-                local_city.stability = local_city.stability.saturating_add(8).min(1000);
-                local_city.security = local_city.security.saturating_add(6).min(1000);
-                local_city.prosperity = local_city.prosperity.saturating_add(3).min(1000);
-            }
+            // Open the rest selector; cost/time/effects resolve when the rest
+            // completes (see `crate::rest` and `apply_inn_rest_effects`).
+            rest_ui.open_selector(crate::rest::RestContext::Inn);
             logs.write(TradeLogEvent {
                 message: format!(
-                    "inn stay accepted [{}]: cost={} coins, rested {}h, infamy={} wanted={:?}",
-                    city.name, INN_REST_COST, INN_REST_HOURS, crime.infamy, crime.wanted_tier
+                    "inn [{}]: choose how long to rest (↑/↓, ENTER, ESC)",
+                    city.name
                 ),
             });
         }
@@ -475,27 +484,18 @@ fn service_interaction_input(
             });
         }
         ServiceKind::Shrine => {
-            if wallet.coins < SHRINE_RITE_COST {
-                logs.write(TradeLogEvent {
-                    message: format!("shrine rite denied: need {} coins", SHRINE_RITE_COST),
-                });
-                return;
-            }
-            wallet.coins = wallet.coins.saturating_sub(SHRINE_RITE_COST);
-            timestamp.0 = timestamp
-                .0
-                .saturating_add(SHRINE_RITE_HOURS * TIMESTAMP_TICKS_PER_HOUR);
-            // Route through the activity system: a Harae rite strips kegare off
-            // the performer. No-op if the player isn't in the kegare system.
-            activity_writer.write(PerformActivityEvent {
-                performer: player_entity,
-                activity: ActivityKind::Harae,
-                hours: SHRINE_RITE_HOURS,
+            // A harae rite is a place-bound rest: it advances time and strips
+            // kegare (via the activity system on completion), undisturbed by
+            // random events.
+            let kind = ActivityKind::Harae;
+            rest_ui.open_selector(crate::rest::RestContext::Ritual {
+                kind,
+                place_bound: true,
             });
             logs.write(TradeLogEvent {
                 message: format!(
-                    "shrine rite accepted [{}]: harae performed, offering {} coins, {}h passed",
-                    city.name, SHRINE_RITE_COST, SHRINE_RITE_HOURS
+                    "shrine [{}]: choose rite duration (↑/↓, ENTER, ESC)",
+                    city.name
                 ),
             });
         }

@@ -20,7 +20,7 @@
     (
         id: 0,
         next_id: None,
-        name: "Minor Heal",
+        name: "Teate",
         health_cost: 0,
         magic_cost: 8.0,
         magic_school: Kiho,
@@ -37,7 +37,7 @@
     (
         id: 2050,
         next_id: None,
-        name: "Fireball",
+        name: "Hi-no-Tama",
         health_cost: 0,
         magic_cost: 20.0,
         magic_school: Kiho,
@@ -61,7 +61,7 @@
     (
         id: 4097,
         next_id: None,
-        name: "Rallying Cry",
+        name: "Toki-no-Koe",
         health_cost: 0,
         magic_cost: 12.0,
         magic_school: Kamishin,
@@ -84,7 +84,7 @@
     (
         id: 6146,
         next_id: Some(6147),
-        name: "Crippling Flame",
+        name: "Gōka",
         health_cost: 0,
         magic_cost: 25.0,
         magic_school: Yokaijutsu,
@@ -173,7 +173,7 @@
     (
         id: 20483, // 0x5003 (L10 s3) Reload
         next_id: None,
-        name: "Ramrod",
+        name: "Karuka",
         health_cost: 0,
         magic_cost: 0.0,
         magic_school: Kiho,
@@ -547,7 +547,7 @@
     (
         id: 26627, // 0x6803 (L13 s3) Kuro's grasp
         next_id: None,
-        name: "Kuro's grasp",
+        name: "Kuro's Grasp",
         health_cost: 0,
         magic_cost: 10.0,
         magic_school: Yokaijutsu,
@@ -581,7 +581,7 @@
     (
         id: 26629, // 0x6805 (L13 s5) Shared pain
         next_id: None,
-        name: "Shared pain",
+        name: "Chi-no-Kizuna",
         health_cost: 0,
         magic_cost: 8.0,
         magic_school: Yokaijutsu,
@@ -602,7 +602,7 @@
     (
         id: 30720, // 0x7800 (L15 s0) Onibi — Will-o'-wisp burn
         next_id: None,
-        name: "Will-o'-wisp burn",
+        name: "Onibi",
         health_cost: 0,
         magic_cost: 0.0,
         magic_school: Yokaijutsu,
@@ -620,7 +620,7 @@
     (
         id: 30721, // 0x7801 (L15 s1) Kappa — River grasp
         next_id: None,
-        name: "River grasp",
+        name: "Kappa's Grasp",
         health_cost: 0,
         magic_cost: 0.0,
         magic_school: Onmyodo,
@@ -638,7 +638,7 @@
     (
         id: 30722, // 0x7802 (L15 s2) Kasha — Final cry
         next_id: None,
-        name: "Final cry",
+        name: "Kasha's Wail",
         health_cost: 0,
         magic_cost: 0.0,
         magic_school: Yokaijutsu,
@@ -662,7 +662,7 @@
     (
         id: 32769, // 0x8001 (L16 s1) Kiho capstone — Tide of Breath
         next_id: None,
-        name: "Tide of Breath",
+        name: "Kokyū-hō",
         health_cost: 0,
         magic_cost: 18.0,
         magic_school: Kiho,
@@ -679,7 +679,7 @@
     (
         id: 34817, // 0x8801 (L17 s1) Onmyodo capstone — Verdant Pulse
         next_id: None,
-        name: "Verdant Pulse",
+        name: "Wakaba",
         health_cost: 0,
         magic_cost: 22.0,
         magic_school: Onmyodo,
@@ -697,7 +697,7 @@
     (
         id: 36865, // 0x9001 (L18 s1) Yokaijutsu capstone — Shadow Pact
         next_id: None,
-        name: "Shadow Pact",
+        name: "Kage-no-Chigiri",
         health_cost: 4,
         magic_cost: 24.0,
         magic_school: Yokaijutsu,
@@ -715,7 +715,7 @@
     (
         id: 38913, // 0x9801 (L19 s1) Kamishin capstone — Heaven's Mandate
         next_id: None,
-        name: "Heaven's Mandate",
+        name: "Tenmei",
         health_cost: 0,
         magic_cost: 26.0,
         magic_school: Kamishin,
@@ -743,7 +743,7 @@
     (
         id: 40960, // 0xA000 (L20 s0) Steady Strike
         next_id: None,
-        name: "Steady Strike",
+        name: "Seiken",
         health_cost: 0,
         magic_cost: 6.0,
         magic_school: Kiho,
@@ -760,7 +760,7 @@
     (
         id: 40961, // 0xA001 (L20 s1) Inner Wind
         next_id: None,
-        name: "Inner Wind",
+        name: "Shippū",
         health_cost: 0,
         magic_cost: 8.0,
         magic_school: Kiho,
@@ -777,7 +777,7 @@
     (
         id: 40962, // 0xA002 (L20 s2) Mountain Stance
         next_id: None,
-        name: "Mountain Stance",
+        name: "Iwao",
         health_cost: 0,
         magic_cost: 14.0,
         magic_school: Kiho,
@@ -796,7 +796,7 @@
     (
         id: 43008, // 0xA800 (L21 s0) Bramble Snare
         next_id: None,
-        name: "Bramble Snare",
+        name: "Ibara",
         health_cost: 0,
         magic_cost: 12.0,
         magic_school: Onmyodo,
@@ -814,7 +814,7 @@
     (
         id: 43009, // 0xA801 (L21 s1) Stone Wall
         next_id: None,
-        name: "Stone Wall",
+        name: "Ishigaki",
         health_cost: 0,
         magic_cost: 16.0,
         magic_school: Onmyodo,
@@ -831,7 +831,7 @@
     (
         id: 43010, // 0xA802 (L21 s2) Spring of Healing
         next_id: None,
-        name: "Spring of Healing",
+        name: "Izumi",
         health_cost: 0,
         magic_cost: 18.0,
         magic_school: Onmyodo,
@@ -849,7 +849,7 @@
     (
         id: 43011, // 0xA803 (L21 s3) Ember Talisman — fire line (ka, 火)
         next_id: None,
-        name: "Ember Talisman",
+        name: "Hifuda",
         health_cost: 0,
         magic_cost: 14.0,
         magic_school: Onmyodo,
@@ -867,7 +867,7 @@
     (
         id: 43012, // 0xA804 (L21 s4) Quenching Current — water line (sui, 水)
         next_id: None,
-        name: "Quenching Current",
+        name: "Suiryū",
         health_cost: 0,
         magic_cost: 14.0,
         magic_school: Onmyodo,
@@ -886,7 +886,7 @@
     (
         id: 43013, // 0xA805 (L21 s5) Conjured Blades — metal line (kin, 金)
         next_id: None,
-        name: "Conjured Blades",
+        name: "Maboroshi-no-Yaiba",
         health_cost: 0,
         magic_cost: 16.0,
         magic_school: Onmyodo,
@@ -927,7 +927,7 @@
     (
         id: 45056, // 0xB000 (L22 s0) Spectral Lash
         next_id: None,
-        name: "Spectral Lash",
+        name: "Reigeki",
         health_cost: 0,
         magic_cost: 12.0,
         magic_school: Yokaijutsu,
@@ -945,7 +945,7 @@
     (
         id: 45057, // 0xB001 (L22 s1) Crawling Shadow
         next_id: None,
-        name: "Crawling Shadow",
+        name: "Kage-Nui",
         health_cost: 0,
         magic_cost: 18.0,
         magic_school: Yokaijutsu,
@@ -962,7 +962,7 @@
     (
         id: 45058, // 0xB002 (L22 s2) Whisper of Doubt
         next_id: None,
-        name: "Whisper of Doubt",
+        name: "Utagai",
         health_cost: 0,
         magic_cost: 14.0,
         magic_school: Yokaijutsu,
@@ -981,7 +981,7 @@
     (
         id: 47104, // 0xB800 (L23 s0) Kanji of Mercy
         next_id: None,
-        name: "Kanji of Mercy",
+        name: "Jihi",
         health_cost: 0,
         magic_cost: 12.0,
         magic_school: Kamishin,
@@ -998,7 +998,7 @@
     (
         id: 47105, // 0xB801 (L23 s1) Field of Quiet
         next_id: None,
-        name: "Field of Quiet",
+        name: "Shijima",
         health_cost: 0,
         magic_cost: 16.0,
         magic_school: Kamishin,
@@ -1015,7 +1015,7 @@
     (
         id: 47106, // 0xB802 (L23 s2) Severance Prayer
         next_id: None,
-        name: "Severance Prayer",
+        name: "Engiri",
         health_cost: 0,
         magic_cost: 14.0,
         magic_school: Kamishin,
@@ -1034,7 +1034,7 @@
     (
         id: 49152, // 0xC000 (L24 s0) Sweeping Strike
         next_id: None,
-        name: "Sweeping Strike",
+        name: "Nagi-harai",
         health_cost: 0,
         magic_cost: 0.0,
         magic_school: Kiho,
@@ -1051,7 +1051,7 @@
     (
         id: 49153, // 0xC001 (L24 s1) Brace
         next_id: None,
-        name: "Brace",
+        name: "Kamae",
         health_cost: 0,
         magic_cost: 0.0,
         magic_school: Kiho,
@@ -1068,7 +1068,7 @@
     (
         id: 49154, // 0xC002 (L24 s2) Aimed Shot
         next_id: None,
-        name: "Aimed Shot",
+        name: "Nerai-uchi",
         health_cost: 0,
         magic_cost: 0.0,
         magic_school: Kiho,
@@ -1085,7 +1085,7 @@
     (
         id: 49155, // 0xC003 (L24 s3) Disengage
         next_id: None,
-        name: "Disengage",
+        name: "Hikiashi",
         health_cost: 0,
         magic_cost: 0.0,
         magic_school: Kiho,
@@ -1537,7 +1537,7 @@
     (
         id: 51201, // 0xC801 (L25 s1) Iron Body
         next_id: None,
-        name: "Iron Body",
+        name: "Kongō-shin",
         health_cost: 0,
         magic_cost: 10.0,
         magic_school: Kiho,
@@ -1554,7 +1554,7 @@
     (
         id: 51202, // 0xC802 (L25 s2) Ki-Charged Strike
         next_id: None,
-        name: "Ki-Charged Strike",
+        name: "Kiken",
         health_cost: 0,
         magic_cost: 8.0,
         magic_school: Kiho,
@@ -1589,7 +1589,7 @@
     (
         id: 51204, // 0xC804 (L25 s4) Immovable Stance
         next_id: None,
-        name: "Immovable Stance",
+        name: "Fudō-shin",
         health_cost: 0,
         magic_cost: 9.0,
         magic_school: Kiho,
@@ -1606,7 +1606,7 @@
     (
         id: 51205, // 0xC805 (L25 s5) Resounding Ki
         next_id: None,
-        name: "Resounding Ki",
+        name: "Hibiki",
         health_cost: 0,
         magic_cost: 14.0,
         magic_school: Kiho,
@@ -1625,7 +1625,7 @@
     (
         id: 53248, // 0xD000 (L26 s0) Frost Sigil
         next_id: None,
-        name: "Frost Sigil",
+        name: "Hyōfu",
         health_cost: 0,
         magic_cost: 8.0,
         magic_school: Onmyodo,
@@ -1644,7 +1644,7 @@
     (
         id: 53249, // 0xD001 (L26 s1) Ember Storm
         next_id: None,
-        name: "Ember Storm",
+        name: "Kaen",
         health_cost: 0,
         magic_cost: 14.0,
         magic_school: Onmyodo,
@@ -1662,7 +1662,7 @@
     (
         id: 53250, // 0xD002 (L26 s2) Earthen Ward
         next_id: None,
-        name: "Earthen Ward",
+        name: "Tsuchi-fuda",
         health_cost: 0,
         magic_cost: 9.0,
         magic_school: Onmyodo,
@@ -1697,7 +1697,7 @@
     (
         id: 53252, // 0xD004 (L26 s4) Six-Lines Divination
         next_id: None,
-        name: "Six-Lines Divination",
+        name: "Bokusen",
         health_cost: 0,
         magic_cost: 8.0,
         magic_school: Onmyodo,
@@ -1784,7 +1784,7 @@
     (
         id: 55299, // 0xD803 (L27 s3) Kami's Wrath
         next_id: None,
-        name: "Kami's Wrath",
+        name: "Shinbatsu",
         health_cost: 0,
         magic_cost: 12.0,
         magic_school: Kamishin,
@@ -1819,7 +1819,7 @@
     (
         id: 55301, // 0xD805 (L27 s5) Kami's Blessing
         next_id: None,
-        name: "Kami's Blessing",
+        name: "Goriyaku",
         health_cost: 0,
         magic_cost: 10.0,
         magic_school: Kamishin,
@@ -1874,7 +1874,7 @@
     (
         id: 49170, // 0xC012 (L24 s18) Devour Shadow
         next_id: None,
-        name: "Devour Shadow",
+        name: "Kage-kui",
         health_cost: 0,
         magic_cost: 10.0,
         magic_school: Yokaijutsu,
@@ -1910,7 +1910,7 @@
     (
         id: 49172, // 0xC014 (L24 s20) Cursed Mark
         next_id: None,
-        name: "Cursed Mark",
+        name: "Juin",
         health_cost: 0,
         magic_cost: 10.0,
         magic_school: Yokaijutsu,
@@ -1928,7 +1928,7 @@
     (
         id: 49173, // 0xC015 (L24 s21) Oni's Bargain
         next_id: None,
-        name: "Oni's Bargain",
+        name: "Oni-no-Chigiri",
         health_cost: 0,
         magic_cost: 18.0,
         magic_school: Yokaijutsu,
@@ -2006,7 +2006,7 @@
     (
         id: 20491, // 0x500B Poisoned Blade
         next_id: None,
-        name: "Poisoned Blade",
+        name: "Dokutō",
         health_cost: 0,
         magic_cost: 0.0,
         magic_school: Kiho,
@@ -2041,7 +2041,7 @@
     (
         id: 20493, // 0x500D Quickstep
         next_id: None,
-        name: "Quickstep",
+        name: "Shukuchi",
         health_cost: 0,
         magic_cost: 8.0,
         magic_school: Kiho,
@@ -2095,7 +2095,7 @@
     (
         id: 22535, // 0x5807 Beguile
         next_id: None,
-        name: "Beguile",
+        name: "Bakashi",
         health_cost: 0,
         magic_cost: 10.0,
         magic_school: Onmyodo,
@@ -2148,7 +2148,7 @@
     (
         id: 22538, // 0x580A Rite of Wards
         next_id: None,
-        name: "Rite of Wards",
+        name: "Majinai",
         health_cost: 0,
         magic_cost: 10.0,
         magic_school: Kamishin,
@@ -2237,7 +2237,7 @@
     (
         id: 24587, // 0x600B Bloodthirst Blade
         next_id: None,
-        name: "Bloodthirst Blade",
+        name: "Chisuigatana",
         health_cost: 0,
         magic_cost: 10.0,
         magic_school: Yokaijutsu,
@@ -2255,7 +2255,7 @@
     (
         id: 24588, // 0x600C Oni's Roar
         next_id: None,
-        name: "Oni's Roar",
+        name: "Oni-no-Hōkō",
         health_cost: 0,
         magic_cost: 12.0,
         magic_school: Yokaijutsu,
@@ -2293,7 +2293,7 @@
     (
         id: 26631, // 0x6807 Maddening Whisper
         next_id: None,
-        name: "Maddening Whisper",
+        name: "Kuruwase",
         health_cost: 0,
         magic_cost: 10.0,
         magic_school: Yokaijutsu,
@@ -2310,7 +2310,7 @@
     (
         id: 26632, // 0x6808 Lend Me Your Strength
         next_id: None,
-        name: "Lend Me Your Strength",
+        name: "Kuro-no-Chikara",
         health_cost: 0,
         magic_cost: 12.0,
         magic_school: Yokaijutsu,
@@ -2328,7 +2328,7 @@
     (
         id: 26633, // 0x6809 Umbral Step
         next_id: None,
-        name: "Umbral Step",
+        name: "Kagefumi",
         health_cost: 0,
         magic_cost: 10.0,
         magic_school: Yokaijutsu,
@@ -2346,7 +2346,7 @@
     (
         id: 26634, // 0x680A Curse of Kuro
         next_id: None,
-        name: "Curse of Kuro",
+        name: "Kuro-no-Noroi",
         health_cost: 0,
         magic_cost: 10.0,
         magic_school: Yokaijutsu,
@@ -2364,7 +2364,7 @@
     (
         id: 26635, // 0x680B Two-Souls Surge
         next_id: None,
-        name: "Two-Souls Surge",
+        name: "Niko-no-Issen",
         health_cost: 0,
         magic_cost: 16.0,
         magic_school: Yokaijutsu,
@@ -2382,9 +2382,9 @@
 
     // ===== Toshiko — sanity specialists (L13, 0x680C+) =================
     (
-        id: 26636, // 0x680C Hollow the Heart
+        id: 26636, // 0x680C Utsuro — hollowing
         next_id: None,
-        name: "Hollow the Heart",
+        name: "Utsuro",
         health_cost: 0,
         magic_cost: 12.0,
         magic_school: Yokaijutsu,
@@ -2401,9 +2401,9 @@
         targets: 1,
     ),
     (
-        id: 26637, // 0x680D Feast on Despair
+        id: 26637, // 0x680D Kuro's Feast
         next_id: None,
-        name: "Feast on Despair",
+        name: "Kuro's Feast",
         health_cost: 0,
         magic_cost: 14.0,
         magic_school: Yokaijutsu,
@@ -2477,7 +2477,7 @@
     (
         id: 28707, // 0x7023 Heart-Seeker
         next_id: None,
-        name: "Heart-Seeker",
+        name: "Tōshin-ya",
         health_cost: 0,
         magic_cost: 0.0,
         magic_school: Kiho,
@@ -2511,7 +2511,7 @@
     (
         id: 28709, // 0x7025 Conch Blast
         next_id: None,
-        name: "Conch Blast",
+        name: "Horagai",
         health_cost: 0,
         magic_cost: 12.0,
         magic_school: Kiho,
@@ -2582,7 +2582,7 @@
     (
         id: 28715, // 0x702B Reading of Fate
         next_id: None,
-        name: "Reading of Fate",
+        name: "Mikuji",
         health_cost: 0,
         magic_cost: 8.0,
         magic_school: Onmyodo,
@@ -2636,7 +2636,7 @@
     (
         id: 28720, // 0x7030 Heart Sutra
         next_id: None,
-        name: "Heart Sutra",
+        name: "Hannya Shingyō",
         health_cost: 0,
         magic_cost: 8.0,
         magic_school: Kamishin,
@@ -2653,7 +2653,7 @@
     (
         id: 28721, // 0x7031 Body Sutras
         next_id: None,
-        name: "Body Sutras",
+        name: "Kyōkatabira",
         health_cost: 0,
         magic_cost: 10.0,
         magic_school: Kamishin,

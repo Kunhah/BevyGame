@@ -40,6 +40,7 @@ pub mod kegare;
 pub mod light_plugin;
 pub mod menu;
 pub mod map;
+pub mod money;
 pub mod party_select;
 pub mod movement;
 pub mod pathfinding;
@@ -48,6 +49,7 @@ pub mod cutscene;
 pub mod post_fx;
 pub mod quests;
 pub mod render3d;
+pub mod rest;
 pub mod save;
 pub mod services;
 pub mod settings;
@@ -180,6 +182,7 @@ fn full_game_app() -> App {
         .add_plugins(GovernancePlugin)
         .add_plugins(EconomyPlugin)
         .add_plugins(ServicesPlugin)
+        .add_plugins(rest::RestPlugin)
         .add_plugins(QuestPlugin)
         .add_plugins(MenuPlugin)
         .add_plugins(party_select::PartySelectPlugin)

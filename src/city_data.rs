@@ -5,6 +5,7 @@ use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::combat_plugin::ItemMaterial;
+use crate::money::Money;
 
 const ECONOMY_DATA_PATH: &str = "assets/data/economy.ron";
 
@@ -210,7 +211,7 @@ pub struct City {
     pub security: u16,   // 0..=1000
     pub stability: u16,  // 0..=1000
     pub tax_rate_bps: u16,
-    pub treasury_coins: u32,
+    pub treasury_coins: Money,
     pub garrison_strength: u16, // abstract military strength
     pub primary_material_outputs: HashMap<ItemMaterial, u16>,
     pub crafted_item_outputs: HashMap<u16, u16>,
@@ -425,7 +426,7 @@ fn seed_default_cities() -> HashMap<u16, City> {
             security: 620,
             stability: 710,
             tax_rate_bps: 850,
-            treasury_coins: 180_000,
+            treasury_coins: Money(180_000),
             garrison_strength: 160,
             primary_material_outputs: village_materials,
             crafted_item_outputs: village_crafted,
@@ -513,7 +514,7 @@ fn seed_default_cities() -> HashMap<u16, City> {
             security: 790,
             stability: 680,
             tax_rate_bps: 1120,
-            treasury_coins: 640_000,
+            treasury_coins: Money(640_000),
             garrison_strength: 510,
             primary_material_outputs: castle_materials,
             crafted_item_outputs: castle_crafted,

@@ -18,6 +18,7 @@ use crate::governance::{
     ReputationIncidentKind, ReputationLedger, ReputationTarget, PlayerCrimeStatus, WantedTier,
 };
 use crate::map::{tile_center_world, CurrentArea, MapTiles, TILE_WORLD_SIZE};
+use crate::money::Money;
 use crate::ui_style::{font_size, palette, radius, spacing};
 
 const BUY_MARKUP_BPS: u32 = 12000; // 120% of dynamic base
@@ -337,7 +338,7 @@ fn player_balance(
     merchant_coins: &crate::quests::MerchantCoins,
 ) -> u32 {
     match currency {
-        Currency::Gold => player_wallet.coins,
+        Currency::Gold => player_wallet.coins.0,
         Currency::MerchantCoin => merchant_coins.0,
     }
 }
@@ -391,7 +392,7 @@ pub struct Merchant {
     pub id: MerchantId,
     pub name: String,
     pub region_id: RegionId,
-    pub coins: u32,
+    pub coins: Money,
     pub inventory: Vec<InventoryStack>,
     /// Defaults to `Currency::Gold` — only the contract Merchant uses
     /// `MerchantCoin`. `#[serde(default)]` keeps existing RON files
@@ -417,7 +418,7 @@ impl Default for Merchants {
                 id: 1,
                 name: "Aster of Greenford".to_string(),
                 region_id: 0,
-                coins: 220_000,
+                coins: Money(220_000),
                 inventory: vec![
                     InventoryStack { item_id: 5001, quantity: 5 },
                     InventoryStack { item_id: 5002, quantity: 7 },
@@ -434,7 +435,7 @@ impl Default for Merchants {
                 id: 2,
                 name: "Rath of Ironpass".to_string(),
                 region_id: 1,
-                coins: 280_000,
+                coins: Money(280_000),
                 inventory: vec![
                     InventoryStack { item_id: 5001, quantity: 8 },
                     InventoryStack { item_id: 5002, quantity: 3 },
@@ -459,7 +460,7 @@ impl Default for Merchants {
                 region_id: 0,
                 // Stash is in Merchant Coins; the magnitude is the Merchant's
                 // willingness to pay for player-sold curios.
-                coins: 10_000,
+                coins: Money(10_000),
                 inventory: vec![
                     // Placeholder stock — populate with spiritual items
                     // (talismans, charms, rare reagents) once their item ids
@@ -588,12 +589,14 @@ impl Default for PlayerInventory {
 
 #[derive(Resource, Debug, Clone, Serialize, Deserialize)]
 pub struct PlayerWallet {
-    pub coins: u32,
+    pub coins: Money,
 }
 
 impl Default for PlayerWallet {
     fn default() -> Self {
-        Self { coins: 900_000 }
+        Self {
+            coins: Money(900_000),
+        }
     }
 }
 
@@ -2536,7 +2539,7 @@ fn rob_merchant_store_input(
         return;
     };
 
-    let stolen_coins = (merchant.coins / 18).clamp(120, 3_500);
+    let stolen_coins = (merchant.coins.0 / 18).clamp(120, 3_500);
     merchant.coins = merchant.coins.saturating_sub(stolen_coins);
     player_wallet.coins = player_wallet.coins.saturating_add(stolen_coins);
 

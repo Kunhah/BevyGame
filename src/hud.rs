@@ -58,7 +58,7 @@ fn spawn_exploration_hud(mut commands: Commands) {
         .with_children(|root| {
             spawn_stat_row(root, "Area", "--", palette::TEXT_HEADING, AreaValue);
             spawn_stat_row(root, "Time", "--", palette::TEXT_PRIMARY, TimeValue);
-            spawn_stat_row(root, "Coins", "--", palette::ACCENT_WARNING, CoinsValue);
+            spawn_stat_row(root, "Money", "--", palette::ACCENT_WARNING, CoinsValue);
         });
 }
 
@@ -125,7 +125,7 @@ fn update_coins_text(
     mut q: Query<&mut Text, With<CoinsValue>>,
 ) {
     for mut text in &mut q {
-        let formatted = format_thousands(wallet.coins);
+        let formatted = wallet.coins.format_short();
         if text.0 != formatted {
             text.0 = formatted;
         }
@@ -162,6 +162,7 @@ fn update_time_text(timestamp: Res<Timestamp>, mut q: Query<&mut Text, With<Time
     }
 }
 
+#[allow(dead_code)]
 fn format_thousands(n: u32) -> String {
     let s = n.to_string();
     let mut out = String::with_capacity(s.len() + s.len() / 3);
