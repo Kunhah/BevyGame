@@ -20,6 +20,9 @@ pub enum SummonKind {
     /// The onmyōji's paper familiar — a fragile, fast ally-side striker that
     /// acts on its own and expires after a few turns.
     Shikigami,
+    /// A risen corpse-servant raised from the buried dead (Magatsu's Yomi
+    /// necromancy) — a slow, tough, hard-hitting ally-side combatant.
+    Bonemound,
     /// A temporary impassable barrier conjured onto the field. Unlike a
     /// combatant it has no stats and never takes a turn — it is just a
     /// `Collider` (so pathfinding routes around it) that dissolves after a few

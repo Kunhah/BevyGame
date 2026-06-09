@@ -637,6 +637,8 @@ pub fn spawn_summoned_combatant(
     // that lands hits reliably and carries no magic pools of its own.
     let (name, hp, lethality, hit, armor, speed, mind) = match kind {
         SummonKind::Shikigami => ("Shikigami", 22, 16, 72, 3, 17, 4),
+        // Slow, tough, heavy-hitting risen corpse (Magatsu's Yomi necromancy).
+        SummonKind::Bonemound => ("Bonemound", 45, 20, 66, 10, 8, 2),
         // Obstacle kinds are routed to `spawn_summoned_obstacle`; if one reaches
         // here it's a wiring bug, so fall back to the fragile shikigami block.
         SummonKind::SpiritWard
@@ -757,7 +759,7 @@ fn obstacle_preset(kind: SummonKind) -> ObstaclePreset {
             }),
         },
         // Combatant kinds never reach the obstacle path; treat as a plain wall.
-        SummonKind::Shikigami => ObstaclePreset {
+        SummonKind::Shikigami | SummonKind::Bonemound => ObstaclePreset {
             name: "Summoned Obstacle",
             footprint: 32.0,
             height: 48.0,

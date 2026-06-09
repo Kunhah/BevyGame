@@ -31,6 +31,9 @@ TREE_ORDER = [
     ("RenjiroMonk", "Renjiro — Monk (class tree)"),
     ("SuzukaOnmyoji", "Suzuka — Onmyoji (class tree)"),
     ("KanzoExorcist", "Kanzo — Exorcist (class tree)"),
+    ("IwaoBulwark", "Iwao — Bulwark (class tree)"),
+    ("YunaBikuni", "Yuna — Bikuni (class tree)"),
+    ("MagatsuNecromancer", "Magatsu — Necromancer (class tree)"),
 ]
 
 

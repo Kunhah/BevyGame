@@ -1,0 +1,83 @@
+// Iwao — Bulwark. A Kiho guardian in the mould of the Niō temple-gate kings and
+// Benkei's standing death: an immovable wall of armour and breath who anchors
+// the line. Innate Earth·In 土陰 (the Weight proc — grounding foes). IDs: 0xEEXX.
+[
+    (
+        id: 60928, // 0xEE00
+        tree: IwaoBulwark,
+        tier: 1,
+        name: "Stone Footing",
+        description: "Plants the weight as a temple-gate guardian plants his. +5 Armor.",
+        cost: 1,
+        prerequisites: [],
+        effects: [
+            StatBonus(target: Armor, amount: 5),
+        ],
+    ),
+    (
+        id: 60929, // 0xEE01
+        tree: IwaoBulwark,
+        tier: 1,
+        name: "Deep Breath",
+        description: "The slow breath of the standing ascetic, banking inner force. +1 Kiho per rest hour, +3 Kiho max.",
+        cost: 1,
+        prerequisites: [],
+        effects: [
+            MagicRegenBonus(school: Kiho, amount: 1.0),
+            StatBonus(target: Kiho, amount: 3),
+        ],
+    ),
+    (
+        id: 60930, // 0xEE02
+        tree: IwaoBulwark,
+        tier: 2,
+        name: "Iron Hide",
+        description: "Flesh tempered by cold rivers and the striking-post until blows ring off it. +8 Health, +3 Armor.",
+        cost: 2,
+        prerequisites: [60928],
+        effects: [
+            StatBonus(target: Health, amount: 8),
+            StatBonus(target: Armor, amount: 3),
+        ],
+    ),
+    (
+        id: 60931, // 0xEE03
+        tree: IwaoBulwark,
+        tier: 2,
+        name: "Rooted Stance",
+        description: "Sets the feet so deep that fear finds no purchase either. +5 Armor, +3 Morale.",
+        cost: 2,
+        prerequisites: [60929],
+        effects: [
+            StatBonus(target: Armor, amount: 5),
+            StatBonus(target: Morale, amount: 3),
+        ],
+    ),
+    (
+        id: 60932, // 0xEE04
+        tree: IwaoBulwark,
+        tier: 2,
+        name: "Mountain's Patience",
+        description: "He outlasts; the mountain is never in a hurry. +8 Health, +1 Health per rest hour.",
+        cost: 2,
+        prerequisites: [60928, 60929],
+        effects: [
+            StatBonus(target: Health, amount: 8),
+            StatBonus(target: HealthRegen, amount: 1),
+        ],
+    ),
+    (
+        id: 60933, // 0xEE05
+        tree: IwaoBulwark,
+        tier: 3,
+        name: "Immovable",
+        description: "Like Fudō's mountain and Benkei on the bridge — he stands, and the line holds behind him. +8 Health, +5 Armor, +5 Morale.",
+        cost: 3,
+        prerequisites: [60930, 60932],
+        effects: [
+            StatBonus(target: Health, amount: 8),
+            StatBonus(target: Armor, amount: 5),
+            StatBonus(target: Morale, amount: 5),
+        ],
+    ),
+]

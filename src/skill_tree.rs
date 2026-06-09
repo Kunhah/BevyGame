@@ -115,6 +115,9 @@ pub enum SkillTreeKind {
     RenjiroMonk,
     SuzukaOnmyoji,
     KanzoExorcist,
+    IwaoBulwark,
+    YunaBikuni,
+    MagatsuNecromancer,
 }
 
 impl SkillTreeKind {
@@ -383,6 +386,9 @@ const SKILL_RON_FILES: &[(SkillTreeKind, &str)] = &[
     (SkillTreeKind::RenjiroMonk, "assets/data/skills/renjiro_monk.ron"),
     (SkillTreeKind::SuzukaOnmyoji, "assets/data/skills/suzuka_onmyoji.ron"),
     (SkillTreeKind::KanzoExorcist, "assets/data/skills/kanzo_exorcist.ron"),
+    (SkillTreeKind::IwaoBulwark, "assets/data/skills/iwao_bulwark.ron"),
+    (SkillTreeKind::YunaBikuni, "assets/data/skills/yuna_bikuni.ron"),
+    (SkillTreeKind::MagatsuNecromancer, "assets/data/skills/magatsu_necromancer.ron"),
 ];
 
 fn load_skill_trees_system(mut tree: ResMut<SkillTreeData>) {

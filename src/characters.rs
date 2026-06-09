@@ -32,7 +32,8 @@ use crate::combat_ability::MagicSchool;
 use crate::combat_plugin::{
     Abilities, AccessoryType, ArmorType, CharacterId, CombatStats, ElementalAffinity,
     EquipmentLoadout, EquipmentSlotType, EquipmentType, ExtraHp, GrowthAttributes, GrowthCurve,
-    Inventory, MagicDistribution, RogueBehavior, SpiritMediumBehavior, StatPool, WeaponType,
+    Inventory, MagicDistribution, PaladinBehavior, RogueBehavior, SpiritMediumBehavior, StatPool,
+    WeaponType,
 };
 use crate::gogyo::{Element, Phase, Polarity};
 use crate::constants::DEFAULT_ACTION_POINTS;
@@ -59,13 +60,21 @@ pub enum CharacterKind {
     /// Onmyoji — Onmyodo controller/summoner: gogyō element seals, binding
     /// ofuda, hexes, and a commanded paper shikigami.
     Suzuka,
-    /// Exorcist (biwa hōshi) — Kamishin back-line glass cannon.
+    /// Exorcist (biwa hōshi) — Kamishin severing-banisher (Metal·Yō).
     Kanzo,
+    /// Bulwark — Kiho immovable guardian/tank (Earth·In); Niō + sumo.
+    Iwao,
+    /// Bikuni — Kamishin×Yokaijutsu duality healer (Wood·In); the 800-year nun
+    /// who heals and purifies with one hand, rots and drains with the other.
+    Yuna,
+    /// Necromancer — Yokaijutsu×Onmyodo medium of Yomi (Earth·Yō); raises the
+    /// buried dead, curses, and binds with defiled seals.
+    Magatsu,
 }
 
 impl CharacterKind {
     /// Every protagonist, in roster order. Handy for menus / roster screens.
-    pub const ALL: [CharacterKind; 7] = [
+    pub const ALL: [CharacterKind; 10] = [
         CharacterKind::Rina,
         CharacterKind::Sayaka,
         CharacterKind::Houjou,
@@ -73,6 +82,9 @@ impl CharacterKind {
         CharacterKind::Renjiro,
         CharacterKind::Suzuka,
         CharacterKind::Kanzo,
+        CharacterKind::Iwao,
+        CharacterKind::Yuna,
+        CharacterKind::Magatsu,
     ];
 
     /// Stable per-character id (matches the `CharacterId` used in the legacy
@@ -86,6 +98,9 @@ impl CharacterKind {
             CharacterKind::Renjiro => 5,
             CharacterKind::Suzuka => 6,
             CharacterKind::Kanzo => 7,
+            CharacterKind::Iwao => 8,
+            CharacterKind::Yuna => 9,
+            CharacterKind::Magatsu => 10,
         }
     }
 
@@ -98,6 +113,9 @@ impl CharacterKind {
             CharacterKind::Renjiro => "Renjiro",
             CharacterKind::Suzuka => "Suzuka",
             CharacterKind::Kanzo => "Kanzo",
+            CharacterKind::Iwao => "Iwao",
+            CharacterKind::Yuna => "Yuna",
+            CharacterKind::Magatsu => "Magatsu",
         }
     }
 
@@ -110,6 +128,9 @@ impl CharacterKind {
             CharacterKind::Renjiro => "Monk",
             CharacterKind::Suzuka => "Onmyoji",
             CharacterKind::Kanzo => "Exorcist",
+            CharacterKind::Iwao => "Bulwark",
+            CharacterKind::Yuna => "Bikuni",
+            CharacterKind::Magatsu => "Necromancer",
         }
     }
 
@@ -123,6 +144,9 @@ impl CharacterKind {
             CharacterKind::Renjiro => Color::srgb(0.80, 0.50, 0.20),
             CharacterKind::Suzuka => Color::srgb(0.30, 0.32, 0.62),
             CharacterKind::Kanzo => Color::srgb(0.85, 0.85, 0.92),
+            CharacterKind::Iwao => Color::srgb(0.45, 0.38, 0.30),
+            CharacterKind::Yuna => Color::srgb(0.62, 0.74, 0.62),
+            CharacterKind::Magatsu => Color::srgb(0.32, 0.26, 0.34),
         }
     }
 
@@ -136,6 +160,9 @@ impl CharacterKind {
             CharacterKind::Renjiro => SkillTreeKind::RenjiroMonk,
             CharacterKind::Suzuka => SkillTreeKind::SuzukaOnmyoji,
             CharacterKind::Kanzo => SkillTreeKind::KanzoExorcist,
+            CharacterKind::Iwao => SkillTreeKind::IwaoBulwark,
+            CharacterKind::Yuna => SkillTreeKind::YunaBikuni,
+            CharacterKind::Magatsu => SkillTreeKind::MagatsuNecromancer,
         }
     }
 
@@ -149,6 +176,9 @@ impl CharacterKind {
             CharacterKind::Renjiro => &[MagicSchool::Kiho],
             CharacterKind::Suzuka => &[MagicSchool::Onmyodo],
             CharacterKind::Kanzo => &[MagicSchool::Kamishin],
+            CharacterKind::Iwao => &[MagicSchool::Kiho],
+            CharacterKind::Yuna => &[MagicSchool::Kamishin, MagicSchool::Yokaijutsu],
+            CharacterKind::Magatsu => &[MagicSchool::Yokaijutsu, MagicSchool::Onmyodo],
         }
     }
 
@@ -171,12 +201,18 @@ impl CharacterKind {
     pub fn innate_element(self) -> Element {
         let (phase, polarity) = match self {
             CharacterKind::Rina => (Phase::Metal, Polarity::In),
-            CharacterKind::Sayaka => (Phase::Earth, Polarity::Yo),
+            // Sayaka's foxfire (kitsune-bi) finally matches her element; In for
+            // the controlled, illusory fox-flame.
+            CharacterKind::Sayaka => (Phase::Fire, Polarity::In),
             CharacterKind::Houjou => (Phase::Fire, Polarity::Yo),
             CharacterKind::Toshiko => (Phase::Water, Polarity::Yo),
             CharacterKind::Renjiro => (Phase::Wood, Polarity::Yo),
             CharacterKind::Suzuka => (Phase::Water, Polarity::In),
-            CharacterKind::Kanzo => (Phase::Fire, Polarity::In),
+            // The exorcist who severs/banishes the dead — Metal·Yō (Sever).
+            CharacterKind::Kanzo => (Phase::Metal, Polarity::Yo),
+            CharacterKind::Iwao => (Phase::Earth, Polarity::In),
+            CharacterKind::Yuna => (Phase::Wood, Polarity::In),
+            CharacterKind::Magatsu => (Phase::Earth, Polarity::Yo),
         };
         Element { phase, polarity }
     }
@@ -243,6 +279,15 @@ impl CharacterKind {
                 28688, 28689, 28690, 28691, 28692, 28693,
                 28720, 28721, 28722, 28723, 28724, 28725,
             ],
+            // Iwao — Bulwark (0x4800): Guard Stance, Earthbreaker, Shiko Stomp,
+            // Immovable, Tetsubo Sweep, Bastion.
+            CharacterKind::Iwao => vec![18432, 18433, 18434, 18435, 18436, 18437],
+            // Yuna — Bikuni (0x4000): Mending Light, Harae Touch, Withering Touch,
+            // Life-Tithe, Blight Bloom, Balance.
+            CharacterKind::Yuna => vec![16384, 16385, 16386, 16387, 16388, 16389],
+            // Magatsu — Necromancer (0x3800): Grave-Reach, Raise Bonemound,
+            // Yomi Curse, Defiling Seal, Soil of the Dead, Toll of Yomi.
+            CharacterKind::Magatsu => vec![14336, 14337, 14338, 14339, 14340, 14341],
         }
     }
 
@@ -296,6 +341,24 @@ impl CharacterKind {
                 (EquipmentSlotType::Armor, vec![Armor(Robe)]),
                 (EquipmentSlotType::Accessory, vec![Accessory(Charm), Accessory(Relic)]),
             ],
+            // Iwao — Niō guardian: the iron tetsubō, heavy armour or a great shield.
+            CharacterKind::Iwao => vec![
+                (EquipmentSlotType::Weapon, vec![Weapon(Tetsubo)]),
+                (EquipmentSlotType::Armor, vec![Armor(HeavyArmor), Armor(Shield)]),
+                (EquipmentSlotType::Accessory, vec![Accessory(Charm)]),
+            ],
+            // Yuna — mendicant nun: a pilgrim's staff, robe, and a relic or charm.
+            CharacterKind::Yuna => vec![
+                (EquipmentSlotType::Weapon, vec![Weapon(Staff)]),
+                (EquipmentSlotType::Armor, vec![Armor(Robe)]),
+                (EquipmentSlotType::Accessory, vec![Accessory(Charm), Accessory(Relic)]),
+            ],
+            // Magatsu — necromancer: a ritual staff, robe, and a relic or charm.
+            CharacterKind::Magatsu => vec![
+                (EquipmentSlotType::Weapon, vec![Weapon(Staff)]),
+                (EquipmentSlotType::Armor, vec![Armor(Robe)]),
+                (EquipmentSlotType::Accessory, vec![Accessory(Charm), Accessory(Relic)]),
+            ],
         };
         EquipmentLoadout::with_allowed_types(slots)
     }
@@ -317,9 +380,12 @@ impl CharacterKind {
     pub fn growth_curve(self) -> GrowthCurve {
         match self {
             CharacterKind::Rina | CharacterKind::Renjiro => GrowthCurve::rogue_curve(),
-            CharacterKind::Toshiko | CharacterKind::Kanzo | CharacterKind::Suzuka => {
-                GrowthCurve::spirit_mage_curve()
-            }
+            CharacterKind::Toshiko
+            | CharacterKind::Kanzo
+            | CharacterKind::Suzuka
+            | CharacterKind::Yuna
+            | CharacterKind::Magatsu => GrowthCurve::spirit_mage_curve(),
+            CharacterKind::Iwao => GrowthCurve::paladin_curve(),
             _ => GrowthCurve::default(),
         }
     }
@@ -358,6 +424,9 @@ impl CharacterKind {
             }
             CharacterKind::Toshiko => {
                 e.insert(SpiritMediumBehavior);
+            }
+            CharacterKind::Iwao => {
+                e.insert(PaladinBehavior);
             }
             _ => {}
         }
@@ -542,6 +611,78 @@ impl CharacterKind {
                 yokaijutsu_per_rest_hour: 0.0,
                 kamishin_per_rest_hour: 0.6,
             },
+            // Iwao — Earth·In tank: a wall of health and armour, slow and hard to
+            // shift, modest damage. The party's anchor.
+            CharacterKind::Iwao => CombatStats {
+                health: s(90),
+                morale: s(70),
+                action_points: s(DEFAULT_ACTION_POINTS),
+                movement: s(4),
+                kiho: m(3.0),
+                onmyodo: m(0.0),
+                yokaijutsu: m(0.0),
+                kamishin: m(0.0),
+                lethality: s(20),
+                hit: s(24),
+                armor: s(28),
+                speed: s(8),
+                evasion: s(6),
+                mind: s(6),
+                health_per_rest_hour: 3,
+                morale_per_rest_hour: 4,
+                kiho_per_rest_hour: 0.3,
+                onmyodo_per_rest_hour: 0.0,
+                yokaijutsu_per_rest_hour: 0.0,
+                kamishin_per_rest_hour: 0.0,
+            },
+            // Yuna — Wood·In duality healer: durable for a caster (the deathless
+            // nun), high Mind, deep Kamishin+Yokaijutsu pools and strong regen.
+            CharacterKind::Yuna => CombatStats {
+                health: s(58),
+                morale: s(64),
+                action_points: s(DEFAULT_ACTION_POINTS),
+                movement: s(5),
+                kiho: m(0.0),
+                onmyodo: m(0.0),
+                yokaijutsu: m(4.0),
+                kamishin: m(5.0),
+                lethality: s(10),
+                hit: s(22),
+                armor: s(9),
+                speed: s(16),
+                evasion: s(16),
+                mind: s(22),
+                health_per_rest_hour: 2,
+                morale_per_rest_hour: 5,
+                kiho_per_rest_hour: 0.0,
+                onmyodo_per_rest_hour: 0.0,
+                yokaijutsu_per_rest_hour: 0.4,
+                kamishin_per_rest_hour: 0.5,
+            },
+            // Magatsu — Earth·Yō dark caster: fragile back-line necromancer, high
+            // Mind, deep Yokaijutsu+Onmyodo pools, low armour.
+            CharacterKind::Magatsu => CombatStats {
+                health: s(48),
+                morale: s(54),
+                action_points: s(DEFAULT_ACTION_POINTS),
+                movement: s(5),
+                kiho: m(0.0),
+                onmyodo: m(5.0),
+                yokaijutsu: m(5.0),
+                kamishin: m(0.0),
+                lethality: s(10),
+                hit: s(24),
+                armor: s(7),
+                speed: s(17),
+                evasion: s(16),
+                mind: s(24),
+                health_per_rest_hour: 1,
+                morale_per_rest_hour: 3,
+                kiho_per_rest_hour: 0.0,
+                onmyodo_per_rest_hour: 0.4,
+                yokaijutsu_per_rest_hour: 0.4,
+                kamishin_per_rest_hour: 0.0,
+            },
         }
     }
 
@@ -591,6 +732,21 @@ impl CharacterKind {
                 vitality: 7, endurance: 6, spirit: 13, power: 6, control: 11,
                 celerity: 8, reflex: 8, insight: 13, resolve: 9,
                 magic_distribution: dist(0, 0, 0, 39),
+            },
+            CharacterKind::Iwao => GrowthAttributes {
+                vitality: 14, endurance: 8, spirit: 5, power: 11, control: 9,
+                celerity: 5, reflex: 5, insight: 6, resolve: 13,
+                magic_distribution: dist(15, 0, 0, 0),
+            },
+            CharacterKind::Yuna => GrowthAttributes {
+                vitality: 10, endurance: 8, spirit: 12, power: 6, control: 9,
+                celerity: 8, reflex: 9, insight: 12, resolve: 10,
+                magic_distribution: dist(0, 0, 18, 18),
+            },
+            CharacterKind::Magatsu => GrowthAttributes {
+                vitality: 8, endurance: 8, spirit: 13, power: 7, control: 10,
+                celerity: 8, reflex: 8, insight: 13, resolve: 8,
+                magic_distribution: dist(0, 18, 21, 0),
             },
         }
     }

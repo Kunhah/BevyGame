@@ -811,6 +811,8 @@ pub enum WeaponType {
     Naginata,
     /// Longbow — ranged (Renjiro).
     Bow,
+    /// Iron war-club — the Niō guardian's bludgeon (Iwao).
+    Tetsubo,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

@@ -1,0 +1,85 @@
+// Magatsu — Necromancer. A medium of Yomi (黄泉), the underworld beneath the
+// earth; named for Magatsuhi, the calamity-kami born of Izanagi's contact with
+// Yomi's defilement. A fallen onmyoji who binds the buried dead with defiled
+// seals (Onmyodo) and draws on their tainted essence (Yokaijutsu). Innate
+// Earth·Yō 土陽 (the Stagger proc — the dead's grasping weight). IDs: 0xF0XX.
+[
+    (
+        id: 61440, // 0xF000
+        tree: MagatsuNecromancer,
+        tier: 1,
+        name: "Grave Sight",
+        description: "He has looked too long down the Yomi road; the dead are never quite out of view. +5 Mind.",
+        cost: 1,
+        prerequisites: [],
+        effects: [
+            StatBonus(target: Mind, amount: 5),
+        ],
+    ),
+    (
+        id: 61441, // 0xF001
+        tree: MagatsuNecromancer,
+        tier: 1,
+        name: "Defiled Seals",
+        description: "The orthodox ofuda, brushed in the wrong ink for the wrong powers. +1 Onmyodo per rest hour, +3 Onmyodo max.",
+        cost: 1,
+        prerequisites: [],
+        effects: [
+            MagicRegenBonus(school: Onmyodo, amount: 1.0),
+            StatBonus(target: Onmyodo, amount: 3),
+        ],
+    ),
+    (
+        id: 61442, // 0xF002
+        tree: MagatsuNecromancer,
+        tier: 2,
+        name: "Yomi's Whisper",
+        description: "Bargains struck with what waits below answer when he calls. +3 Yokaijutsu max, +3 Mind.",
+        cost: 2,
+        prerequisites: [61441],
+        effects: [
+            StatBonus(target: Yokaijutsu, amount: 3),
+            StatBonus(target: Mind, amount: 3),
+        ],
+    ),
+    (
+        id: 61443, // 0xF003
+        tree: MagatsuNecromancer,
+        tier: 2,
+        name: "Bone Binding",
+        description: "Knows the seal that keeps a risen thing obedient past the point it would rather rest. +5 Mind, +3 Onmyodo max.",
+        cost: 2,
+        prerequisites: [61440],
+        effects: [
+            StatBonus(target: Mind, amount: 5),
+            StatBonus(target: Onmyodo, amount: 3),
+        ],
+    ),
+    (
+        id: 61444, // 0xF004
+        tree: MagatsuNecromancer,
+        tier: 2,
+        name: "Pall of the Grave",
+        description: "The cold that hangs about him makes hands slow and aim waver. +5 Evasion, +3 Yokaijutsu max.",
+        cost: 2,
+        prerequisites: [61440, 61441],
+        effects: [
+            StatBonus(target: Evasion, amount: 5),
+            StatBonus(target: Yokaijutsu, amount: 3),
+        ],
+    ),
+    (
+        id: 61445, // 0xF005
+        tree: MagatsuNecromancer,
+        tier: 3,
+        name: "Lord of the Buried",
+        description: "Yomi answers him as a steward now, not a supplicant; the earth gives up its dead at his word. +5 Onmyodo max, +5 Yokaijutsu max, +5 Mind.",
+        cost: 3,
+        prerequisites: [61442, 61444],
+        effects: [
+            StatBonus(target: Onmyodo, amount: 5),
+            StatBonus(target: Yokaijutsu, amount: 5),
+            StatBonus(target: Mind, amount: 5),
+        ],
+    ),
+]

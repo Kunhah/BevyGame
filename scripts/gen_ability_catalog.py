@@ -22,6 +22,9 @@ CHAR_RANGES = [
     ("Renjiro — Monk (sōhei/yamabushi)", list(range(28672, 28678)) + list(range(28704, 28710))),
     ("Suzuka — Onmyoji", list(range(28680, 28686)) + list(range(28712, 28718))),
     ("Kanzo — Exorcist (biwa-hōshi)", list(range(28688, 28694)) + list(range(28720, 28726))),
+    ("Iwao — Bulwark (tank)", range(18432, 18438)),
+    ("Yuna — Bikuni (duality healer)", range(16384, 16390)),
+    ("Magatsu — Necromancer (Yomi)", range(14336, 14342)),
 ]
 DEMO_IDS = {0, 2050, 4097, 6146}
 YOKAI_IDS = set(range(30720, 30723))
@@ -69,7 +72,9 @@ def balanced_end(block, open_paren):
 
 def summarise_effects(block):
     out = []
-    pat = re.compile(r"(Damage|Heal|Buff|ApplyStatus|RemoveStatus|Summon)\(")
+    pat = re.compile(
+        r"(Damage|Heal|DrainMorale|Buff|ApplyStatus|RemoveStatus|Summon|Attune|FlipPolarity)\("
+    )
     pos = 0
     while True:
         m = pat.search(block, pos)
@@ -85,6 +90,12 @@ def summarise_effects(block):
             out.append(f"Damage {f.get('floor','?')}-{f.get('ceiling','?')} {f.get('damage_type','?')}")
         elif kind == "Heal":
             out.append(f"Heal {f.get('floor','?')}-{f.get('ceiling','?')}")
+        elif kind == "DrainMorale":
+            out.append(f"Drain morale {f.get('floor','?')}-{f.get('ceiling','?')}")
+        elif kind == "Attune":
+            out.append(f"Attune {f.get('phase','?')} ({f.get('duration','?')}t)")
+        elif kind == "FlipPolarity":
+            out.append(f"Flip polarity ({f.get('duration','?')}t)")
         elif kind == "Buff":
             out.append(f"Buff {f.get('stat','?')} ×{f.get('multiplier','?')}")
         elif kind == "ApplyStatus":

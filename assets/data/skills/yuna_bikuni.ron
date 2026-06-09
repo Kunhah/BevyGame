@@ -1,0 +1,85 @@
+// Yuna — Bikuni. The Happyaku Bikuni, the 800-year nun who ate ningyo (yokai)
+// flesh and could not die: a healer whose two hands are purification (Kamishin)
+// and corruption (Yokaijutsu), the same life-force giving and taking. Innate
+// Wood·In 木陰 (the Entangle proc — life that binds). IDs: 0xEFXX.
+[
+    (
+        id: 61184, // 0xEF00
+        tree: YunaBikuni,
+        tier: 1,
+        name: "Mendicant's Vow",
+        description: "Centuries of road and rite have made her mind very quiet and very deep. +5 Mind.",
+        cost: 1,
+        prerequisites: [],
+        effects: [
+            StatBonus(target: Mind, amount: 5),
+        ],
+    ),
+    (
+        id: 61185, // 0xEF01
+        tree: YunaBikuni,
+        tier: 1,
+        name: "Sacred Draught",
+        description: "The purifying half of her gift — prayer and clean water. +1 Kamishin per rest hour, +3 Kamishin max.",
+        cost: 1,
+        prerequisites: [],
+        effects: [
+            MagicRegenBonus(school: Kamishin, amount: 1.0),
+            StatBonus(target: Kamishin, amount: 3),
+        ],
+    ),
+    (
+        id: 61186, // 0xEF02
+        tree: YunaBikuni,
+        tier: 2,
+        name: "Deathless Flesh",
+        description: "The ningyo flesh in her will not let the body fail — nor stay wholly clean. +6 Health, +3 Yokaijutsu max, +0.5 Yokaijutsu per rest hour.",
+        cost: 2,
+        prerequisites: [61185],
+        effects: [
+            StatBonus(target: Health, amount: 6),
+            StatBonus(target: Yokaijutsu, amount: 3),
+            MagicRegenBonus(school: Yokaijutsu, amount: 0.5),
+        ],
+    ),
+    (
+        id: 61187, // 0xEF03
+        tree: YunaBikuni,
+        tier: 2,
+        name: "Soothing Rite",
+        description: "A bedside calm that settles a wounded ally's heart as much as their flesh. +5 Mind, +3 Morale.",
+        cost: 2,
+        prerequisites: [61184],
+        effects: [
+            StatBonus(target: Mind, amount: 5),
+            StatBonus(target: Morale, amount: 3),
+        ],
+    ),
+    (
+        id: 61188, // 0xEF04
+        tree: YunaBikuni,
+        tier: 2,
+        name: "Withering Word",
+        description: "The other hand: a blessing spoken backward sours and rots. +4 Mind, +4 Yokaijutsu max.",
+        cost: 2,
+        prerequisites: [61184, 61185],
+        effects: [
+            StatBonus(target: Mind, amount: 4),
+            StatBonus(target: Yokaijutsu, amount: 4),
+        ],
+    ),
+    (
+        id: 61189, // 0xEF05
+        tree: YunaBikuni,
+        tier: 3,
+        name: "Two Hands, One Life",
+        description: "She stops choosing between her hands; purity and rot are one current she simply directs. +5 Kamishin max, +5 Yokaijutsu max, +5 Mind.",
+        cost: 3,
+        prerequisites: [61186, 61188],
+        effects: [
+            StatBonus(target: Kamishin, amount: 5),
+            StatBonus(target: Yokaijutsu, amount: 5),
+            StatBonus(target: Mind, amount: 5),
+        ],
+    ),
+]

@@ -473,6 +473,9 @@ fn tree_label(kind: SkillTreeKind) -> &'static str {
         SkillTreeKind::RenjiroMonk => "Monk",
         SkillTreeKind::SuzukaOnmyoji => "Onmyoji",
         SkillTreeKind::KanzoExorcist => "Exorcist",
+        SkillTreeKind::IwaoBulwark => "Bulwark",
+        SkillTreeKind::YunaBikuni => "Bikuni",
+        SkillTreeKind::MagatsuNecromancer => "Necromancer",
     }
 }
 
