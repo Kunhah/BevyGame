@@ -140,5 +140,41 @@
             ],
             auto_offer: true,
         ),
+
+        // ================================================================
+        // MAIN QUEST — the run's spine and win condition.
+        //
+        // Auto-offered on every new game. Two objectives gate the only path
+        // to victory: hear the elder's charge (the opening scene), then fell
+        // the Gashadokuro (encounter id 9001 == FINAL_BOSS_ENCOUNTER_ID).
+        // Killing that combatant also flips the game to Game_State::Victory
+        // via the FinalBoss marker, so completing this quest and winning the
+        // run happen together.
+        // ================================================================
+        (
+            id: 100,
+            title: "The Tide of Bones",
+            description: "A Gashadokuro defiles the eastern shrine. Cleanse the land before the kegare swallows the village.",
+            objectives: [
+                (
+                    id: 1,
+                    description: "Hear the village elder's charge.",
+                    kind: Talk(dialogue_id: "elder_charge"),
+                    required: 1,
+                ),
+                (
+                    id: 2,
+                    description: "Destroy the Gashadokuro at the defiled shrine.",
+                    kind: Kill(enemy_id: Some(9001)),
+                    required: 1,
+                ),
+            ],
+            preconditions: [],
+            rewards: [
+                Experience(500),
+                Flag("land_cleansed"),
+            ],
+            auto_offer: true,
+        ),
     ],
 )

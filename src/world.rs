@@ -1,11 +1,16 @@
 use bevy::prelude::*;
 
-use crate::battle::{CombatMovePoints, EnemyEncounter, WorldAlly, WorldNpc, WorldYokai, YokaiKind};
+use crate::battle::{
+    CombatMovePoints, EnemyEncounter, FinalBoss, WorldAlly, WorldNpc, WorldYokai, YokaiKind,
+    FINAL_BOSS_ENCOUNTER_ID,
+};
 use crate::city_data::CityCatalog;
-use crate::combat_plugin::{Bound, ResurrectionPoint, ResurrectionStanding};
+use crate::combat_plugin::{
+    AwaitingResurrection, Bound, Dead, ResurrectionPoint, ResurrectionStanding,
+};
 use crate::characters::{CharacterKind, SelectedParty};
 use crate::skill_tree::PartyProgression;
-use crate::core::{GameState, Game_State, MainCamera, Player};
+use crate::core::{GameState, Game_State, MainCamera, Player, Timestamp};
 use crate::dialogue::{CachedInteractables, Interactable};
 use crate::economy::{MerchantNpc, Merchants};
 use crate::governance::GovernorNpc;
@@ -86,6 +91,9 @@ pub fn setup(
         PlaceholderVisual::prop(Color::srgb(0.55, 0.75, 0.95), Vec2::splat(40.0), 40.0),
         Transform::from_translation(origin3 + Vec3::new(-12.0 * 32.0, 4.0 * 32.0, 0.0)),
         ResurrectionPoint,
+        // Doubles as the revive sanctuary: standing here completes any pending
+        // resurrection for downed party members (see `revive_shrine_system`).
+        ReviveShrine,
         YSort { base_z: 0.0 },
     ));
 
@@ -392,6 +400,41 @@ pub fn setup(
         Name::new("ToonTestCapsule"),
     ));
 
+    // --- Main-quest spine -------------------------------------------------
+    // The opening beat: a village elder beside the spawn who charges the party
+    // with the run's goal. Talking to them (walk up, press E) plays
+    // `seirei_intro`, whose final node "elder_charge" satisfies objective 1 of
+    // the main quest. Placed just north-east of the party's start tile.
+    commands.spawn((
+        PlaceholderVisual::character(Color::srgb(0.86, 0.82, 0.55)),
+        Transform::from_translation(origin3 + Vec3::new(1.0 * 32.0, 2.0 * 32.0, 0.0)),
+        VisualOcclusionTarget,
+        YSort { base_z: 0.0 },
+        Interactable {
+            name: "Village Elder".to_string(),
+            dialogue_id: "seirei_intro".to_string(),
+        },
+        crate::light_plugin::LightSensitive { threshold: 0.15 },
+        Name::new("VillageElder"),
+    ));
+
+    // The final boss: the Gashadokuro at the defiled shrine, far to the east of
+    // the village. Walk adjacent and press Space to engage. Felling it carries
+    // `FinalBoss` into combat, so `end_battle_on_death` wins the run, and its
+    // `EnemyEncounter` id closes the main quest's kill objective.
+    commands.spawn((
+        PlaceholderVisual::character(Color::srgb(0.93, 0.92, 0.86)),
+        Transform::from_translation(origin3 + Vec3::new(28.0 * 32.0, 6.0 * 32.0, 0.0)),
+        EnemyEncounter {
+            id: FINAL_BOSS_ENCOUNTER_ID,
+        },
+        FinalBoss,
+        VisualOcclusionTarget,
+        YSort { base_z: 0.0 },
+        crate::light_plugin::LightSensitive { threshold: 0.15 },
+        Name::new("Gashadokuro"),
+    ));
+
     // A walk-in building (open-topped room with a doorway) for testing how
     // walls occlude a character standing inside, especially while rotating the
     // camera (Q/E). Walls carry colliders; the front doorway is the way in.
@@ -592,6 +635,14 @@ pub fn spawn_party(
             Transform::from_translation(ally_base + Vec3::new(i as f32 * 32.0, 0.0, 0.0)),
             WorldAlly,
             kind,
+            // Companions carry the same combat/contract components as the leader
+            // so they can fall, be resurrected, and — if promoted — step into the
+            // leader role without missing any state (see `apply_set_leader_system`
+            // and `auto_promote_dead_leader_system`).
+            kind.combat_stats(),
+            Bound,
+            ResurrectionStanding::default(),
+            CombatMovePoints::default(),
             VisualOcclusionTarget,
             YSort { base_z: 0.0 },
             crate::light_plugin::LightSensitive { threshold: 0.15 },
@@ -605,6 +656,119 @@ pub fn spawn_party(
         leader,
         companions.len()
     );
+}
+
+/// Marker for the sanctuary where downed party members are revived. Stand on it
+/// to finalise any pending resurrection (see [`revive_shrine_system`]). The same
+/// entity is also a [`ResurrectionPoint`], so the resurrected characters wake up
+/// right here.
+#[derive(Component)]
+pub struct ReviveShrine;
+
+/// Request to promote a party member to leader (the overworld avatar). Emitted by
+/// the pause-menu "Party" page; applied by [`apply_set_leader_system`].
+#[derive(Message)]
+pub struct SetLeaderRequest {
+    pub kind: CharacterKind,
+}
+
+/// Swap the [`Player`] marker from the current leader onto the world entity of
+/// the requested (living) party member, demoting the old leader to a
+/// [`WorldAlly`]. Both entities already hold the full leader component set
+/// (combat stats, contract, move points), so only the markers and the
+/// [`SelectedParty`] ordering need to change. A downed member can't be made
+/// leader — there must always be a living avatar.
+pub fn apply_set_leader_system(
+    mut commands: Commands,
+    mut requests: MessageReader<SetLeaderRequest>,
+    mut party: ResMut<SelectedParty>,
+    player_q: Query<Entity, With<Player>>,
+    ally_q: Query<(Entity, &CharacterKind), (With<WorldAlly>, Without<Dead>)>,
+) {
+    for ev in requests.read() {
+        let Ok(old_leader) = player_q.single() else {
+            continue;
+        };
+        let Some((new_leader, _)) = ally_q.iter().find(|(_, k)| **k == ev.kind) else {
+            // No living companion of that kind — already leader, or downed.
+            continue;
+        };
+
+        commands.entity(old_leader).remove::<Player>().insert(WorldAlly);
+        commands.entity(new_leader).remove::<WorldAlly>().insert(Player);
+        promote_in_party_order(&mut party, ev.kind);
+        info!("Leader changed to {:?}", ev.kind);
+    }
+}
+
+/// If the leader has fallen but a companion still stands, hand the avatar to a
+/// living companion so the overworld is never controlled by a corpse. The old
+/// leader keeps its `Dead` / `AwaitingResurrection` state and trails the party as
+/// a downed companion until revived. Runs only while exploring so it never races
+/// the battle's world links.
+pub fn auto_promote_dead_leader_system(
+    mut commands: Commands,
+    game_state: Res<GameState>,
+    mut party: ResMut<SelectedParty>,
+    dead_leader_q: Query<Entity, (With<Player>, With<Dead>)>,
+    living_ally_q: Query<(Entity, &CharacterKind), (With<WorldAlly>, Without<Dead>)>,
+) {
+    if game_state.0 != Game_State::Exploring {
+        return;
+    }
+    let Ok(old_leader) = dead_leader_q.single() else {
+        return;
+    };
+    let Some((new_leader, &new_kind)) = living_ally_q.iter().next() else {
+        // Whole party is down — the battle layer raises GameOver; nothing to do.
+        return;
+    };
+
+    commands.entity(old_leader).remove::<Player>().insert(WorldAlly);
+    commands.entity(new_leader).remove::<WorldAlly>().insert(Player);
+    promote_in_party_order(&mut party, new_kind);
+    info!("Leader fell — {:?} takes the lead", new_kind);
+}
+
+/// Move `kind` to the front of the party order (the leader slot), shifting the
+/// previous leader down into the companion ranks.
+fn promote_in_party_order(party: &mut SelectedParty, kind: CharacterKind) {
+    if let Some(pos) = party.0.iter().position(|k| *k == kind) {
+        let k = party.0.remove(pos);
+        party.0.insert(0, k);
+    }
+}
+
+/// Standing on the [`ReviveShrine`] finalises every pending resurrection now:
+/// each downed party member's deadline is pulled to the present so
+/// `process_resurrection_queue_system` restores them this frame, snapping them
+/// to the shrine via `teleport_on_resurrection`.
+pub fn revive_shrine_system(
+    game_state: Res<GameState>,
+    timestamp: Res<Timestamp>,
+    player_q: Query<&Transform, With<Player>>,
+    shrine_q: Query<&Transform, With<ReviveShrine>>,
+    mut awaiting_q: Query<&mut AwaitingResurrection>,
+) {
+    if game_state.0 != Game_State::Exploring {
+        return;
+    }
+    let Ok(player_tf) = player_q.single() else {
+        return;
+    };
+    let player_pos = player_tf.translation.truncate();
+    let at_shrine = shrine_q
+        .iter()
+        .any(|t| t.translation.truncate().distance(player_pos) <= 48.0);
+    if !at_shrine {
+        return;
+    }
+
+    for mut awaiting in awaiting_q.iter_mut() {
+        if awaiting.ready_at_timestamp > timestamp.0 {
+            awaiting.ready_at_timestamp = timestamp.0;
+        }
+    }
 }
 
 // `apply_y_sort` and `update_visual_occluders` were 2D-only (fake depth via z,

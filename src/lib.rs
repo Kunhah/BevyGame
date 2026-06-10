@@ -24,6 +24,7 @@ pub mod characters;
 pub mod city_data;
 pub mod combat_ability;
 pub mod combat_hud;
+pub mod combat_overlay;
 pub mod combat_plugin;
 pub mod constants;
 pub mod contract;
@@ -68,6 +69,7 @@ use battle::{
     tick_summon_lifetime_system, transform_npc_to_enemy, BattleState,
 };
 use combat_hud::CombatHudPlugin;
+use combat_overlay::CombatOverlayPlugin;
 use combat_plugin::{
     AfterRestEvent, AttackIntentEvent, AwardXpEvent, BeforeRestEvent, CombatPlugin, DamageQueue,
     DeathEvent, RestEvent,
@@ -190,6 +192,7 @@ fn full_game_app() -> App {
         .add_plugins(SkillTreePlugin)
         .add_plugins(skill_screen::SkillScreenPlugin)
         .add_plugins(CombatHudPlugin)
+        .add_plugins(CombatOverlayPlugin)
         .add_plugins(AiDecisionPlugin)
         .add_plugins(creatures::CreaturesPlugin)
         .add_plugins(activities::ActivitiesPlugin)
@@ -238,8 +241,12 @@ fn full_game_app() -> App {
         .init_resource::<battle::PendingHuntBattle>()
         .init_resource::<render3d::CameraRig>()
         .init_resource::<characters::SelectedParty>()
+        .add_message::<world::SetLeaderRequest>()
         .add_systems(Startup, setup)
         .add_systems(Update, world::spawn_party)
+        .add_systems(Update, world::apply_set_leader_system)
+        .add_systems(Update, world::auto_promote_dead_leader_system)
+        .add_systems(Update, world::revive_shrine_system)
         .add_systems(Update, player_movement)
         .add_systems(Update, toggle_camera_lock)
         .add_systems(Update, update_cache)

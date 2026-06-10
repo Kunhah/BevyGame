@@ -15,6 +15,7 @@
 //! (deals damage to the enemy); it takes exactly 3 of its own turns; it is gone
 //! afterwards.
 
+use bevy::asset::{AssetApp, AssetPlugin};
 use bevy::prelude::*;
 use bevy::MinimalPlugins;
 
@@ -118,6 +119,21 @@ fn spawn_inert(app: &mut App, side: BattleSide, hp: i32, speed: i32) -> Entity {
 fn shikigami_summons_acts_and_expires_after_three_turns() {
     let mut app = App::new();
     app.add_plugins(MinimalPlugins)
+        // `resolve_summon_system` reads `PlaceholderAssets` to give the spawned
+        // unit its placeholder box (added during the 2D→3D port). MinimalPlugins
+        // has no rendering, so stand the asset collections up headlessly and
+        // build the resource the same way `world::setup` does.
+        .add_plugins(AssetPlugin::default())
+        .init_asset::<Mesh>()
+        .init_asset::<StandardMaterial>()
+        .add_systems(Startup, |mut commands: Commands,
+                                mut meshes: ResMut<Assets<Mesh>>,
+                                mut materials: ResMut<Assets<StandardMaterial>>| {
+            commands.insert_resource(SeireiKuniBevy::render3d::PlaceholderAssets::build(
+                &mut meshes,
+                &mut materials,
+            ));
+        })
         .add_plugins(CombatPlugin)
         .add_plugins(AiDecisionPlugin)
         .add_plugins(StatusEffectsPlugin)
@@ -130,6 +146,10 @@ fn shikigami_summons_acts_and_expires_after_three_turns() {
         })
         .insert_resource(Timestamp(0))
         .insert_resource(DamageQueue::default())
+        // `resolve_summon_system` also queries the collision `QuadTree` (to find
+        // free ground for obstacle wards); an empty one is fine for a combatant
+        // summon, which just spawns beside the caster.
+        .init_resource::<SeireiKuniBevy::quadtree::QuadTree>()
         .insert_resource(ShikiTurns::default())
         // The two summon systems live in the game's app builder (lib.rs), not in
         // CombatPlugin — wire them here exactly as the game does.
@@ -159,6 +179,8 @@ fn shikigami_summons_acts_and_expires_after_three_turns() {
             summoner: _caster,
             kind: SummonKind::Shikigami,
             lifetime_turns: 3,
+            // Combatant summons ignore this (they spawn beside the caster).
+            target: None,
         });
 
     // Let resolve_summon_system spawn it.

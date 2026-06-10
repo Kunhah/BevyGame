@@ -1208,6 +1208,11 @@ pub struct AttackIntentEvent {
 pub struct AbilityIntentEvent {
     pub user: Entity,
     pub ability_id: u16,
+    /// The actor the AI chose to aim the ability at (an enemy for offensive
+    /// spells, a wounded ally / self for support). The resolver applies the
+    /// ability's effects to this entity, mirroring the single-target player
+    /// path in `process_player_action_system`.
+    pub target: Entity,
 }
 
 #[derive(Debug, Clone, Message)]
@@ -3521,7 +3526,10 @@ fn buff_tick_system(
                 _ => keep.push(m),
             }
         }
-        commands.entity(entity).insert(StatModifiers(keep));
+        // Mutate the component in place rather than re-inserting via Commands:
+        // a unit can be despawned the same frame (e.g. a summon expiring), and
+        // a deferred `insert` on a despawned entity panics in Bevy 0.18.
+        mods.0 = keep;
     }
 
     // Remove expired buffs
@@ -4316,6 +4324,82 @@ fn process_player_action_system(
 }
 
 
+/// Resolve abilities the AI elected to cast. The behaviour-tree decision system
+/// (`ai_decision`) only *signals* intent via [`AbilityIntentEvent`]; this is the
+/// consumer that actually pays the cost and applies the effects, mirroring the
+/// `UseAbility` arm of [`process_player_action_system`]. Without it, every
+/// enemy ability silently never fires and foes can only basic-attack.
+fn resolve_ai_ability_intent_system(
+    mut ev: MessageReader<AbilityIntentEvent>,
+    ability_tree: Option<Res<Ability_Tree>>,
+    timestamp: Res<Timestamp>,
+    mut dq: ResMut<DamageQueue>,
+    mut stats_q: Query<&mut CombatStats>,
+    status_q: Query<&crate::status_effects::StatusEffects>,
+    defilement_q: Query<&crate::kegare::Defilement>,
+    mut writers: PlayerActionWriters,
+) {
+    let Some(tree) = ability_tree.as_ref() else {
+        return;
+    };
+    for e in ev.read() {
+        let actor = e.user;
+        let Some(ability) = tree.0.find(e.ability_id) else {
+            warn!("AI ability {} not found in tree", e.ability_id);
+            continue;
+        };
+
+        // Status gating mirrors the player path: a terrified/silenced caster
+        // can't act.
+        let gates = crate::status_effects::action_gates(status_q.get(actor).ok());
+        if gates.block_attacks {
+            continue;
+        }
+        if gates.block_magic_abilities && ability.magic_cost > 0.0 {
+            continue;
+        }
+
+        // Same cost shaping as the player: status multiplier × kegare tilt.
+        let cost_mult = crate::status_effects::magic_cost_multiplier(status_q.get(actor).ok());
+        let kegare_cost_mult = defilement_q
+            .get(actor)
+            .map(|&d| crate::kegare::cost_multiplier(d, ability.magic_school))
+            .unwrap_or(1.0);
+        let scaled_magic_cost = ability.magic_cost * cost_mult * kegare_cost_mult;
+
+        let Ok(mut stats) = stats_q.get_mut(actor) else {
+            continue;
+        };
+        if !stats.action_points.can_spend(ability.action_point_cost)
+            || !stats.pool(ability.magic_school).can_spend(scaled_magic_cost)
+        {
+            // Not enough resources this turn — the AI already ended its turn
+            // upstream, so just skip; it falls back to attacking next time.
+            continue;
+        }
+        stats.action_points.spend(ability.action_point_cost);
+        stats.pool_mut(ability.magic_school).spend(scaled_magic_cost);
+        drop(stats);
+
+        handle_ability(
+            actor,
+            &ability,
+            &[e.target],
+            timestamp.0,
+            &mut dq,
+            &mut writers.intent,
+            &mut writers.heal,
+            &mut writers.buff,
+            &mut writers.apply_status,
+            &mut writers.remove_status,
+            &mut writers.summon,
+            &mut writers.attune,
+            &mut writers.flip,
+            &mut writers.drain_morale,
+        );
+    }
+}
+
 /// At the end of a turn, we emit TurnEndEvent to allow cleanup and buff ticks if you prefer to tie buff durations to turns.
 fn on_turn_end_system(mut ev_reader: MessageReader<TurnEndEvent>, mut _commands: Commands) {
     for ev in ev_reader.iter() {
@@ -4369,8 +4453,10 @@ fn buff_tick_on_turn_start_system(
                     _ => keep.push(m),
                 }
             }
-            // reinsert updated modifiers
-            commands.entity(entity).insert(StatModifiers(keep));
+            // Update in place (see `buff_tick_system`): re-inserting via
+            // Commands would panic if `ev.who` was despawned earlier this frame.
+            let _ = entity;
+            mods.0 = keep;
         }
     }
 }
@@ -4969,6 +5055,7 @@ impl Plugin for CombatPlugin {
             .add_systems(Update, advance_turn_system.after(compute_turn_order_system))
             .add_systems(Update, buff_tick_system)
             .add_systems(Update, process_player_action_system)
+            .add_systems(Update, resolve_ai_ability_intent_system)
             // combat pipeline (core)
             .add_systems(Update, process_attack_intent)
             .add_systems(Update, resolve_give_item_intent_system)

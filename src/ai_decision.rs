@@ -503,12 +503,15 @@ pub fn evaluate_behavior_tree_system(
                     });
                 }
             }
-            Some(AiAction::Ability { ability_id, target: _ }) => {
-                // The ability event handler resolves targets internally based
-                // on shape/range; we just signal intent here.
+            Some(AiAction::Ability { ability_id, target }) => {
+                // The behaviour tree already picked the target (an enemy for
+                // offensive spells, the weakest ally / self for support); pass
+                // it through so `resolve_ai_ability_intent_system` can apply the
+                // ability's effects, mirroring the player's single-target path.
                 ability_writer.write(AbilityIntentEvent {
                     user: actor,
                     ability_id,
+                    target,
                 });
             }
             Some(AiAction::Defend) => {

@@ -1,0 +1,38 @@
+// Opening beat of the main quest. The village elder charges the party with the
+// run's goal: destroy the Gashadokuro at the defiled shrine to the east. The
+// final node id ("elder_charge") is what the main quest's Talk objective
+// listens for, and it sets the `quest_intro_heard` flag for later branching.
+//
+// Triggered by walking up to the "Village Elder" interactable (spawned in
+// `world::setup`) and pressing E.
+(
+    id: "seirei_intro",
+    background: None,
+    music: None,
+    start: "intro_1",
+    nodes: {
+        "intro_1": line((
+            speaker: (name: "Village Elder", slot: slot4, expression: None),
+            text: "You came. Good. The shrine bells have not stopped ringing for three nights, and the kegare creeps further down the eastern path with each dawn.",
+            on_enter: [],
+            condition: None,
+            next: Some("intro_2"),
+        )),
+        "intro_2": line((
+            speaker: (name: "Village Elder", slot: slot4, expression: None),
+            text: "It is a Gashadokuro — a mountain of the unburied dead, knit into one starving giant. While it stands, the defilement will swallow every field and hearth we have.",
+            on_enter: [],
+            condition: None,
+            next: Some("elder_charge"),
+        )),
+        "elder_charge": line((
+            speaker: (name: "Village Elder", slot: slot4, expression: None),
+            text: "Walk the eastern path to the defiled shrine. Destroy the thing that festers there, and cleanse this land. We have no one else.",
+            on_enter: [
+                set_flag("quest_intro_heard"),
+            ],
+            condition: None,
+            next: None,
+        )),
+    },
+)

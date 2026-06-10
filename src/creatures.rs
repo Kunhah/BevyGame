@@ -17,9 +17,10 @@
 //!
 //! At runtime each spawned creature carries a [`Creature`] component holding
 //! its home anchor and a small state machine. [`drive_creatures`] ticks that
-//! machine every frame while exploring: Hostile creatures chase and start a
-//! fight on contact, Territorial ones guard a home and leash back, Skittish
-//! ones flee, Passive ones wander, and Friendly ones hold their ground.
+//! machine every frame while exploring: Hostile creatures start a fight the
+//! moment they spot the player (within their vision cone), Territorial ones
+//! guard a home and engage intruders they see, Skittish ones flee, Passive ones
+//! wander, and Friendly ones hold their ground.
 
 use std::collections::HashMap;
 use std::fs;
@@ -46,8 +47,8 @@ const CREATURE_CATALOG_PATH: &str = "assets/data/creatures.ron";
 /// most important behaviour knob — everything else just tunes it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Disposition {
-    /// Attacks on sight: chases the player as soon as they enter detection
-    /// range and starts a battle on contact.
+    /// Attacks on sight: starts a battle the instant the player steps into its
+    /// vision cone within detection range.
     Hostile,
     /// Peaceful until disturbed. Guards a home area and chases intruders who
     /// come close, but gives up and walks home if lured past its leash.
@@ -73,9 +74,13 @@ impl Disposition {
 /// (the old sprite grid is 32 units per tile); speeds are units/second.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct BehaviorParams {
-    /// Range at which the creature notices the player.
+    /// Range at which the creature can *spot* the player — but only if the
+    /// player is also inside its [vision cone](Self::vision_half_angle). For an
+    /// aggressive creature, being spotted starts the fight (BG3-style, in
+    /// place); detection no longer requires walking into contact.
     pub detection_radius: f32,
-    /// Range at which a Hostile/Territorial creature actually starts the fight.
+    /// Range at which a Territorial creature is considered "back home" when
+    /// returning, and the adjacency window for the player's manual Space engage.
     pub engage_radius: f32,
     /// Movement speed while chasing or fleeing.
     pub move_speed: f32,
@@ -84,6 +89,27 @@ pub struct BehaviorParams {
     pub leash_radius: f32,
     /// Radius of the wander box around home for Passive creatures.
     pub wander_radius: f32,
+    /// Half-angle (radians) of the frontal vision cone used for spotting. The
+    /// player is seen only when within this angle of the creature's `facing`
+    /// *and* inside `detection_radius` — so a creature can be slipped past from
+    /// behind. Defaults to ~70° (a 140° cone).
+    #[serde(default = "default_vision_half_angle")]
+    pub vision_half_angle: f32,
+    /// Point-blank radius within which the player is *always* noticed
+    /// regardless of facing — stops a creature being cheesed at touching range
+    /// from directly behind.
+    #[serde(default = "default_notice_radius")]
+    pub notice_radius: f32,
+}
+
+/// Default frontal vision half-angle (~70°, i.e. a 140° cone).
+fn default_vision_half_angle() -> f32 {
+    70.0_f32.to_radians()
+}
+
+/// Default point-blank always-notice radius.
+fn default_notice_radius() -> f32 {
+    48.0
 }
 
 impl Default for BehaviorParams {
@@ -94,6 +120,8 @@ impl Default for BehaviorParams {
             move_speed: PLAYER_SPEED * 0.55,
             leash_radius: 384.0,
             wander_radius: 96.0,
+            vision_half_angle: default_vision_half_angle(),
+            notice_radius: default_notice_radius(),
         }
     }
 }
@@ -147,6 +175,9 @@ pub struct Creature {
     pub wander_target: Option<Vec2>,
     /// Seconds until the creature picks a new wander destination.
     pub wander_cooldown: f32,
+    /// Unit vector the creature is currently looking along. Drives the frontal
+    /// vision cone used for spotting; updated to its heading whenever it moves.
+    pub facing: Vec2,
 }
 
 impl Creature {
@@ -157,6 +188,9 @@ impl Creature {
             state: CreatureState::Idle,
             wander_target: None,
             wander_cooldown: 0.0,
+            // Face "south" (toward the camera) by default; movement overwrites
+            // this with the live heading.
+            facing: Vec2::NEG_Y,
         }
     }
 }
@@ -295,77 +329,77 @@ pub fn drive_creatures(
 
         match tmpl.disposition {
             Disposition::Hostile => {
-                if dist <= params.detection_radius {
+                // BG3-style: the instant the creature sees the player, the
+                // fight begins right where everyone is standing.
+                if spots_player(creature.facing, to_player, dist, &params) {
                     creature.state = CreatureState::Chase;
-                    if dist <= params.engage_radius {
-                        // Reached the player — start the fight and stop.
-                        game_state.0 = Game_State::Battle;
-                        start_battle(
-                            &mut commands,
-                            &mut battle_state,
-                            &mut tm,
-                            &mut turn_order,
-                            // Untagged (id 0) when this spawn carries no
-                            // encounter identity — it still fights, just isn't
-                            // matched by any quest/hunt.
-                            encounter.map(|e| e.id).unwrap_or(0),
-                            None,
-                            None,
-                            yokai.map(|y| y.kind).or(tmpl.yokai),
-                            entity,
-                            player_entity,
-                            player_tf.translation,
-                            transform.translation,
-                            allies.clone(),
-                            player_kind,
-                        );
-                        return;
-                    }
-                    step_toward(&mut transform, to_player, params.move_speed, dt);
-                } else {
-                    creature.state = CreatureState::Idle;
+                    game_state.0 = Game_State::Battle;
+                    start_battle(
+                        &mut commands,
+                        &mut battle_state,
+                        &mut tm,
+                        &mut turn_order,
+                        // Untagged (id 0) when this spawn carries no
+                        // encounter identity — it still fights, just isn't
+                        // matched by any quest/hunt.
+                        encounter.map(|e| e.id).unwrap_or(0),
+                        None,
+                        None,
+                        yokai.map(|y| y.kind).or(tmpl.yokai),
+                        entity,
+                        player_entity,
+                        player_tf.translation,
+                        transform.translation,
+                        allies.clone(),
+                        player_kind,
+                        false,
+                    );
+                    return;
                 }
+                creature.state = CreatureState::Idle;
             }
             Disposition::Territorial => {
                 let from_home = pos - creature.home;
                 let leashed = from_home.length() >= params.leash_radius;
-                let player_in_range = dist <= params.detection_radius;
                 if creature.state == CreatureState::Returning {
                     // Keep walking home until we arrive, then re-evaluate.
                     if from_home.length() <= params.engage_radius {
                         creature.state = CreatureState::Idle;
                     } else {
-                        step_toward(&mut transform, creature.home - pos, params.move_speed, dt);
+                        let dir = creature.home - pos;
+                        face_along(&mut creature, dir);
+                        step_toward(&mut transform, dir, params.move_speed, dt);
                     }
-                } else if player_in_range && !leashed {
+                } else if !leashed && spots_player(creature.facing, to_player, dist, &params) {
+                    // Intruder spotted within its territory — engage in place.
                     creature.state = CreatureState::Chase;
-                    if dist <= params.engage_radius {
-                        game_state.0 = Game_State::Battle;
-                        start_battle(
-                            &mut commands,
-                            &mut battle_state,
-                            &mut tm,
-                            &mut turn_order,
-                            // Untagged (id 0) when this spawn carries no
-                            // encounter identity — it still fights, just isn't
-                            // matched by any quest/hunt.
-                            encounter.map(|e| e.id).unwrap_or(0),
-                            None,
-                            None,
-                            yokai.map(|y| y.kind).or(tmpl.yokai),
-                            entity,
-                            player_entity,
-                            player_tf.translation,
-                            transform.translation,
-                            allies.clone(),
-                            player_kind,
-                        );
-                        return;
-                    }
-                    step_toward(&mut transform, to_player, params.move_speed, dt);
+                    game_state.0 = Game_State::Battle;
+                    start_battle(
+                        &mut commands,
+                        &mut battle_state,
+                        &mut tm,
+                        &mut turn_order,
+                        // Untagged (id 0) when this spawn carries no
+                        // encounter identity — it still fights, just isn't
+                        // matched by any quest/hunt.
+                        encounter.map(|e| e.id).unwrap_or(0),
+                        None,
+                        None,
+                        yokai.map(|y| y.kind).or(tmpl.yokai),
+                        entity,
+                        player_entity,
+                        player_tf.translation,
+                        transform.translation,
+                        allies.clone(),
+                        player_kind,
+                        false,
+                    );
+                    return;
                 } else if leashed {
                     creature.state = CreatureState::Returning;
-                    step_toward(&mut transform, creature.home - pos, params.move_speed, dt);
+                    let dir = creature.home - pos;
+                    face_along(&mut creature, dir);
+                    step_toward(&mut transform, dir, params.move_speed, dt);
                 } else {
                     creature.state = CreatureState::Idle;
                 }
@@ -374,6 +408,7 @@ pub fn drive_creatures(
                 if dist <= params.detection_radius && dist > f32::EPSILON {
                     creature.state = CreatureState::Flee;
                     // Move directly away from the player.
+                    face_along(&mut creature, -to_player);
                     step_toward(&mut transform, -to_player, params.move_speed, dt);
                 } else {
                     creature.state = CreatureState::Idle;
@@ -395,12 +430,45 @@ pub fn drive_creatures(
                 };
                 creature.state = CreatureState::Wander;
                 // Wander at a relaxed pace (half the chase/flee speed).
-                step_toward(&mut transform, target - pos, params.move_speed * 0.5, dt);
+                let dir = target - pos;
+                face_along(&mut creature, dir);
+                step_toward(&mut transform, dir, params.move_speed * 0.5, dt);
             }
             Disposition::Friendly => {
                 creature.state = CreatureState::Idle;
             }
         }
+    }
+}
+
+/// Whether an aggressive creature looking along `facing` can see the player.
+///
+/// True when the player is within point-blank `notice_radius` (any direction),
+/// or within `detection_radius` *and* inside the frontal vision cone of
+/// half-angle `vision_half_angle`. `to_player`/`dist` are the vector and
+/// distance from the creature to the player.
+fn spots_player(facing: Vec2, to_player: Vec2, dist: f32, params: &BehaviorParams) -> bool {
+    if dist <= params.notice_radius {
+        return true;
+    }
+    if dist > params.detection_radius || dist <= f32::EPSILON {
+        return dist <= f32::EPSILON; // co-located counts as point-blank.
+    }
+    let f = facing.normalize_or_zero();
+    if f == Vec2::ZERO {
+        // No meaningful facing → fall back to omnidirectional detection.
+        return true;
+    }
+    // cos(angle) >= cos(half_angle) ⇔ angle <= half_angle.
+    (f.dot(to_player / dist)) >= params.vision_half_angle.cos()
+}
+
+/// Point a creature's `facing` along `dir` (ignored when `dir` is ~zero so a
+/// stalled step doesn't blank the heading).
+fn face_along(creature: &mut Creature, dir: Vec2) {
+    let n = dir.normalize_or_zero();
+    if n != Vec2::ZERO {
+        creature.facing = n;
     }
 }
 
@@ -451,5 +519,32 @@ mod tests {
             !parsed.templates.is_empty(),
             "expected at least one creature template",
         );
+    }
+
+    #[test]
+    fn spotting_respects_vision_cone_and_radii() {
+        let params = BehaviorParams {
+            detection_radius: 300.0,
+            notice_radius: 48.0,
+            vision_half_angle: 70.0_f32.to_radians(),
+            ..Default::default()
+        };
+        let facing = Vec2::NEG_Y; // looking "south".
+
+        // In front, within range → spotted.
+        let front = Vec2::new(0.0, -200.0);
+        assert!(spots_player(facing, front, front.length(), &params));
+
+        // Directly behind, within detection range but outside the cone → blind.
+        let behind = Vec2::new(0.0, 200.0);
+        assert!(!spots_player(facing, behind, behind.length(), &params));
+
+        // Behind but point-blank (inside notice_radius) → always noticed.
+        let point_blank = Vec2::new(0.0, 30.0);
+        assert!(spots_player(facing, point_blank, point_blank.length(), &params));
+
+        // In front but beyond detection range → not yet seen.
+        let far = Vec2::new(0.0, -400.0);
+        assert!(!spots_player(facing, far, far.length(), &params));
     }
 }

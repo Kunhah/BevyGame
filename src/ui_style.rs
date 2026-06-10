@@ -28,6 +28,23 @@ pub mod palette {
     pub const ACCENT_DANGER: Color = Color::srgb(0.92, 0.40, 0.45);
     pub const ACCENT_WARNING: Color = Color::srgb(0.95, 0.78, 0.35);
 
+    // ---- In-battle palette ----
+    /// Side tints for floating combatant frames and the turn strip.
+    pub const ALLY: Color = Color::srgb(0.50, 0.74, 0.96);
+    pub const ENEMY: Color = Color::srgb(0.93, 0.46, 0.46);
+    /// Health bar fill, shading to amber/red as it drains (see `health_fill`).
+    pub const HEALTH_FULL: Color = Color::srgb(0.42, 0.82, 0.48);
+    pub const HEALTH_MID: Color = Color::srgb(0.92, 0.74, 0.32);
+    pub const HEALTH_LOW: Color = Color::srgb(0.90, 0.34, 0.34);
+    /// Morale / resolve bar fill (a calmer violet, distinct from health).
+    pub const MORALE: Color = Color::srgb(0.62, 0.55, 0.92);
+    /// Empty track behind any stat bar.
+    pub const BAR_TRACK: Color = Color::srgba(0.04, 0.05, 0.08, 0.85);
+    /// Status-badge tints by tier (1 mild → 3 severe).
+    pub const STATUS_TIER_1: Color = Color::srgb(0.70, 0.74, 0.42);
+    pub const STATUS_TIER_2: Color = Color::srgb(0.90, 0.62, 0.30);
+    pub const STATUS_TIER_3: Color = Color::srgb(0.90, 0.34, 0.34);
+
     // ---- Title-scene palette ----
     /// Warm gold used for the game's wordmark — evokes shrine lantern light.
     pub const BRAND: Color = Color::srgb(0.95, 0.83, 0.58);
@@ -306,6 +323,80 @@ pub fn button_text_lg(text: impl Into<String>) -> impl Bundle {
             ..default()
         },
         TextColor(palette::TEXT_PRIMARY),
+    )
+}
+
+// ---------------------------------------------------------------------------
+// In-battle primitives
+// ---------------------------------------------------------------------------
+
+/// Health-bar fill colour for a fill fraction in `0.0..=1.0`: green when full,
+/// fading through amber and into red as it drains.
+pub fn health_fill(frac: f32) -> Color {
+    let f = frac.clamp(0.0, 1.0);
+    if f >= 0.5 {
+        // green → amber over the top half.
+        palette::HEALTH_MID.mix(&palette::HEALTH_FULL, (f - 0.5) * 2.0)
+    } else {
+        // amber → red over the bottom half.
+        palette::HEALTH_LOW.mix(&palette::HEALTH_MID, f * 2.0)
+    }
+}
+
+/// Tint for a status badge of the given tier (1..=3); clamps out-of-range tiers.
+pub fn status_tier_color(tier: u8) -> Color {
+    match tier {
+        0 | 1 => palette::STATUS_TIER_1,
+        2 => palette::STATUS_TIER_2,
+        _ => palette::STATUS_TIER_3,
+    }
+}
+
+/// An empty stat-bar track (the dark groove a fill sits inside). Spawn a
+/// [`bar_fill`] as its child. `width`/`height` are in pixels.
+pub fn bar_track(width: f32, height: f32) -> impl Bundle {
+    (
+        Node {
+            width: Val::Px(width),
+            height: Val::Px(height),
+            border: UiRect::all(Val::Px(1.0)),
+            border_radius: BorderRadius::all(Val::Px(radius::SM)),
+            overflow: Overflow::clip(),
+            ..default()
+        },
+        BackgroundColor(palette::BAR_TRACK),
+        BorderColor::all(palette::BORDER_SUBTLE),
+    )
+}
+
+/// The coloured fill inside a [`bar_track`], sized to `frac` of the track width.
+pub fn bar_fill(frac: f32, color: Color) -> impl Bundle {
+    (
+        Node {
+            width: Val::Percent(frac.clamp(0.0, 1.0) * 100.0),
+            height: Val::Percent(100.0),
+            ..default()
+        },
+        BackgroundColor(color),
+    )
+}
+
+/// A compact pop-up panel for the command-bar flyouts: dark, accent-bordered,
+/// column layout. Anchored by the caller (absolute positioning).
+pub fn flyout_panel() -> impl Bundle {
+    (
+        Node {
+            display: Display::Flex,
+            flex_direction: FlexDirection::Column,
+            align_items: AlignItems::Stretch,
+            row_gap: Val::Px(spacing::XS),
+            padding: UiRect::all(Val::Px(spacing::SM)),
+            border: UiRect::all(Val::Px(1.5)),
+            border_radius: BorderRadius::all(Val::Px(radius::MD)),
+            ..default()
+        },
+        BackgroundColor(palette::BG_PANEL),
+        BorderColor::all(palette::BORDER_ACCENT),
     )
 }
 

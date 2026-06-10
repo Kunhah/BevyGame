@@ -6,7 +6,7 @@ use bevy::prelude::Messages;
 use crate::characters::CharacterKind;
 use crate::combat_plugin::{
     Abilities, AccumulatedSpeed, ActionCause, AttackContext, AttackIntentEvent, Bound, CombatStats,
-    DamageEvent, DamageType, DeathEvent, ElementalAffinity, Experience, GrowthAttributes, Level,
+    DamageEvent, DamageType, Dead, DeathEvent, ElementalAffinity, Experience, GrowthAttributes, Level,
     MagicDistribution, PendingPlayerAction, PlayerAction, PlayerActionEvent, PlayerControlled,
     ResurrectionStanding, RoundEndEvent, StatModifiers, StatPool, SummonEvent, TurnEndEvent,
     TurnInProgress, TurnManager, TurnOrder, TurnStartEvent, WaitIntentEvent,
@@ -163,6 +163,17 @@ pub struct BattleState {
     pub enemy_id: Option<u32>,
 }
 
+/// Marks an encounter (and the combat entity spawned from it) as the run's
+/// final boss. When a combatant carrying this dies in battle, the run is won:
+/// `end_battle_on_death` transitions to [`Game_State::Victory`] instead of
+/// returning to exploration.
+#[derive(Component, Clone, Copy)]
+pub struct FinalBoss;
+
+/// World-encounter id reserved for the final boss (the Gashadokuro at the
+/// defiled shrine). Sits outside every other id range used in `world.rs`.
+pub const FINAL_BOSS_ENCOUNTER_ID: u32 = 9001;
+
 pub fn battle_trigger_system(
     mut commands: Commands,
     mut game_state: ResMut<GameState>,
@@ -180,9 +191,12 @@ pub fn battle_trigger_system(
             Option<&GovernorNpc>,
             Option<&SuccessorNpc>,
             Option<&WorldYokai>,
+            Option<&FinalBoss>,
         ),
     >,
-    ally_q: Query<(Entity, &Transform, Option<&CharacterKind>), With<WorldAlly>>,
+    // Downed companions (`Dead`) sit the fight out — they can't be dragged into
+    // battle until revived at the shrine.
+    ally_q: Query<(Entity, &Transform, Option<&CharacterKind>), (With<WorldAlly>, Without<Dead>)>,
 ) {
     if game_state.0 != Game_State::Exploring || battle_state.active {
         return;
@@ -199,7 +213,7 @@ pub fn battle_trigger_system(
     let player_kind = player_kind.copied();
 
     let player_pos = player_tf.translation.truncate();
-    for (enemy_entity, enemy_tf, encounter, governor_opt, successor_opt, yokai_opt) in
+    for (enemy_entity, enemy_tf, encounter, governor_opt, successor_opt, yokai_opt, boss_opt) in
         enemy_q.iter()
     {
         let enemy_pos = enemy_tf.translation.truncate();
@@ -225,6 +239,7 @@ pub fn battle_trigger_system(
                 enemy_tf.translation,
                 ally_q.iter().map(|(e, t, k)| (e, *t, k.copied())).collect(),
                 player_kind,
+                boss_opt.is_some(),
             );
             break;
         }
@@ -247,6 +262,7 @@ pub fn start_battle(
     enemy_world_pos: Vec3,
     allies_world: Vec<(Entity, Transform, Option<CharacterKind>)>,
     player_kind: Option<CharacterKind>,
+    is_final_boss: bool,
 ) {
     battle_state.active = true;
     battle_state.enemy_id = Some(enemy_id);
@@ -270,6 +286,14 @@ pub fn start_battle(
             successor_target,
         ),
     };
+    // Carry the encounter id onto the combatant so kill-tracking quests can
+    // match it: `dispatch_kill_progress` reads `EnemyEncounter` off the entity
+    // named in the `DeathEvent`, and the world entity that originally held it
+    // was just despawned. (Yokai/generic spawns don't attach this themselves.)
+    commands.entity(enemy).insert(EnemyEncounter { id: enemy_id });
+    if is_final_boss {
+        commands.entity(enemy).insert(FinalBoss);
+    }
     participants.push(enemy);
 
     battle_state.participants = participants;
@@ -382,6 +406,9 @@ fn spawn_enemy_combat(
     successor_target: Option<(u16, u32)>,
 ) -> Entity {
     let (hp, lethality, hit, armor, agility) = match enemy_id {
+        // The Gashadokuro: a wall of bone meant to take the whole party several
+        // rounds and punish a glass-cannon line-up.
+        FINAL_BOSS_ENCOUNTER_ID => (420, 22, 82, 16, 7),
         1 => (80, 10, 70, 6, 8),
         2 => (120, 14, 75, 10, 6),
         _ => (60, 8, 65, 4, 7),
@@ -391,6 +418,8 @@ fn spawn_enemy_combat(
     // player's tagged elemental spells visible matchups: a Metal-armoured
     // soldier melts to Fire (×1.5), a water-warded one shrugs it off (×0.66).
     let (phase, polarity) = match enemy_id {
+        // Earth-bodied undeath, yin: weak to Wood (×1.5), resists Water.
+        FINAL_BOSS_ENCOUNTER_ID => (Phase::Earth, Polarity::In),
         1 => (Phase::Metal, Polarity::In),
         2 => (Phase::Water, Polarity::Yo),
         _ => (Phase::Wood, Polarity::In),
@@ -1261,8 +1290,11 @@ pub fn setup_player_turns(
     mut commands: Commands,
     stats_q: Query<&CombatStats>,
     player_q: Query<(), With<PlayerControlled>>,
-    link_q: Query<&BattleWorldLink>,
-    mut world_mp_q: Query<&mut CombatMovePoints>,
+    // The click-to-move gate reads the *overworld* player's points, so refill
+    // those directly. (Routing the refill through `BattleWorldLink` proved
+    // unreliable — the link could resolve to the wrong entity, leaving the real
+    // player stuck at zero while the combat entity showed a full bar.)
+    mut world_mp_q: Query<&mut CombatMovePoints, (With<Player>, Without<BattleParticipant>)>,
 ) {
     for ev in events.read() {
         if player_q.get(ev.who).is_err() {
@@ -1274,30 +1306,21 @@ pub fn setup_player_turns(
         if let Ok(stats) = stats_q.get(ev.who) {
             let movement = stats.movement.current.max(0) as f32;
             let max_distance = (movement * crate::constants::PLAYER_SPEED).min(250.0);
-            // Always refresh points at turn start.
+            // Combat entity (mirrored back to the overworld player by
+            // `sync_combat_move_points_from_world`).
             commands.entity(ev.who).insert(CombatMovePoints {
                 remaining: max_distance,
                 max: max_distance,
             });
+            // Overworld player — the authoritative source movement spends from.
+            for mut mp in world_mp_q.iter_mut() {
+                mp.remaining = max_distance;
+                mp.max = max_distance;
+            }
             info!(
-                "Player turn start: set combat move points to {:.2} for {:?}",
+                "Player turn start: refreshed move points to {:.0} for {:?}",
                 max_distance, ev.who
             );
-            if let Ok(link) = link_q.get(ev.who) {
-                if let Ok(mut mp) = world_mp_q.get_mut(link.world_entity) {
-                    mp.remaining = max_distance;
-                    mp.max = max_distance;
-                } else {
-                    commands.entity(link.world_entity).insert(CombatMovePoints {
-                        remaining: max_distance,
-                        max: max_distance,
-                    });
-                }
-                info!(
-                    "Player turn start: set world move points to {:.2} for {:?}",
-                    max_distance, link.world_entity
-                );
-            }
         }
         pending.entity = Some(ev.who);
     }
@@ -1818,6 +1841,7 @@ pub fn start_pending_hunt_battle(
         hunt_tf.translation,
         Vec::new(),
         player_kind,
+        false,
     );
     pending.hunt_target = None;
 }
@@ -1843,28 +1867,36 @@ pub fn sync_player_combat_bound(
     }
 }
 
-/// When a player-controlled battle participant dies, end the battle
-/// ourselves (the shipped `end_battle_on_death` only ends on Enemy death)
-/// and re-emit `DeathEvent` on the world player so the existing
-/// resurrection pipeline (which queries `Bound` / `ResurrectionStanding` on
-/// the world entity) fires.
+/// When a player-controlled battle participant dies, retire it from the fight
+/// (the shipped `end_battle_on_death` only retires enemies) and re-emit
+/// `DeathEvent` on its *world* entity so the resurrection pipeline (which queries
+/// `Bound` / `ResurrectionStanding` on the world entity) marks it downed.
+///
+/// The run only ends once the *whole* party is down: a single fallen companion —
+/// or even the leader, as long as one ally still stands — leaves the battle
+/// running. The downed members keep their `Dead` flag on the world entity so
+/// they can be revived later at the shrine.
 pub fn bridge_player_death_to_world(
-    // Reads `DeathEvent` and re-emits one targeting the world entity. Bevy 0.18
+    // Reads `DeathEvent` and re-emits ones targeting world entities. Bevy 0.18
     // forbids `Res<Messages<T>>` + `ResMut<Messages<T>>` in one system, so reader
-    // and writer share a `ParamSet`: collect the bridged event while reading,
-    // then write it once the read borrow is released.
+    // and writer share a `ParamSet`: collect the bridged events while reading,
+    // then write them once the read borrow is released.
     mut deaths: ParamSet<(MessageReader<DeathEvent>, MessageWriter<DeathEvent>)>,
     participants_q: Query<
         (&BattleSide, &BattleWorldLink),
         (With<BattleParticipant>, With<PlayerControlled>),
     >,
+    allies_q: Query<(Entity, &BattleSide, &CombatStats), With<BattleParticipant>>,
     mut commands: Commands,
     mut battle_state: ResMut<BattleState>,
     mut tm: ResMut<TurnManager>,
     mut turn_order: ResMut<TurnOrder>,
     mut game_state: ResMut<GameState>,
 ) {
-    let mut bridged: Option<DeathEvent> = None;
+    // Collect this frame's ally casualties (battle participant + the world entity
+    // to bridge the death onto).
+    let mut fallen: Vec<Entity> = Vec::new();
+    let mut bridged: Vec<DeathEvent> = Vec::new();
     for ev in deaths.p0().read() {
         let Ok((side, link)) = participants_q.get(ev.entity) else {
             continue;
@@ -1872,6 +1904,39 @@ pub fn bridge_player_death_to_world(
         if !matches!(side, BattleSide::Ally) {
             continue;
         }
+        fallen.push(ev.entity);
+        // Mark the world entity downed and feed the resurrection pipeline.
+        commands.entity(link.world_entity).insert(Dead);
+        bridged.push(DeathEvent {
+            entity: link.world_entity,
+            killer: ev.killer,
+        });
+    }
+
+    if fallen.is_empty() {
+        return;
+    }
+
+    // Retire each fallen ally so it never takes another turn or lingers on the
+    // field (mirrors how `end_battle_on_death` retires enemies).
+    for entity in &fallen {
+        commands.entity(*entity).despawn();
+        tm.participants.retain(|e| e != entity);
+        turn_order.queue.retain(|e| e != entity);
+        battle_state.participants.retain(|e| e != entity);
+    }
+
+    // Is anyone on the party's side still standing?
+    let allies_left = allies_q
+        .iter()
+        .filter(|(e, side, stats)| {
+            matches!(side, BattleSide::Ally) && stats.health.current > 0 && !fallen.contains(e)
+        })
+        .count();
+
+    if allies_left == 0 {
+        // The whole party has fallen — the run is over. Tear the encounter down
+        // and show the defeat screen.
         for entity in battle_state.participants.drain(..) {
             commands.entity(entity).despawn();
         }
@@ -1879,18 +1944,17 @@ pub fn bridge_player_death_to_world(
         turn_order.queue.clear();
         battle_state.active = false;
         battle_state.enemy_id = None;
-        game_state.0 = Game_State::Exploring;
-
-        bridged = Some(DeathEvent {
-            entity: link.world_entity,
-            killer: ev.killer,
-        });
-        break;
+        game_state.0 = Game_State::GameOver;
+        info!("bridge_player_death_to_world: party wiped — run over");
+    } else {
+        info!(
+            "bridge_player_death_to_world: ally felled — {allies_left} still standing"
+        );
     }
 
-    if let Some(ev) = bridged {
-        deaths.p1().write(ev);
-        info!("bridge_player_death_to_world: player died in battle — bridged to world");
+    let mut writer = deaths.p1();
+    for ev in bridged {
+        writer.write(ev);
     }
 }
 
@@ -1901,27 +1965,60 @@ pub fn end_battle_on_death(
     mut battle_state: ResMut<BattleState>,
     mut tm: ResMut<TurnManager>,
     mut turn_order: ResMut<TurnOrder>,
-    participants_q: Query<&BattleSide, With<BattleParticipant>>,
+    participants_q: Query<
+        (Entity, &BattleSide, &CombatStats, Option<&FinalBoss>),
+        With<BattleParticipant>,
+    >,
     obstacles_q: Query<Entity, With<SummonedObstacle>>,
 ) {
     if !battle_state.active || game_state.0 != Game_State::Battle {
         return;
     }
 
-    let mut battle_over = false;
+    // Collect the enemies that died this frame. Each is removed from the fight
+    // immediately, but the battle only ends once *no* enemy is left standing
+    // (or the final boss falls).
+    let mut boss_slain = false;
+    let mut slain: Vec<Entity> = Vec::new();
     for ev in death_events.read() {
-        if let Ok(side) = participants_q.get(ev.entity) {
+        if let Ok((_e, side, _stats, boss)) = participants_q.get(ev.entity) {
             if matches!(side, BattleSide::Enemy) {
-                battle_over = true;
-                break;
+                slain.push(ev.entity);
+                if boss.is_some() {
+                    boss_slain = true;
+                }
             }
         }
     }
 
-    if !battle_over {
+    if slain.is_empty() {
         return;
     }
 
+    // Retire each fallen enemy: despawn it and scrub it from turn bookkeeping so
+    // it never takes another turn and its overlay frame disappears.
+    for entity in &slain {
+        commands.entity(*entity).despawn();
+        tm.participants.retain(|e| e != entity);
+        turn_order.queue.retain(|e| e != entity);
+        battle_state.participants.retain(|e| e != entity);
+    }
+
+    // Any enemy still alive (health > 0) and not among this frame's casualties
+    // keeps the battle going.
+    let enemies_left = participants_q
+        .iter()
+        .filter(|(e, side, stats, _)| {
+            matches!(side, BattleSide::Enemy) && stats.health.current > 0 && !slain.contains(e)
+        })
+        .count();
+
+    if !boss_slain && enemies_left > 0 {
+        info!("Enemy felled — {enemies_left} still standing");
+        return;
+    }
+
+    // Last enemy down (or the boss): tear the encounter down.
     for entity in battle_state.participants.drain(..) {
         commands.entity(entity).despawn();
     }
@@ -1933,9 +2030,15 @@ pub fn end_battle_on_death(
     turn_order.queue.clear();
     battle_state.active = false;
     battle_state.enemy_id = None;
-    game_state.0 = Game_State::Exploring;
-
-    info!("Battle ended");
+    // Felling the final boss cleanses the land and wins the run; any other
+    // victory just returns the party to the overworld.
+    if boss_slain {
+        game_state.0 = Game_State::Victory;
+        info!("Final boss defeated — the land is cleansed. Victory!");
+    } else {
+        game_state.0 = Game_State::Exploring;
+        info!("Battle ended");
+    }
 }
 
 pub fn end_battle(

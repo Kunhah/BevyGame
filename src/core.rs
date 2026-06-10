@@ -23,6 +23,12 @@ pub enum Game_State {
     /// chosen duration, rolling random events between steps. Entered from the
     /// rest selector (inn / camp / ritual); see `crate::rest`.
     Resting,
+    /// The party leader fell in battle. Terminal run state: shows the defeat
+    /// screen, from which the player can return to the title or quit.
+    GameOver,
+    /// The final boss has been destroyed and the land cleansed. Terminal run
+    /// state: shows the victory / closing screen.
+    Victory,
 }
 
 #[derive(Resource)]

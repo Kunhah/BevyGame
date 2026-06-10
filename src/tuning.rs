@@ -72,10 +72,12 @@ pub struct RenderTuning {
 impl Default for RenderTuning {
     fn default() -> Self {
         Self {
-            ambient_brightness: 120.0,
+            // Brighter fill so the ground reads as dark slate instead of black
+            // (the old 120 + a strong vignette crushed it). Tune live with F2.
+            ambient_brightness: 320.0,
             ambient_color: [0.6, 0.7, 1.0],
             sun_dir: [-0.85, 0.4, -0.75],
-            sun_illuminance: 10_000.0,
+            sun_illuminance: 11_000.0,
 
             toon_rim_strength: 0.30,
             toon_rim_power: 3.5,
@@ -86,13 +88,13 @@ impl Default for RenderTuning {
             toon_ramp_t_lit: 0.45,
             toon_ramp_softness: 0.04,
 
-            vignette_strength: 0.55,
-            vignette_softness: 0.35,
+            vignette_strength: 0.38,
+            vignette_softness: 0.40,
             grain_strength: 0.005,
 
             bloom_intensity: 0.08,
 
-            fog_density: 0.0005,
+            fog_density: 0.00025,
             fog_color: [0.06, 0.08, 0.13],
 
             grade_exposure: -0.05,

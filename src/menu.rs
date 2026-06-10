@@ -5,8 +5,9 @@ use bevy::input::keyboard::KeyCode;
 use bevy::input::mouse::MouseButton;
 use bevy::prelude::*;
 
-use crate::characters::CharacterKind;
+use crate::characters::{CharacterKind, SelectedParty};
 use crate::core::{GameState, Game_State, MainCamera};
+use crate::world::SetLeaderRequest;
 use crate::render3d::{iso_camera_offset, spawn_menu_stage_camera, PlaceholderVisual, CHAR_HEIGHT};
 use crate::save::{AutoSaveSettings, SaveAction, SaveRequest, SaveSlot};
 use crate::settings::{GraphicsSettings, GraphicsToggle, GRAPHICS_TOGGLES};
@@ -30,6 +31,8 @@ impl Plugin for MenuPlugin {
             .add_systems(Update, sync_pause_menu_page)
             .add_systems(Update, spawn_main_menu_ui)
             .add_systems(Update, spawn_pause_menu_ui)
+            .add_systems(Update, spawn_game_over_ui)
+            .add_systems(Update, spawn_victory_ui)
             .add_systems(Update, animate_title)
             .add_systems(Update, toggle_pause_state)
             .add_systems(Update, handle_menu_actions)
@@ -212,6 +215,7 @@ impl Default for MainMenuPage {
 pub enum PauseMenuPage {
     Main,
     Settings,
+    Party,
 }
 
 impl Default for PauseMenuPage {
@@ -235,8 +239,13 @@ enum MenuButtonAction {
     BackToTitle,
     ResumeGame,
     ReturnToTitle,
+    /// From the defeat screen: start a fresh run at the party-selection screen.
+    RestartRun,
     PauseOpenSettings,
+    PauseOpenParty,
     PauseBack,
+    /// From the pause "Party" page: promote this character to leader.
+    MakeLeader(CharacterKind),
     LoadSlot1,
     LoadSlot2,
     LoadSlot3,
@@ -553,6 +562,7 @@ fn spawn_pause_menu_ui(
     mut commands: Commands,
     game_state: Res<GameState>,
     page: Res<PauseMenuPage>,
+    party: Res<SelectedParty>,
     main_menu_root: Query<Entity, With<MainMenuRoot>>,
     existing: Query<(Entity, &PauseMenuRoot)>,
     children: Query<&Children>,
@@ -565,7 +575,10 @@ fn spawn_pause_menu_ui(
     }
 
     if let Ok((entity, root)) = existing.single() {
-        if root.0 == *page {
+        // The Party page also rebuilds when the roster reorders (e.g. after a
+        // "Make Leader"), so the leader marker tracks reality.
+        let stale = *page == PauseMenuPage::Party && party.is_changed();
+        if root.0 == *page && !stale {
             return;
         }
         despawn_recursive(&mut commands, entity, &children);
@@ -576,6 +589,7 @@ fn spawn_pause_menu_ui(
     match *page {
         PauseMenuPage::Main => spawn_pause_main_page(&mut commands, root),
         PauseMenuPage::Settings => spawn_settings_page(&mut commands, root, /* is_pause */ true),
+        PauseMenuPage::Party => spawn_pause_party_page(&mut commands, root, &party),
     }
 }
 
@@ -596,7 +610,166 @@ fn spawn_pause_main_page(commands: &mut Commands, root: Entity) {
             ));
 
             spawn_hero_button(col, "Resume", MenuButtonAction::ResumeGame);
+            spawn_hero_button(col, "Party", MenuButtonAction::PauseOpenParty);
             spawn_hero_button(col, "Settings", MenuButtonAction::PauseOpenSettings);
+            spawn_hero_button(col, "Return to Title", MenuButtonAction::ReturnToTitle);
+            spawn_hero_button(col, "Quit", MenuButtonAction::QuitGame);
+        });
+    });
+}
+
+/// Pause "Party" page: lists the roster in order. Element 0 is the leader (the
+/// overworld avatar); every other member gets a "Make Leader" button that
+/// promotes them. The list is read straight from [`SelectedParty`] so it always
+/// reflects the live order.
+fn spawn_pause_party_page(commands: &mut Commands, root: Entity, party: &SelectedParty) {
+    commands.entity(root).with_children(|parent| {
+        parent.spawn(panel(PAUSE_PANEL_WIDTH)).with_children(|col| {
+            col.spawn((
+                Text::new("Party"),
+                TextFont {
+                    font_size: 36.0,
+                    ..default()
+                },
+                TextColor(palette::TEXT_HEADING),
+                Node {
+                    margin: UiRect::bottom(Val::Px(spacing::SM)),
+                    ..default()
+                },
+            ));
+
+            for (idx, kind) in party.0.iter().copied().enumerate() {
+                if idx == 0 {
+                    col.spawn(label_text(&format!("{}  (leader)", kind.display_name())));
+                } else {
+                    spawn_hero_button(
+                        col,
+                        &format!("Make {} leader", kind.display_name()),
+                        MenuButtonAction::MakeLeader(kind),
+                    );
+                }
+            }
+
+            col.spawn(Node {
+                height: Val::Px(spacing::SM),
+                ..default()
+            });
+            spawn_hero_button(col, "Back", MenuButtonAction::PauseBack);
+        });
+    });
+}
+
+/// Root of the defeat overlay, shown while in [`Game_State::GameOver`].
+#[derive(Component)]
+struct GameOverRoot;
+
+/// Root of the victory / closing overlay, shown in [`Game_State::Victory`].
+#[derive(Component)]
+struct VictoryRoot;
+
+/// Full-screen defeat panel. Spawned once on entering `GameOver`, torn down on
+/// leaving. Rendered by the (still-active) gameplay camera over the frozen
+/// battlefield.
+fn spawn_game_over_ui(
+    mut commands: Commands,
+    game_state: Res<GameState>,
+    existing: Query<Entity, With<GameOverRoot>>,
+    children: Query<&Children>,
+) {
+    if game_state.0 != Game_State::GameOver {
+        for entity in existing.iter() {
+            despawn_recursive(&mut commands, entity, &children);
+        }
+        return;
+    }
+    if !existing.is_empty() {
+        return;
+    }
+
+    let root = commands.spawn((overlay_root(), GameOverRoot)).id();
+    commands.entity(root).with_children(|parent| {
+        parent.spawn(panel(PAUSE_PANEL_WIDTH)).with_children(|col| {
+            col.spawn((
+                Text::new("The Party Has Fallen"),
+                TextFont {
+                    font_size: 40.0,
+                    ..default()
+                },
+                TextColor(palette::BRAND),
+                Node {
+                    margin: UiRect::bottom(Val::Px(spacing::SM)),
+                    ..default()
+                },
+            ));
+            col.spawn(label_text(
+                "Your leader's thread is cut, and the defilement spreads unchecked.",
+            ));
+            col.spawn(Node {
+                height: Val::Px(spacing::SM),
+                ..default()
+            });
+            spawn_hero_button(col, "Try Again", MenuButtonAction::RestartRun);
+            spawn_hero_button(col, "Return to Title", MenuButtonAction::ReturnToTitle);
+            spawn_hero_button(col, "Quit", MenuButtonAction::QuitGame);
+        });
+    });
+}
+
+/// Full-screen victory panel shown when the final boss falls. Acts as the run's
+/// closing screen.
+fn spawn_victory_ui(
+    mut commands: Commands,
+    game_state: Res<GameState>,
+    existing: Query<Entity, With<VictoryRoot>>,
+    children: Query<&Children>,
+) {
+    if game_state.0 != Game_State::Victory {
+        for entity in existing.iter() {
+            despawn_recursive(&mut commands, entity, &children);
+        }
+        return;
+    }
+    if !existing.is_empty() {
+        return;
+    }
+
+    let root = commands.spawn((overlay_root(), VictoryRoot)).id();
+    commands.entity(root).with_children(|parent| {
+        parent.spawn(panel(SUB_PANEL_WIDTH)).with_children(|col| {
+            col.spawn((
+                Text::new("The Land Is Cleansed"),
+                TextFont {
+                    font_size: 44.0,
+                    ..default()
+                },
+                TextColor(palette::BRAND),
+                Node {
+                    margin: UiRect::bottom(Val::Px(spacing::SM)),
+                    ..default()
+                },
+            ));
+            col.spawn(label_text(
+                "The Gashadokuro crumbles to dust. The shrine bells fall silent at last,",
+            ));
+            col.spawn(label_text(
+                "and the kegare lifts from the eastern path. Your name passes into song.",
+            ));
+            col.spawn(Node {
+                height: Val::Px(spacing::MD),
+                ..default()
+            });
+            col.spawn((
+                Text::new("— Seirei Kuni —"),
+                TextFont {
+                    font_size: font_size::BODY,
+                    ..default()
+                },
+                TextColor(palette::TEXT_SECONDARY),
+                Node {
+                    margin: UiRect::bottom(Val::Px(spacing::MD)),
+                    ..default()
+                },
+            ));
             spawn_hero_button(col, "Return to Title", MenuButtonAction::ReturnToTitle);
             spawn_hero_button(col, "Quit", MenuButtonAction::QuitGame);
         });
@@ -722,6 +895,9 @@ fn toggle_pause_state(
                 game_state.0 = resume_state.0;
             }
         }
+        // Terminal run states own the whole screen; Esc must not peel back into
+        // a paused world that no longer exists.
+        Game_State::GameOver | Game_State::Victory => {}
         other => {
             resume_state.0 = other;
             game_state.0 = Game_State::Paused;
@@ -740,6 +916,7 @@ fn handle_menu_actions(
     mut pause_page: ResMut<PauseMenuPage>,
     mut mouse_input: ResMut<ButtonInput<MouseButton>>,
     mut key_input: ResMut<ButtonInput<KeyCode>>,
+    mut leader_requests: MessageWriter<SetLeaderRequest>,
     mut interactions: Query<(&Interaction, &MenuButtonAction), (Changed<Interaction>, With<Button>)>,
 ) {
     for (interaction, action) in &mut interactions {
@@ -779,8 +956,20 @@ fn handle_menu_actions(
                 mouse_input.reset_all();
                 key_input.clear();
             }
+            MenuButtonAction::RestartRun => {
+                game_state.0 = Game_State::PartySelection;
+                resume_state.0 = Game_State::Exploring;
+                mouse_input.reset_all();
+                key_input.clear();
+            }
             MenuButtonAction::PauseOpenSettings => {
                 *pause_page = PauseMenuPage::Settings;
+            }
+            MenuButtonAction::PauseOpenParty => {
+                *pause_page = PauseMenuPage::Party;
+            }
+            MenuButtonAction::MakeLeader(kind) => {
+                leader_requests.write(SetLeaderRequest { kind: *kind });
             }
             MenuButtonAction::PauseBack => {
                 *pause_page = PauseMenuPage::Main;

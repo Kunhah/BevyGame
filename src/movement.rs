@@ -459,20 +459,27 @@ pub fn mouse_click(
                 info!("mouse_click (battle): no move points on player");
                 return;
             }
-            let cost = transform.translation.truncate().distance(target_world);
-            if cost > remaining {
-                info!(
-                    "mouse_click (battle): denied cost {:.2} > remaining {:.2}",
-                    cost, remaining
-                );
+            if remaining <= 0.0 {
+                info!("mouse_click (battle): no move points left this turn");
                 return;
             }
+            // Clamp the destination to how far the remaining move points reach,
+            // so a click always walks the unit *toward* the spot (up to its
+            // range) rather than refusing outright when it's too far.
+            let here = transform.translation.truncate();
+            let to_target = target_world - here;
+            let dist = to_target.length();
+            let dest = if dist <= remaining {
+                target_world
+            } else {
+                here + to_target.normalize_or_zero() * remaining
+            };
             commands
                 .entity(entity)
-                .insert(CombatMoveTarget { target: target_world });
+                .insert(CombatMoveTarget { target: dest });
             info!(
-                "mouse_click (battle): target set at ({:.2}, {:.2}) cost {:.2} remaining {:.2}",
-                target_world.x, target_world.y, cost, remaining
+                "mouse_click (battle): move toward ({:.2}, {:.2}) dist {:.2} remaining {:.2}",
+                dest.x, dest.y, dist, remaining
             );
             return;
         }

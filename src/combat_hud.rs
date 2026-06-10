@@ -27,7 +27,7 @@ use crate::battle::{BattleParticipant, BattleSide};
 use crate::combat_ability::{Ability, Ability_Tree, MagicSchool};
 use crate::combat_plugin::{
     effective_element, Abilities, Attunement, CombatStats, ElementalAffinity, Inventory,
-    InventoryItemCatalog, InventoryItemKind, Name, PendingPlayerAction, PlayerAction,
+    InventoryItemCatalog, InventoryItemKind, PendingPlayerAction, PlayerAction,
     PlayerActionEvent, PolarityFlip, OVERLOAD_THRESHOLD,
 };
 use crate::gogyo::{damage_multiplier_overloaded, Element, Phase, Polarity};
@@ -58,8 +58,9 @@ impl Plugin for CombatHudPlugin {
             // Appearance / hint / marker updates run in PostUpdate so they win
             // over the shared `update_standard_button_visuals` hover restyling
             // and always reflect the current frame's affordability.
-            .add_systems(PostUpdate, (sync_combat_hud, sync_hint))
+            .add_systems(PostUpdate, (sync_flyout_visibility, sync_combat_hud, sync_hint))
             .add_systems(PostUpdate, sync_target_marker.after(sync_combat_hud))
+            .add_systems(PostUpdate, sync_action_cursor)
             .add_systems(PostUpdate, sync_element_wheel);
     }
 }
@@ -74,10 +75,14 @@ const TARGET_PICK_RADIUS: f32 = 40.0;
 #[derive(Resource, Debug, Clone, Default)]
 pub struct CombatHudState {
     pub mode: HudMode,
-    /// Index of the keyboard-focused option (also set by mouse hover).
-    focus: usize,
-    /// Number of options currently spawned, for focus wrap-around.
-    option_count: usize,
+    /// The flyout currently expanded (Skills / Items), if any.
+    open: Option<FlyoutKind>,
+    /// Index of the focused top-level category (used when no flyout is open).
+    cat_focus: usize,
+    /// Index of the focused option inside the open flyout.
+    opt_focus: usize,
+    /// Number of top-level categories spawned this turn (for focus wrap-around).
+    cat_count: usize,
     /// Enemy currently aimed at while in [`HudMode::AwaitingTarget`].
     target: Option<Entity>,
 }
@@ -106,6 +111,21 @@ enum HudAction {
     Wait,
 }
 
+/// The two expandable flyout menus hung off the command bar.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FlyoutKind {
+    Skills,
+    Items,
+}
+
+/// A top-level command-bar entry: either fires an action directly, or expands
+/// a flyout of further options.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CategoryKind {
+    Direct(HudAction),
+    Open(FlyoutKind),
+}
+
 // ---------------------------------------------------------------------------
 // Markers
 // ---------------------------------------------------------------------------
@@ -113,11 +133,30 @@ enum HudAction {
 #[derive(Component)]
 struct CombatHudRoot;
 
-/// One selectable option. `index` is its position in the focus order.
+/// One top-level category button on the command bar.
+#[derive(Component, Clone, Copy)]
+struct CombatHudCategory {
+    index: usize,
+    kind: CategoryKind,
+}
+
+/// The text child of a category button (restyled for focus / affordability).
+#[derive(Component)]
+struct CombatHudCategoryLabel;
+
+/// A flyout container; toggled visible when its `kind` is the open flyout.
+#[derive(Component, Clone, Copy)]
+struct CombatHudFlyout {
+    kind: FlyoutKind,
+}
+
+/// One selectable option inside a flyout. `index` is its position within that
+/// flyout's focus order.
 #[derive(Component, Clone, Copy)]
 struct CombatHudOption {
     index: usize,
     action: HudAction,
+    flyout: FlyoutKind,
 }
 
 /// The text child of an option button (restyled for focus / affordability).
@@ -135,6 +174,11 @@ struct CombatHudHint;
 /// Floating marker drawn over the currently aimed enemy.
 #[derive(Component)]
 struct CombatHudTargetMarker;
+
+/// A chip that follows the cursor while an action is armed, naming what will
+/// fire when the player clicks a target.
+#[derive(Component)]
+struct CombatHudCursorChip;
 
 // --- 五行 element wheel widget (§10 of docs/gogyo_elemental_system.md) -------
 
@@ -186,7 +230,7 @@ fn manage_combat_hud_lifetime(
             .get(actor)
             .map(|i| i.item_ids.clone())
             .unwrap_or_default();
-        let count = spawn_combat_hud(
+        let cat_count = spawn_combat_hud(
             &mut commands,
             &abilities,
             &items,
@@ -195,8 +239,10 @@ fn manage_combat_hud_lifetime(
         );
         spawn_element_wheel(&mut commands);
         state.mode = HudMode::Idle;
-        state.focus = 0;
-        state.option_count = count;
+        state.open = None;
+        state.cat_focus = 0;
+        state.opt_focus = 0;
+        state.cat_count = cat_count;
         state.target = None;
     } else if !should_show && already_shown {
         for entity in hud_q.iter() {
@@ -209,7 +255,17 @@ fn manage_combat_hud_lifetime(
     }
 }
 
-/// Build the panel. Returns the number of selectable options spawned.
+/// Build the command bar. Returns the number of top-level categories spawned.
+///
+/// Layout (bottom-centre, grows upward):
+/// ```text
+///   ┌ flyout (only when a category is open) ┐
+///   └───────────────────────────────────────┘
+///   ┌ name · resources ─────────────────────┐
+///   │ 攻 Attack · 守 Defend · 術 · 具 · 待   │
+///   │ hint line                              │
+///   └───────────────────────────────────────┘
+/// ```
 fn spawn_combat_hud(
     commands: &mut Commands,
     ability_ids: &[u16],
@@ -217,101 +273,180 @@ fn spawn_combat_hud(
     ability_tree: Option<&Ability_Tree>,
     item_catalog: Option<&InventoryItemCatalog>,
 ) -> usize {
-    let mut index = 0usize;
+    // Resolve the actor's abilities once (placeholders for ids the tree can't
+    // find) so we can both decide which categories exist and fill the flyouts.
+    let mut abilities: Vec<Ability> = ability_ids
+        .iter()
+        .filter_map(|&id| ability_tree.and_then(|t| t.0.find(id)))
+        .collect();
+    for &id in ability_ids {
+        if !abilities.iter().any(|a| a.id == id) {
+            abilities.push(placeholder_ability(id));
+        }
+    }
+    let has_skills = !abilities.is_empty();
+    let has_items = !item_ids.is_empty();
 
-    let panel = (
+    // Build the ordered category list. Direct actions fire immediately; Skills /
+    // Items expand a flyout and only appear when the actor has any.
+    let mut categories: Vec<(CategoryKind, &'static str)> = vec![
+        (CategoryKind::Direct(HudAction::Attack), "攻 Attack"),
+        (CategoryKind::Direct(HudAction::Defend), "守 Defend"),
+    ];
+    if has_skills {
+        categories.push((CategoryKind::Open(FlyoutKind::Skills), "術 Skills"));
+    }
+    if has_items {
+        categories.push((CategoryKind::Open(FlyoutKind::Items), "具 Items"));
+    }
+    categories.push((CategoryKind::Direct(HudAction::Wait), "待 Wait"));
+    let cat_count = categories.len();
+
+    // Full-width, transparent anchor pinned to the bottom; its children stack
+    // upward and stay horizontally centred at any resolution (no pixel maths).
+    let root = (
         Node {
             position_type: PositionType::Absolute,
             bottom: Val::Px(spacing::XL),
-            left: Val::Percent(50.0),
-            margin: UiRect::left(Val::Px(-260.0)),
-            width: Val::Px(520.0),
+            left: Val::Px(0.0),
+            right: Val::Px(0.0),
             display: Display::Flex,
             flex_direction: FlexDirection::Column,
-            align_items: AlignItems::Stretch,
+            align_items: AlignItems::Center,
             row_gap: Val::Px(spacing::SM),
-            padding: UiRect::all(Val::Px(spacing::LG)),
-            border: UiRect::all(Val::Px(1.5)),
-            border_radius: BorderRadius::all(Val::Px(radius::LG)),
             ..default()
         },
-        BackgroundColor(palette::BG_PANEL),
-        BorderColor::all(palette::BORDER_ACCENT),
         CombatHudRoot,
     );
 
-    commands.spawn(panel).with_children(|col| {
-        // Header — actor name + resources, filled in by `sync_combat_hud`.
+    commands.spawn(root).with_children(|col| {
+        // Flyouts sit above the bar (earlier children render higher in a
+        // column). Hidden until opened by `sync_flyout_visibility`.
+        if has_skills {
+            spawn_skills_flyout(col, &abilities);
+        }
+        if has_items {
+            spawn_items_flyout(col, item_ids, item_catalog);
+        }
+
+        // The bar itself: header, category row, hint.
         col.spawn((
-            text_node("", font_size::LABEL, palette::TEXT_HEADING),
-            CombatHudHeader,
-        ));
+            Node {
+                display: Display::Flex,
+                flex_direction: FlexDirection::Column,
+                align_items: AlignItems::Center,
+                row_gap: Val::Px(spacing::XS),
+                padding: UiRect::axes(Val::Px(spacing::LG), Val::Px(spacing::SM)),
+                border: UiRect::all(Val::Px(1.5)),
+                border_radius: BorderRadius::all(Val::Px(radius::LG)),
+                ..default()
+            },
+            BackgroundColor(palette::BG_PANEL),
+            BorderColor::all(palette::BORDER_ACCENT),
+        ))
+        .with_children(|bar| {
+            // Header — actor name + resources, filled in by `sync_combat_hud`.
+            bar.spawn((
+                text_node("", font_size::SMALL, palette::TEXT_HEADING),
+                CombatHudHeader,
+            ));
 
-        // Basic actions row.
-        section_label(col, "Actions");
-        button_row(col, |row| {
-            spawn_option(row, &mut index, "Attack", HudAction::Attack);
-            spawn_option(row, &mut index, "Defend", HudAction::Defend);
-            spawn_option(row, &mut index, "Wait", HudAction::Wait);
+            // The category row.
+            bar.spawn(Node {
+                display: Display::Flex,
+                flex_direction: FlexDirection::Row,
+                column_gap: Val::Px(spacing::SM),
+                ..default()
+            })
+            .with_children(|row| {
+                for (index, (kind, label)) in categories.iter().enumerate() {
+                    spawn_category(row, index, *kind, label);
+                }
+            });
+
+            // Hint line.
+            bar.spawn((
+                text_node("", font_size::SMALL, palette::TEXT_SECONDARY),
+                CombatHudHint,
+            ));
         });
+    });
 
-        // Items.
-        if !item_ids.is_empty() {
-            section_label(col, "Items");
+    cat_count
+}
+
+/// Spawn the Skills flyout (abilities grouped by school / techniques). Hidden
+/// until opened. Option indices are local to this flyout.
+fn spawn_skills_flyout(parent: &mut ChildSpawnerCommands, abilities: &[Ability]) {
+    let mut index = 0usize;
+    parent
+        .spawn((
+            hidden_flyout(),
+            CombatHudFlyout { kind: FlyoutKind::Skills },
+        ))
+        .with_children(|fly| {
+            for group in ABILITY_GROUPS {
+                let in_group: Vec<&Ability> =
+                    abilities.iter().filter(|a| group.matches(a)).collect();
+                if in_group.is_empty() {
+                    continue;
+                }
+                section_label(fly, group.label);
+                for ability in in_group {
+                    let label = format_ability_label(ability);
+                    spawn_option(
+                        fly,
+                        &mut index,
+                        &label,
+                        HudAction::Ability(ability.id),
+                        FlyoutKind::Skills,
+                    );
+                }
+            }
+        });
+}
+
+/// Spawn the Items flyout. Hidden until opened.
+fn spawn_items_flyout(
+    parent: &mut ChildSpawnerCommands,
+    item_ids: &[u16],
+    item_catalog: Option<&InventoryItemCatalog>,
+) {
+    let mut index = 0usize;
+    parent
+        .spawn((
+            hidden_flyout(),
+            CombatHudFlyout { kind: FlyoutKind::Items },
+        ))
+        .with_children(|fly| {
             for &id in item_ids {
                 let label = item_catalog
                     .and_then(|c| c.0.get(&id))
                     .map(format_item_label)
                     .unwrap_or_else(|| format!("Item {id}"));
-                spawn_option(col, &mut index, &label, HudAction::Item(id));
+                spawn_option(fly, &mut index, &label, HudAction::Item(id), FlyoutKind::Items);
             }
-        }
+        });
+}
 
-        // Abilities grouped by school / techniques.
-        if ability_ids.is_empty() {
-            section_label(col, "Abilities");
-            col.spawn(text_node("(none learned)", font_size::SMALL, palette::TEXT_DIM));
-        } else {
-            let mut abilities: Vec<Ability> = ability_ids
-                .iter()
-                .filter_map(|&id| ability_tree.and_then(|t| t.0.find(id)))
-                .collect();
-            // Keep any ids the tree couldn't resolve as bare entries.
-            for &id in ability_ids {
-                if !abilities.iter().any(|a| a.id == id) {
-                    // Synthesize a minimal placeholder so the option still works.
-                    abilities.push(placeholder_ability(id));
-                }
-            }
-
-            for group in ABILITY_GROUPS {
-                let in_group: Vec<&Ability> = abilities
-                    .iter()
-                    .filter(|a| group.matches(a))
-                    .collect();
-                if in_group.is_empty() {
-                    continue;
-                }
-                section_label(col, group.label);
-                for ability in in_group {
-                    let label = format_ability_label(ability);
-                    spawn_option(col, &mut index, &label, HudAction::Ability(ability.id));
-                }
-            }
-        }
-
-        // Hint line.
-        col.spawn((
-            Node {
-                margin: UiRect::top(Val::Px(spacing::XS)),
-                ..default()
-            },
-            text_node("", font_size::SMALL, palette::TEXT_SECONDARY),
-            CombatHudHint,
-        ));
-    });
-
-    index
+/// A flyout panel bundle that starts hidden (`Display::None`); shown by
+/// `sync_flyout_visibility` when its category is opened.
+fn hidden_flyout() -> impl Bundle {
+    (
+        Node {
+            display: Display::None,
+            flex_direction: FlexDirection::Column,
+            align_items: AlignItems::Stretch,
+            min_width: Val::Px(220.0),
+            row_gap: Val::Px(spacing::XS),
+            padding: UiRect::all(Val::Px(spacing::SM)),
+            border: UiRect::all(Val::Px(1.5)),
+            border_radius: BorderRadius::all(Val::Px(radius::MD)),
+            ..default()
+        },
+        BackgroundColor(palette::BG_PANEL),
+        BorderColor::all(palette::BORDER_ACCENT),
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -329,7 +464,7 @@ fn phase_color(phase: Phase) -> Color {
     }
 }
 
-/// `木 Wood` etc. — kanji + name, short enough for a 48px pip.
+/// `木 Wood` etc. — kanji + name, used by the element label under the wheel.
 fn phase_label(phase: Phase) -> &'static str {
     match phase {
         Phase::Wood => "木 Wood",
@@ -340,108 +475,138 @@ fn phase_label(phase: Phase) -> &'static str {
     }
 }
 
-/// (left, top) for each phase inside the 176×140 pentagon box — Wood at the
-/// apex, then clockwise (Fire, Earth, Metal, Water), matching the §2 diagram.
-fn pip_offset(phase: Phase) -> (f32, f32) {
+/// Bare kanji shown inside a (small, circular) pip.
+fn phase_kanji(phase: Phase) -> &'static str {
     match phase {
-        Phase::Wood => (64.0, 2.0),
-        Phase::Fire => (122.0, 44.0),
-        Phase::Earth => (100.0, 110.0),
-        Phase::Metal => (28.0, 110.0),
-        Phase::Water => (6.0, 44.0),
+        Phase::Wood => "木",
+        Phase::Fire => "火",
+        Phase::Earth => "土",
+        Phase::Metal => "金",
+        Phase::Water => "水",
     }
 }
+
+/// (left, top) of each 30px circular pip inside the 140×124 pentagon box —
+/// Wood at the apex, then clockwise (Fire, Earth, Metal, Water).
+fn pip_offset(phase: Phase) -> (f32, f32) {
+    match phase {
+        Phase::Wood => (55.0, 1.0),
+        Phase::Fire => (101.0, 34.0),
+        Phase::Earth => (83.0, 88.0),
+        Phase::Metal => (27.0, 88.0),
+        Phase::Water => (9.0, 34.0),
+    }
+}
+
+/// Pip diameter (circular).
+const WHEEL_PIP: f32 = 30.0;
 
 const WHEEL_PHASES: [Phase; 5] =
     [Phase::Wood, Phase::Fire, Phase::Earth, Phase::Metal, Phase::Water];
 
-/// Build the top-anchored wheel widget. Pips, a central multiplier readout, and
-/// an element label; `sync_element_wheel` fills in highlight/values each frame.
+/// Build the wheel widget. A full-width, top-anchored wrapper centres a compact
+/// panel of circular phase pips around a live 剋 multiplier readout. Spawned
+/// hidden; `sync_element_wheel` reveals it only while a relevant elemental
+/// matchup is being aimed, and fills in the highlight / values each frame.
 fn spawn_element_wheel(commands: &mut Commands) {
-    let panel = (
+    // Responsive centring wrapper (no pixel-margin hack); toggled by sync.
+    let root = (
         Node {
             position_type: PositionType::Absolute,
             top: Val::Px(spacing::XL),
-            left: Val::Percent(50.0),
-            margin: UiRect::left(Val::Px(-98.0)),
-            width: Val::Px(196.0),
-            display: Display::Flex,
-            flex_direction: FlexDirection::Column,
-            align_items: AlignItems::Center,
-            row_gap: Val::Px(spacing::XS),
-            padding: UiRect::all(Val::Px(spacing::SM)),
-            border: UiRect::all(Val::Px(1.5)),
-            border_radius: BorderRadius::all(Val::Px(radius::LG)),
+            left: Val::Px(0.0),
+            right: Val::Px(0.0),
+            display: Display::None,
+            flex_direction: FlexDirection::Row,
+            justify_content: JustifyContent::Center,
             ..default()
         },
-        BackgroundColor(palette::BG_PANEL),
-        BorderColor::all(palette::BORDER_ACCENT),
         ElementWheelRoot,
     );
 
-    commands.spawn(panel).with_children(|col| {
-        col.spawn(text_node("五行 — Elements", font_size::SMALL, palette::ACCENT_PRIMARY));
+    commands.spawn(root).with_children(|wrap| {
+        wrap.spawn((
+            Node {
+                display: Display::Flex,
+                flex_direction: FlexDirection::Column,
+                align_items: AlignItems::Center,
+                row_gap: Val::Px(spacing::XS),
+                padding: UiRect::all(Val::Px(spacing::SM)),
+                border: UiRect::all(Val::Px(1.0)),
+                border_radius: BorderRadius::all(Val::Px(radius::MD)),
+                ..default()
+            },
+            BackgroundColor(palette::BG_OVERLAY),
+            BorderColor::all(palette::BORDER_SUBTLE),
+        ))
+        .with_children(|col| {
+            col.spawn(text_node("五行", font_size::SMALL, palette::ACCENT_PRIMARY));
 
-        // Pentagon box: pips positioned absolutely, multiplier in the centre.
-        col.spawn(Node {
-            position_type: PositionType::Relative,
-            width: Val::Px(176.0),
-            height: Val::Px(140.0),
-            ..default()
-        })
-        .with_children(|wheel| {
-            for phase in WHEEL_PHASES {
-                let (left, top) = pip_offset(phase);
+            // Pentagon box: circular pips positioned absolutely, multiplier centre.
+            col.spawn(Node {
+                position_type: PositionType::Relative,
+                width: Val::Px(140.0),
+                height: Val::Px(124.0),
+                ..default()
+            })
+            .with_children(|wheel| {
+                for phase in WHEEL_PHASES {
+                    let (left, top) = pip_offset(phase);
+                    wheel
+                        .spawn((
+                            Node {
+                                position_type: PositionType::Absolute,
+                                left: Val::Px(left),
+                                top: Val::Px(top),
+                                width: Val::Px(WHEEL_PIP),
+                                height: Val::Px(WHEEL_PIP),
+                                display: Display::Flex,
+                                align_items: AlignItems::Center,
+                                justify_content: JustifyContent::Center,
+                                border: UiRect::all(Val::Px(1.5)),
+                                border_radius: BorderRadius::all(Val::Px(WHEEL_PIP * 0.5)),
+                                ..default()
+                            },
+                            BackgroundColor(phase_color(phase).with_alpha(0.28)),
+                            BorderColor::all(palette::BORDER_SUBTLE),
+                            WheelPip { phase },
+                        ))
+                        .with_children(|pip| {
+                            pip.spawn(text_node(
+                                phase_kanji(phase),
+                                font_size::LABEL,
+                                palette::TEXT_PRIMARY,
+                            ));
+                        });
+                }
+
+                // Centre readout — the live multiplier.
                 wheel
-                    .spawn((
-                        Node {
-                            position_type: PositionType::Absolute,
-                            left: Val::Px(left),
-                            top: Val::Px(top),
-                            width: Val::Px(48.0),
-                            height: Val::Px(24.0),
-                            display: Display::Flex,
-                            align_items: AlignItems::Center,
-                            justify_content: JustifyContent::Center,
-                            border: UiRect::all(Val::Px(1.5)),
-                            border_radius: BorderRadius::all(Val::Px(radius::SM)),
-                            ..default()
-                        },
-                        BackgroundColor(phase_color(phase).with_alpha(0.30)),
-                        BorderColor::all(palette::BORDER_SUBTLE),
-                        WheelPip { phase },
-                    ))
-                    .with_children(|pip| {
-                        pip.spawn(text_node(phase_label(phase), 11.0, palette::TEXT_PRIMARY));
+                    .spawn(Node {
+                        position_type: PositionType::Absolute,
+                        left: Val::Px(42.0),
+                        top: Val::Px(48.0),
+                        width: Val::Px(56.0),
+                        height: Val::Px(32.0),
+                        display: Display::Flex,
+                        align_items: AlignItems::Center,
+                        justify_content: JustifyContent::Center,
+                        ..default()
+                    })
+                    .with_children(|c| {
+                        c.spawn((
+                            text_node("—", font_size::BODY_LG, palette::TEXT_DIM),
+                            WheelMultiplier,
+                        ));
                     });
-            }
+            });
 
-            // Centre readout — the live multiplier.
-            wheel
-                .spawn(Node {
-                    position_type: PositionType::Absolute,
-                    left: Val::Px(58.0),
-                    top: Val::Px(52.0),
-                    width: Val::Px(60.0),
-                    height: Val::Px(36.0),
-                    display: Display::Flex,
-                    align_items: AlignItems::Center,
-                    justify_content: JustifyContent::Center,
-                    ..default()
-                })
-                .with_children(|c| {
-                    c.spawn((
-                        text_node("—", font_size::BODY_LG, palette::TEXT_DIM),
-                        WheelMultiplier,
-                    ));
-                });
+            // Element label (target's effective element, or the actor's own).
+            col.spawn((
+                text_node("", font_size::SMALL, palette::TEXT_SECONDARY),
+                WheelElementLabel,
+            ));
         });
-
-        // Element label (target's effective element, or the actor's own).
-        col.spawn((
-            text_node("", font_size::SMALL, palette::TEXT_SECONDARY),
-            WheelElementLabel,
-        ));
     });
 }
 
@@ -495,22 +660,45 @@ fn section_label(parent: &mut ChildSpawnerCommands, text: &str) {
     ));
 }
 
-fn button_row(parent: &mut ChildSpawnerCommands, build: impl FnOnce(&mut ChildSpawnerCommands)) {
+/// A category button on the command bar. `index` is its position in the row.
+fn spawn_category(
+    parent: &mut ChildSpawnerCommands,
+    index: usize,
+    kind: CategoryKind,
+    label: &str,
+) {
     parent
-        .spawn(Node {
-            display: Display::Flex,
-            flex_direction: FlexDirection::Row,
-            column_gap: Val::Px(spacing::SM),
-            ..default()
-        })
-        .with_children(build);
+        .spawn((
+            Button::default(),
+            Node {
+                min_height: Val::Px(34.0),
+                display: Display::Flex,
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                padding: UiRect::axes(Val::Px(spacing::MD), Val::Px(spacing::XS)),
+                border: UiRect::all(Val::Px(1.5)),
+                border_radius: BorderRadius::all(Val::Px(radius::SM)),
+                ..default()
+            },
+            BackgroundColor(palette::BG_BUTTON),
+            BorderColor::all(palette::BORDER),
+            CombatHudCategory { index, kind },
+        ))
+        .with_children(|btn| {
+            btn.spawn((
+                text_node(label, font_size::LABEL, palette::TEXT_PRIMARY),
+                CombatHudCategoryLabel,
+            ));
+        });
 }
 
+/// A selectable option inside a flyout. `index` is local to that flyout.
 fn spawn_option(
     parent: &mut ChildSpawnerCommands,
     index: &mut usize,
     label: &str,
     action: HudAction,
+    flyout: FlyoutKind,
 ) {
     let i = *index;
     *index += 1;
@@ -520,7 +708,6 @@ fn spawn_option(
             Button::default(),
             Node {
                 min_height: Val::Px(32.0),
-                flex_grow: 1.0,
                 display: Display::Flex,
                 justify_content: JustifyContent::FlexStart,
                 align_items: AlignItems::Center,
@@ -531,7 +718,7 @@ fn spawn_option(
             },
             BackgroundColor(palette::BG_BUTTON),
             BorderColor::all(palette::BORDER),
-            CombatHudOption { index: i, action },
+            CombatHudOption { index: i, action, flyout },
         ))
         .with_children(|btn| {
             btn.spawn((
@@ -713,9 +900,13 @@ fn resolve_actor<'a>(
 // Input — mouse
 // ---------------------------------------------------------------------------
 
-/// Mouse hover focuses an option; a click chooses it (subject to affordability).
+/// Mouse hover focuses a category / option; a click activates it. Clicking a
+/// flyout category toggles it open; clicking an option (only the visible
+/// flyout's options receive pointer events) chooses it.
+#[allow(clippy::too_many_arguments)]
 fn handle_combat_hud_mouse(
-    mut interactions: Query<(&Interaction, &CombatHudOption), Changed<Interaction>>,
+    category_q: Query<(&Interaction, &CombatHudCategory), Changed<Interaction>>,
+    option_q: Query<(&Interaction, &CombatHudOption), Changed<Interaction>>,
     mut state: ResMut<CombatHudState>,
     pending: Res<PendingPlayerAction>,
     ability_tree: Option<Res<Ability_Tree>>,
@@ -725,21 +916,54 @@ fn handle_combat_hud_mouse(
     enemies_q: Query<(Entity, &BattleSide), With<BattleParticipant>>,
     mut actions: MessageWriter<PlayerActionEvent>,
 ) {
+    if state.mode != HudMode::Idle {
+        return;
+    }
     let Some(actor) = pending.entity else { return };
     let Some(ctx) = resolve_actor(actor, &stats_q, &status_q, &mult_q, ability_tree.as_deref())
     else {
         return;
     };
 
-    for (interaction, option) in &mut interactions {
-        match *interaction {
-            Interaction::Hovered | Interaction::Pressed => {
-                state.focus = option.index;
-            }
-            Interaction::None => {}
+    for (interaction, category) in &category_q {
+        if matches!(interaction, Interaction::Hovered | Interaction::Pressed) {
+            state.cat_focus = category.index;
+        }
+        if *interaction == Interaction::Pressed {
+            activate_category(category.kind, &ctx, &mut state, &enemies_q, &mut actions);
+        }
+    }
+
+    for (interaction, option) in &option_q {
+        if matches!(interaction, Interaction::Hovered | Interaction::Pressed) {
+            state.open = Some(option.flyout);
+            state.opt_focus = option.index;
         }
         if *interaction == Interaction::Pressed {
             choose_option(option.action, &ctx, &mut state, &enemies_q, &mut actions);
+        }
+    }
+}
+
+/// Activate a top-level category: fire a direct action, or toggle its flyout.
+fn activate_category(
+    kind: CategoryKind,
+    ctx: &ActorCtx,
+    state: &mut CombatHudState,
+    enemies_q: &Query<(Entity, &BattleSide), With<BattleParticipant>>,
+    actions: &mut MessageWriter<PlayerActionEvent>,
+) {
+    match kind {
+        CategoryKind::Direct(action) => {
+            choose_option(action, ctx, state, enemies_q, actions);
+        }
+        CategoryKind::Open(kind) => {
+            if state.open == Some(kind) {
+                state.open = None;
+            } else {
+                state.open = Some(kind);
+                state.opt_focus = 0;
+            }
         }
     }
 }
@@ -748,6 +972,7 @@ fn handle_combat_hud_mouse(
 // Input — keyboard
 // ---------------------------------------------------------------------------
 
+#[allow(clippy::too_many_arguments)]
 fn handle_combat_hud_keyboard(
     keys: Res<ButtonInput<KeyCode>>,
     mut state: ResMut<CombatHudState>,
@@ -757,7 +982,8 @@ fn handle_combat_hud_keyboard(
     stats_q: Query<&CombatStats>,
     status_q: Query<&StatusEffects>,
     mult_q: Query<&MagicCostMultipliers>,
-    options_q: Query<&CombatHudOption>,
+    category_q: Query<&CombatHudCategory>,
+    option_q: Query<&CombatHudOption>,
     enemies_q: Query<(Entity, &BattleSide), With<BattleParticipant>>,
     mut actions: MessageWriter<PlayerActionEvent>,
 ) {
@@ -766,10 +992,16 @@ fn handle_combat_hud_keyboard(
     }
     let Some(actor) = pending.entity else { return };
 
-    // Cancel takes priority in either mode.
-    if keys.just_pressed(KeyCode::Escape) && state.mode != HudMode::Idle {
-        state.mode = HudMode::Idle;
-        return;
+    // Esc backs out: cancel targeting, or close an open flyout.
+    if keys.just_pressed(KeyCode::Escape) {
+        if state.mode != HudMode::Idle {
+            state.mode = HudMode::Idle;
+            return;
+        }
+        if state.open.is_some() {
+            state.open = None;
+            return;
+        }
     }
 
     match state.mode {
@@ -802,26 +1034,67 @@ fn handle_combat_hud_keyboard(
             }
         }
         HudMode::Idle => {
-            let count = state.option_count.max(1);
-            if keys.just_pressed(KeyCode::ArrowDown) {
-                state.focus = (state.focus + 1) % count;
-            }
-            if keys.just_pressed(KeyCode::ArrowUp) {
-                state.focus = (state.focus + count - 1) % count;
-            }
-            // Number keys 1..=9 jump to an option.
-            for (key, idx) in NUMBER_KEYS.iter().copied() {
-                if keys.just_pressed(key) && idx < count {
-                    state.focus = idx;
+            match state.open {
+                // Navigating the open flyout.
+                Some(kind) => {
+                    let mut opts: Vec<&CombatHudOption> =
+                        option_q.iter().filter(|o| o.flyout == kind).collect();
+                    opts.sort_by_key(|o| o.index);
+                    let count = opts.len().max(1);
+                    if keys.just_pressed(KeyCode::ArrowDown) {
+                        state.opt_focus = (state.opt_focus + 1) % count;
+                    }
+                    if keys.just_pressed(KeyCode::ArrowUp) {
+                        state.opt_focus = (state.opt_focus + count - 1) % count;
+                    }
+                    for (key, idx) in NUMBER_KEYS.iter().copied() {
+                        if keys.just_pressed(key) && idx < opts.len() {
+                            state.opt_focus = idx;
+                        }
+                    }
+                    // ArrowLeft backs out to the category row.
+                    if keys.just_pressed(KeyCode::ArrowLeft) {
+                        state.open = None;
+                        return;
+                    }
+                    if keys.just_pressed(KeyCode::Enter) {
+                        let focus = state.opt_focus;
+                        if let Some(action) =
+                            opts.iter().find(|o| o.index == focus).map(|o| o.action)
+                        {
+                            if let Some(ctx) = resolve_actor(
+                                actor, &stats_q, &status_q, &mult_q, ability_tree.as_deref(),
+                            ) {
+                                choose_option(action, &ctx, &mut state, &enemies_q, &mut actions);
+                            }
+                        }
+                    }
                 }
-            }
-            if keys.just_pressed(KeyCode::Enter) {
-                let focus = state.focus;
-                if let Some(option) = options_q.iter().find(|o| o.index == focus).copied() {
-                    if let Some(ctx) =
-                        resolve_actor(actor, &stats_q, &status_q, &mult_q, ability_tree.as_deref())
-                    {
-                        choose_option(option.action, &ctx, &mut state, &enemies_q, &mut actions);
+                // Navigating the top-level category row.
+                None => {
+                    let count = state.cat_count.max(1);
+                    if keys.just_pressed(KeyCode::ArrowRight) {
+                        state.cat_focus = (state.cat_focus + 1) % count;
+                    }
+                    if keys.just_pressed(KeyCode::ArrowLeft) {
+                        state.cat_focus = (state.cat_focus + count - 1) % count;
+                    }
+                    for (key, idx) in NUMBER_KEYS.iter().copied() {
+                        if keys.just_pressed(key) && idx < count {
+                            state.cat_focus = idx;
+                        }
+                    }
+                    if keys.just_pressed(KeyCode::Enter) || keys.just_pressed(KeyCode::ArrowUp) {
+                        let focus = state.cat_focus;
+                        if let Some(kind) =
+                            category_q.iter().find(|c| c.index == focus).map(|c| c.kind)
+                        {
+                            if let Some(ctx) = resolve_actor(
+                                actor, &stats_q, &status_q, &mult_q, ability_tree.as_deref(),
+                            ) {
+                                activate_category(kind, &ctx, &mut state, &enemies_q, &mut actions);
+                            }
+                        }
                     }
                 }
             }
@@ -994,7 +1267,24 @@ fn nearest_enemy_within(
 // Visual sync (PostUpdate)
 // ---------------------------------------------------------------------------
 
-#[allow(clippy::too_many_arguments)]
+/// Toggle each flyout's visibility to match the open category.
+fn sync_flyout_visibility(
+    state: Res<CombatHudState>,
+    mut flyout_q: Query<(&CombatHudFlyout, &mut Node)>,
+) {
+    for (flyout, mut node) in &mut flyout_q {
+        let want = if state.mode == HudMode::Idle && state.open == Some(flyout.kind) {
+            Display::Flex
+        } else {
+            Display::None
+        };
+        if node.display != want {
+            node.display = want;
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn sync_combat_hud(
     state: Res<CombatHudState>,
     pending: Res<PendingPlayerAction>,
@@ -1003,14 +1293,34 @@ fn sync_combat_hud(
     status_q: Query<&StatusEffects>,
     mult_q: Query<&MagicCostMultipliers>,
     name_q: Query<&Name>,
-    mut options_q: Query<(
-        &CombatHudOption,
-        &Interaction,
-        &mut BackgroundColor,
-        &mut BorderColor,
-        &Children,
-    )>,
-    mut text_q: Query<&mut TextColor, With<CombatHudOptionLabel>>,
+    mut category_q: Query<
+        (
+            &CombatHudCategory,
+            &Interaction,
+            &mut BackgroundColor,
+            &mut BorderColor,
+            &Children,
+        ),
+        Without<CombatHudOption>,
+    >,
+    mut options_q: Query<
+        (
+            &CombatHudOption,
+            &Interaction,
+            &mut BackgroundColor,
+            &mut BorderColor,
+            &Children,
+        ),
+        Without<CombatHudCategory>,
+    >,
+    mut cat_text_q: Query<
+        &mut TextColor,
+        (With<CombatHudCategoryLabel>, Without<CombatHudOptionLabel>),
+    >,
+    mut text_q: Query<
+        &mut TextColor,
+        (With<CombatHudOptionLabel>, Without<CombatHudCategoryLabel>),
+    >,
     mut header_q: Query<&mut Text, With<CombatHudHeader>>,
 ) {
     let Some(actor) = pending.entity else { return };
@@ -1019,10 +1329,44 @@ fn sync_combat_hud(
         return;
     };
 
-    // Per-option appearance.
+    let idle = state.mode == HudMode::Idle;
+
+    // Per-category appearance.
+    for (category, interaction, mut bg, mut border, children) in &mut category_q {
+        // A Direct category dims when its action can't be used; flyouts never dim.
+        let usable = match category.kind {
+            CategoryKind::Direct(action) => ctx.usability(action).enabled,
+            CategoryKind::Open(_) => true,
+        };
+        let is_open = matches!(category.kind, CategoryKind::Open(k) if state.open == Some(k));
+        let focused = idle && state.open.is_none() && category.index == state.cat_focus;
+        let hovered = *interaction == Interaction::Hovered;
+        let pressed = *interaction == Interaction::Pressed;
+
+        let (bg_c, border_c, text_c) = if !usable {
+            (palette::BG_PANEL_SUNK, palette::BORDER_SUBTLE, palette::TEXT_DIM)
+        } else if pressed || is_open {
+            (palette::BG_BUTTON_PRESSED, palette::BORDER_PRESSED, palette::TEXT_HEADING)
+        } else if focused || hovered {
+            (palette::BG_BUTTON_HOVER, palette::BORDER_ACCENT, palette::TEXT_HEADING)
+        } else {
+            (palette::BG_BUTTON, palette::BORDER, palette::TEXT_PRIMARY)
+        };
+
+        bg.0 = bg_c;
+        set_border(&mut border, border_c);
+        for child in children.iter() {
+            if let Ok(mut tc) = cat_text_q.get_mut(child) {
+                tc.0 = text_c;
+            }
+        }
+    }
+
+    // Per-option appearance (only the open flyout's options are focusable).
     for (option, interaction, mut bg, mut border, children) in &mut options_q {
         let usable = ctx.usability(option.action);
-        let focused = option.index == state.focus;
+        let focused =
+            idle && state.open == Some(option.flyout) && option.index == state.opt_focus;
         let hovered = *interaction == Interaction::Hovered;
         let pressed = *interaction == Interaction::Pressed;
 
@@ -1059,7 +1403,7 @@ fn sync_combat_hud(
 
     // Header — actor name + live resources.
     if let Ok(mut header) = header_q.single_mut() {
-        let name = name_q.get(actor).map(|n| n.0.as_str()).unwrap_or("Combatant");
+        let name = name_q.get(actor).map(|n| n.as_str()).unwrap_or("Combatant");
         let mut parts = vec![
             name.to_string(),
             format!(
@@ -1099,6 +1443,7 @@ fn sync_hint(
     status_q: Query<&StatusEffects>,
     mult_q: Query<&MagicCostMultipliers>,
     name_q: Query<&Name>,
+    category_q: Query<&CombatHudCategory>,
     options_q: Query<&CombatHudOption>,
     mut hint_q: Query<&mut Text, With<CombatHudHint>>,
 ) {
@@ -1114,7 +1459,7 @@ fn sync_hint(
             let target_name = state
                 .target
                 .and_then(|t| name_q.get(t).ok())
-                .map(|n| n.0.clone())
+                .map(|n| n.to_string())
                 .unwrap_or_else(|| "—".to_string());
             let (what, est) = match selected {
                 SelectedAction::Attack => {
@@ -1129,16 +1474,41 @@ fn sync_hint(
                 "{what} → {target_name} {est}  ·  ←/→ cycle · Enter confirm · Esc cancel · or click an enemy"
             )
         }
-        HudMode::Idle => {
-            match options_q.iter().find(|o| o.index == state.focus) {
-                Some(option) => describe_action(option.action, &ctx, item_catalog.as_deref()),
-                None => "↑/↓ or 1–9 to choose · Enter to act · Space to wait".to_string(),
-            }
-        }
+        HudMode::Idle => match state.open {
+            // Describe the focused option inside the open flyout.
+            Some(kind) => options_q
+                .iter()
+                .find(|o| o.flyout == kind && o.index == state.opt_focus)
+                .map(|o| describe_action(o.action, &ctx, item_catalog.as_deref()))
+                .unwrap_or_else(|| {
+                    "↑/↓ choose · Enter use · ←/Esc back".to_string()
+                }),
+            // Describe the focused top-level category.
+            None => category_q
+                .iter()
+                .find(|c| c.index == state.cat_focus)
+                .map(|c| describe_category(c.kind, &ctx))
+                .unwrap_or_else(|| {
+                    "←/→ choose · Enter / ↑ open · click to act".to_string()
+                }),
+        },
     };
 
     if hint.0 != desired {
         hint.0 = desired;
+    }
+}
+
+/// One-line hint for a focused top-level category.
+fn describe_category(kind: CategoryKind, ctx: &ActorCtx) -> String {
+    match kind {
+        CategoryKind::Direct(action) => describe_action(action, ctx, None),
+        CategoryKind::Open(FlyoutKind::Skills) => {
+            "Skills — abilities by school. Enter / ↑ to open.".to_string()
+        }
+        CategoryKind::Open(FlyoutKind::Items) => {
+            "Items — usable consumables. Enter / ↑ to open.".to_string()
+        }
     }
 }
 
@@ -1156,6 +1526,7 @@ fn sync_element_wheel(
     attune_q: Query<&Attunement>,
     flip_q: Query<(), With<PolarityFlip>>,
     stats_q: Query<&CombatStats>,
+    mut root_q: Query<&mut Node, With<ElementWheelRoot>>,
     mut pip_q: Query<(&WheelPip, &mut BackgroundColor, &mut BorderColor)>,
     mut mult_q: Query<
         (&mut Text, &mut TextColor),
@@ -1184,6 +1555,21 @@ fn sync_element_wheel(
         Some(t) => eff(t),
         None => eff(actor),
     };
+
+    // The wheel is only meaningful while aiming at an element-bearing target
+    // (or casting an on-wheel ability). Hide it the rest of the time so it
+    // doesn't clutter the idle menu.
+    let relevant =
+        matches!(state.mode, HudMode::AwaitingTarget(_)) && (highlight.is_some() || sel_element.is_some());
+    if let Ok(mut node) = root_q.single_mut() {
+        let want = if relevant { Display::Flex } else { Display::None };
+        if node.display != want {
+            node.display = want;
+        }
+    }
+    if !relevant {
+        return;
+    }
 
     // Live multiplier — only when an on-wheel ability is aimed at an element-bearing target.
     let (mult_text, mult_color) = match (sel_element, target.and_then(|t| eff(t).map(|d| (t, d)))) {
@@ -1353,6 +1739,75 @@ fn sync_target_marker(
             TextColor(palette::ACCENT_DANGER),
             CombatHudTargetMarker,
         ));
+    }
+}
+
+/// While an action is armed (`AwaitingTarget`), show a small chip that follows
+/// the cursor naming what will fire on the next click. Spawned on demand and
+/// repositioned each frame; despawned as soon as targeting ends.
+fn sync_action_cursor(
+    mut commands: Commands,
+    state: Res<CombatHudState>,
+    game_state: Res<GameState>,
+    ability_tree: Option<Res<Ability_Tree>>,
+    windows: Query<&Window>,
+    mut chip_q: Query<(Entity, &mut Node, &Children), With<CombatHudCursorChip>>,
+    mut text_q: Query<&mut Text>,
+) {
+    let armed = game_state.0 == Game_State::Battle;
+    let label = match (armed, state.mode) {
+        (true, HudMode::AwaitingTarget(SelectedAction::Attack)) => Some("⚔ Attack".to_string()),
+        (true, HudMode::AwaitingTarget(SelectedAction::Ability(id))) => Some(format!(
+            "✦ {}",
+            ability_tree
+                .as_deref()
+                .and_then(|t| t.0.find(id))
+                .map(|a| a.name)
+                .unwrap_or_else(|| "Ability".to_string())
+        )),
+        _ => None,
+    };
+
+    let Some(label) = label else {
+        for (e, _, _) in &chip_q {
+            commands.entity(e).despawn();
+        }
+        return;
+    };
+
+    let cursor = windows.iter().next().and_then(|w| w.cursor_position());
+    let Some(cursor) = cursor else { return };
+    let (left, top) = (cursor.x + 18.0, cursor.y + 18.0);
+
+    if let Some((_, mut node, children)) = chip_q.iter_mut().next() {
+        node.left = Val::Px(left);
+        node.top = Val::Px(top);
+        for child in children.iter() {
+            if let Ok(mut text) = text_q.get_mut(child) {
+                if text.0 != label {
+                    text.0 = label.clone();
+                }
+            }
+        }
+    } else {
+        commands
+            .spawn((
+                Node {
+                    position_type: PositionType::Absolute,
+                    left: Val::Px(left),
+                    top: Val::Px(top),
+                    padding: UiRect::axes(Val::Px(spacing::SM), Val::Px(spacing::XS)),
+                    border: UiRect::all(Val::Px(1.5)),
+                    border_radius: BorderRadius::all(Val::Px(radius::SM)),
+                    ..default()
+                },
+                BackgroundColor(palette::BG_PANEL),
+                BorderColor::all(palette::ACCENT_DANGER),
+                CombatHudCursorChip,
+            ))
+            .with_children(|c| {
+                c.spawn(text_node(&label, font_size::SMALL, palette::TEXT_HEADING));
+            });
     }
 }
 
