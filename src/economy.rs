@@ -8,8 +8,8 @@ use crate::city_data::{
     MaterialMarketEffect, TradeAccess,
 };
 use crate::combat_plugin::{
-    AccessoryType, ArmorType, Equipment, EquipmentType, ItemMaterial, ItemMaterialCost,
-    WeaponType,
+    AccessoryType, ArmorType, Equipment, EquipmentType, FootwearType, ItemMaterial,
+    ItemMaterialCost, MaskType, TalismanType, WeaponType,
 };
 use crate::constants::TIMESTAMP_TICKS_PER_HOUR;
 use crate::core::{GameState, Game_State, Player, Timestamp};
@@ -308,6 +308,398 @@ impl Default for ItemCatalog {
                 agility: 4,
                 mind: 0,
                 morale: 0,
+            },
+        );
+        // --- New gear categories (armour variants, masks, footwear, talismans).
+        // Concealed Edo mail for the shinobi: armour without the agility tax.
+        map.insert(
+            5006,
+            Equipment {
+                id: 5006,
+                name: "Kusari Katabira".to_string(),
+                equipment_type: EquipmentType::Armor(ArmorType::Kusari),
+                base_price: 14_200,
+                materials: vec![
+                    ItemMaterialCost { material: ItemMaterial::IronIngot, quantity: 14 },
+                    ItemMaterialCost { material: ItemMaterial::Cloth, quantity: 10 },
+                    ItemMaterialCost { material: ItemMaterial::Leather, quantity: 4 },
+                ],
+                lethality: 0,
+                hit: 0,
+                armor: 6,
+                agility: 0,
+                mind: 0,
+                morale: 1,
+            },
+        );
+        // Folding portable armour for the marching warrior-monk.
+        map.insert(
+            5007,
+            Equipment {
+                id: 5007,
+                name: "Tatami-dō".to_string(),
+                equipment_type: EquipmentType::Armor(ArmorType::Tatami),
+                base_price: 16_800,
+                materials: vec![
+                    ItemMaterialCost { material: ItemMaterial::IronIngot, quantity: 18 },
+                    ItemMaterialCost { material: ItemMaterial::Leather, quantity: 8 },
+                    ItemMaterialCost { material: ItemMaterial::Cloth, quantity: 6 },
+                ],
+                lethality: 0,
+                hit: 0,
+                armor: 7,
+                agility: -1,
+                mind: 0,
+                morale: 2,
+            },
+        );
+        // Hannya mask — bites into the wearer's nerve to sharpen mind and bite.
+        map.insert(
+            5008,
+            Equipment {
+                id: 5008,
+                name: "Hannya Mask".to_string(),
+                equipment_type: EquipmentType::Mask(MaskType::Hannya),
+                base_price: 18_500,
+                materials: vec![
+                    ItemMaterialCost { material: ItemMaterial::OakWood, quantity: 6 },
+                    ItemMaterialCost { material: ItemMaterial::CrystalDust, quantity: 6 },
+                    ItemMaterialCost { material: ItemMaterial::Cloth, quantity: 2 },
+                ],
+                lethality: 0,
+                hit: 0,
+                armor: 0,
+                agility: 0,
+                mind: 7,
+                morale: -2,
+            },
+        );
+        // Shinobi tabi — silent, sure-footed; pure mobility.
+        map.insert(
+            5009,
+            Equipment {
+                id: 5009,
+                name: "Shinobi Tabi".to_string(),
+                equipment_type: EquipmentType::Footwear(FootwearType::Tabi),
+                base_price: 6_400,
+                materials: vec![
+                    ItemMaterialCost { material: ItemMaterial::Cloth, quantity: 8 },
+                    ItemMaterialCost { material: ItemMaterial::Leather, quantity: 4 },
+                ],
+                lethality: 0,
+                hit: 1,
+                armor: 0,
+                agility: 6,
+                mind: 0,
+                morale: 0,
+            },
+        );
+        // Sashimono war-banner — Houjou's battle-rite focus: rallies the line.
+        map.insert(
+            5010,
+            Equipment {
+                id: 5010,
+                name: "Sashimono War-Banner".to_string(),
+                equipment_type: EquipmentType::Talisman(TalismanType::WarBanner),
+                base_price: 10_900,
+                materials: vec![
+                    ItemMaterialCost { material: ItemMaterial::Cloth, quantity: 12 },
+                    ItemMaterialCost { material: ItemMaterial::OakWood, quantity: 6 },
+                ],
+                lethality: 0,
+                hit: 2,
+                armor: 1,
+                agility: 0,
+                mind: 3,
+                morale: 6,
+            },
+        );
+        // Juzu prayer beads — a ritualist's focus: steadies mind and resolve.
+        map.insert(
+            5011,
+            Equipment {
+                id: 5011,
+                name: "Juzu Prayer Beads".to_string(),
+                equipment_type: EquipmentType::Talisman(TalismanType::Juzu),
+                base_price: 9_300,
+                materials: vec![
+                    ItemMaterialCost { material: ItemMaterial::OakWood, quantity: 5 },
+                    ItemMaterialCost { material: ItemMaterial::CrystalDust, quantity: 5 },
+                ],
+                lethality: 0,
+                hit: 0,
+                armor: 0,
+                agility: 0,
+                mind: 5,
+                morale: 3,
+            },
+        );
+        // --- More weapons -------------------------------------------------
+        // Yari — reach and a clean armour-punch; accurate thrusts.
+        map.insert(
+            5012,
+            Equipment {
+                id: 5012,
+                name: "Yari Spear".to_string(),
+                equipment_type: EquipmentType::Weapon(WeaponType::Yari),
+                base_price: 13_400,
+                materials: vec![
+                    ItemMaterialCost { material: ItemMaterial::IronIngot, quantity: 10 },
+                    ItemMaterialCost { material: ItemMaterial::OakWood, quantity: 12 },
+                ],
+                lethality: 9,
+                hit: 8,
+                armor: 0,
+                agility: 1,
+                mind: 0,
+                morale: 0,
+            },
+        );
+        // Nodachi — the great field sword: huge damage, ungainly (negative agi).
+        map.insert(
+            5013,
+            Equipment {
+                id: 5013,
+                name: "Nodachi Greatsword".to_string(),
+                equipment_type: EquipmentType::Weapon(WeaponType::Nodachi),
+                base_price: 28_600,
+                materials: vec![
+                    ItemMaterialCost { material: ItemMaterial::SilverSteelIngot, quantity: 16 },
+                    ItemMaterialCost { material: ItemMaterial::OakWood, quantity: 6 },
+                    ItemMaterialCost { material: ItemMaterial::Leather, quantity: 4 },
+                ],
+                lethality: 16,
+                hit: 2,
+                armor: 0,
+                agility: -3,
+                mind: 0,
+                morale: 0,
+            },
+        );
+        // Kusarigama — chain-and-sickle: entangling reach, high accuracy.
+        map.insert(
+            5014,
+            Equipment {
+                id: 5014,
+                name: "Kusarigama".to_string(),
+                equipment_type: EquipmentType::Weapon(WeaponType::Kusarigama),
+                base_price: 12_100,
+                materials: vec![
+                    ItemMaterialCost { material: ItemMaterial::IronIngot, quantity: 9 },
+                    ItemMaterialCost { material: ItemMaterial::Cloth, quantity: 4 },
+                ],
+                lethality: 7,
+                hit: 9,
+                armor: 0,
+                agility: 3,
+                mind: 0,
+                morale: 0,
+            },
+        );
+        // Kanabō — the spiked oni-club: crushing, slow.
+        map.insert(
+            5015,
+            Equipment {
+                id: 5015,
+                name: "Iron Kanabō".to_string(),
+                equipment_type: EquipmentType::Weapon(WeaponType::Kanabo),
+                base_price: 17_500,
+                materials: vec![
+                    ItemMaterialCost { material: ItemMaterial::IronIngot, quantity: 22 },
+                    ItemMaterialCost { material: ItemMaterial::OakWood, quantity: 4 },
+                ],
+                lethality: 14,
+                hit: 1,
+                armor: 2,
+                agility: -2,
+                mind: 0,
+                morale: 0,
+            },
+        );
+        // Wakizashi — the companion short-sword; nimble sidearm.
+        map.insert(
+            5016,
+            Equipment {
+                id: 5016,
+                name: "Wakizashi".to_string(),
+                equipment_type: EquipmentType::Weapon(WeaponType::Wakizashi),
+                base_price: 11_900,
+                materials: vec![
+                    ItemMaterialCost { material: ItemMaterial::SilverSteelIngot, quantity: 8 },
+                    ItemMaterialCost { material: ItemMaterial::OakWood, quantity: 2 },
+                ],
+                lethality: 7,
+                hit: 8,
+                armor: 0,
+                agility: 3,
+                mind: 0,
+                morale: 0,
+            },
+        );
+        // Tanegashima — the long matchlock musket: heavy ranged fire.
+        map.insert(
+            5017,
+            Equipment {
+                id: 5017,
+                name: "Tanegashima Matchlock".to_string(),
+                equipment_type: EquipmentType::Weapon(WeaponType::Teppo),
+                base_price: 21_000,
+                materials: vec![
+                    ItemMaterialCost { material: ItemMaterial::IronIngot, quantity: 16 },
+                    ItemMaterialCost { material: ItemMaterial::OakWood, quantity: 5 },
+                    ItemMaterialCost { material: ItemMaterial::CrystalDust, quantity: 3 },
+                ],
+                lethality: 15,
+                hit: 6,
+                armor: 0,
+                agility: -2,
+                mind: 0,
+                morale: 0,
+            },
+        );
+        // --- More armour --------------------------------------------------
+        // Haramaki — a light belly-wrap: cheap, mobile torso protection.
+        map.insert(
+            5018,
+            Equipment {
+                id: 5018,
+                name: "Haramaki".to_string(),
+                equipment_type: EquipmentType::Armor(ArmorType::Haramaki),
+                base_price: 8_200,
+                materials: vec![
+                    ItemMaterialCost { material: ItemMaterial::IronIngot, quantity: 8 },
+                    ItemMaterialCost { material: ItemMaterial::Cloth, quantity: 8 },
+                ],
+                lethality: 0,
+                hit: 0,
+                armor: 4,
+                agility: 1,
+                mind: 0,
+                morale: 1,
+            },
+        );
+        // Kikkō — concealed hexagonal-plate brigandine: sturdier hidden armour.
+        map.insert(
+            5019,
+            Equipment {
+                id: 5019,
+                name: "Kikkō Brigandine".to_string(),
+                equipment_type: EquipmentType::Armor(ArmorType::Kikko),
+                base_price: 17_900,
+                materials: vec![
+                    ItemMaterialCost { material: ItemMaterial::IronIngot, quantity: 16 },
+                    ItemMaterialCost { material: ItemMaterial::Leather, quantity: 8 },
+                    ItemMaterialCost { material: ItemMaterial::Cloth, quantity: 6 },
+                ],
+                lethality: 0,
+                hit: 0,
+                armor: 8,
+                agility: -1,
+                mind: 0,
+                morale: 1,
+            },
+        );
+        // Jinbaori — the commander's surcoat: a mantle of presence and resolve.
+        map.insert(
+            5020,
+            Equipment {
+                id: 5020,
+                name: "Jinbaori Surcoat".to_string(),
+                equipment_type: EquipmentType::Armor(ArmorType::Jinbaori),
+                base_price: 15_600,
+                materials: vec![
+                    ItemMaterialCost { material: ItemMaterial::Cloth, quantity: 16 },
+                    ItemMaterialCost { material: ItemMaterial::SilverSteelIngot, quantity: 3 },
+                    ItemMaterialCost { material: ItemMaterial::CrystalDust, quantity: 2 },
+                ],
+                lethality: 0,
+                hit: 1,
+                armor: 3,
+                agility: 0,
+                mind: 2,
+                morale: 8,
+            },
+        );
+        // --- More accessories ---------------------------------------------
+        // Magatama — the ancient comma-jewel: a spiritual focus that steadies mind.
+        map.insert(
+            5021,
+            Equipment {
+                id: 5021,
+                name: "Magatama Bead".to_string(),
+                equipment_type: EquipmentType::Accessory(AccessoryType::Magatama),
+                base_price: 13_700,
+                materials: vec![
+                    ItemMaterialCost { material: ItemMaterial::CrystalDust, quantity: 10 },
+                    ItemMaterialCost { material: ItemMaterial::SilverSteelIngot, quantity: 2 },
+                ],
+                lethality: 0,
+                hit: 0,
+                armor: 0,
+                agility: 0,
+                mind: 8,
+                morale: 2,
+            },
+        );
+        // Netsuke — a carved fortune toggle: small all-round bonus.
+        map.insert(
+            5022,
+            Equipment {
+                id: 5022,
+                name: "Netsuke Charm".to_string(),
+                equipment_type: EquipmentType::Accessory(AccessoryType::Netsuke),
+                base_price: 7_100,
+                materials: vec![
+                    ItemMaterialCost { material: ItemMaterial::OakWood, quantity: 4 },
+                    ItemMaterialCost { material: ItemMaterial::CrystalDust, quantity: 3 },
+                ],
+                lethality: 2,
+                hit: 3,
+                armor: 1,
+                agility: 2,
+                mind: 1,
+                morale: 1,
+            },
+        );
+        // Inrō — the lacquered medicine case: shores up resolve and stamina.
+        map.insert(
+            5023,
+            Equipment {
+                id: 5023,
+                name: "Inrō Case".to_string(),
+                equipment_type: EquipmentType::Accessory(AccessoryType::Inro),
+                base_price: 8_900,
+                materials: vec![
+                    ItemMaterialCost { material: ItemMaterial::OakWood, quantity: 5 },
+                    ItemMaterialCost { material: ItemMaterial::Cloth, quantity: 4 },
+                    ItemMaterialCost { material: ItemMaterial::CrystalDust, quantity: 2 },
+                ],
+                lethality: 0,
+                hit: 0,
+                armor: 1,
+                agility: 1,
+                mind: 2,
+                morale: 6,
+            },
+        );
+        // Obi — a reinforced sash that braces the body: light worn armour.
+        map.insert(
+            5024,
+            Equipment {
+                id: 5024,
+                name: "Reinforced Obi".to_string(),
+                equipment_type: EquipmentType::Accessory(AccessoryType::Obi),
+                base_price: 6_800,
+                materials: vec![
+                    ItemMaterialCost { material: ItemMaterial::Cloth, quantity: 10 },
+                    ItemMaterialCost { material: ItemMaterial::Leather, quantity: 3 },
+                ],
+                lethality: 0,
+                hit: 0,
+                armor: 3,
+                agility: 1,
+                mind: 0,
+                morale: 2,
             },
         );
         Self(map)

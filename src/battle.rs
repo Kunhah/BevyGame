@@ -1035,12 +1035,14 @@ pub fn obstacle_on_pass_system(
     ai: Query<(Entity, &Transform), (With<BattleParticipant>, Without<PlayerControlled>)>,
     mut obstacles: Query<(Entity, &Transform, &ObstacleEffects, &mut ObstacleOccupants)>,
     mut damage_writer: MessageWriter<DamageEvent>,
+    // Reused across frames so the per-frame mover list doesn't reallocate.
+    mut movers: Local<Vec<(Entity, Vec2)>>,
 ) {
     if game_state.0 != Game_State::Battle {
         return;
     }
     // (entity-that-holds-health, current world position).
-    let mut movers: Vec<(Entity, Vec2)> = Vec::new();
+    movers.clear();
     for (combat_entity, link) in players.iter() {
         if let Ok(ptf) = world_tf.get(link.world_entity) {
             movers.push((combat_entity, ptf.translation.truncate()));

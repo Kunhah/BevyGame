@@ -479,6 +479,7 @@ pub fn hydrate_placeholders(
 /// combined with a milder distance falloff (further entities = thinner).
 pub fn scale_outline_width_by_distance(
     cam_q: Query<&GlobalTransform, With<crate::core::MainCamera>>,
+    graphics: Res<crate::settings::GraphicsSettings>,
     // Menu-stage actors are framed by a separate camera far from the world, so
     // distance-to-`MainCamera` is meaningless for them — they keep their
     // hydrated outline width.
@@ -493,17 +494,32 @@ pub fn scale_outline_width_by_distance(
     const DIST_POWER: f32 = 2.0; // moderate distance thinning
     const WIDTH_MIN: f32 = 0.6;
     const WIDTH_MAX: f32 = 4.0;
+    // Beyond this camera distance an entity's outline is dropped entirely when
+    // the player has enabled distant-outline culling. Generous so it only ever
+    // affects actors well away from the focal area.
+    const CULL_DISTANCE: f32 = ISO_DISTANCE * 1.5;
 
     let Ok(cam) = cam_q.single() else {
         return;
     };
     let cam_pos = cam.translation();
     for (gt, vis_opt, mut outline) in &mut q {
+        let d = gt.translation().distance(cam_pos).max(1.0);
+
+        // Distance culling: hide the whole outline past the threshold so
+        // `bevy_mod_outline` skips its extra geometry pass for that entity.
+        let want_visible = !(graphics.cull_distant_outlines && d > CULL_DISTANCE);
+        if outline.visible != want_visible {
+            outline.visible = want_visible;
+        }
+        if !want_visible {
+            continue;
+        }
+
         let size = vis_opt
             .map(|v| v.size.x.min(v.size.y).min(v.size.z).max(8.0))
             .unwrap_or(SIZE_REF);
         let size_factor = (size / SIZE_REF).powf(SIZE_POWER);
-        let d = gt.translation().distance(cam_pos).max(1.0);
         let dist_factor = (ISO_DISTANCE / d).powf(DIST_POWER);
         let new_width = (BASE_WIDTH * size_factor * dist_factor).clamp(WIDTH_MIN, WIDTH_MAX);
         // Only touch the component when it meaningfully changes. Mutating
@@ -512,6 +528,73 @@ pub fn scale_outline_width_by_distance(
         // usually identical and the write is pure churn.
         if (outline.width - new_width).abs() > 1.0e-3 {
             outline.width = new_width;
+        }
+    }
+}
+
+/// Insert or remove the optional GPU passes on the main camera so they match
+/// [`GraphicsSettings`]. Runs only when the settings change or a fresh main
+/// camera is spawned, so steady-state frames pay nothing. Each pass is a plain
+/// component: present = enabled, absent = the render graph skips it.
+pub fn apply_graphics_quality(
+    graphics: Res<crate::settings::GraphicsSettings>,
+    added_cam: Query<(), Added<crate::core::MainCamera>>,
+    cam_q: Query<
+        (
+            Entity,
+            Has<Bloom>,
+            Has<DistanceFog>,
+            Has<ScreenSpaceAmbientOcclusion>,
+            Has<crate::post_fx::PostFxSettings>,
+        ),
+        With<crate::core::MainCamera>,
+    >,
+    mut commands: Commands,
+) {
+    if !graphics.is_changed() && added_cam.is_empty() {
+        return;
+    }
+    for (cam, has_bloom, has_fog, has_ssao, has_postfx) in &cam_q {
+        let mut e = commands.entity(cam);
+        match (graphics.bloom, has_bloom) {
+            (true, false) => {
+                e.insert(Bloom { intensity: 0.08, ..Bloom::NATURAL });
+            }
+            (false, true) => {
+                e.remove::<Bloom>();
+            }
+            _ => {}
+        }
+        match (graphics.fog, has_fog) {
+            (true, false) => {
+                e.insert(DistanceFog {
+                    color: Color::srgb(0.06, 0.08, 0.13),
+                    falloff: FogFalloff::Exponential { density: 0.0005 },
+                    ..default()
+                });
+            }
+            (false, true) => {
+                e.remove::<DistanceFog>();
+            }
+            _ => {}
+        }
+        match (graphics.ssao, has_ssao) {
+            (true, false) => {
+                e.insert(ScreenSpaceAmbientOcclusion::default());
+            }
+            (false, true) => {
+                e.remove::<ScreenSpaceAmbientOcclusion>();
+            }
+            _ => {}
+        }
+        match (graphics.post_fx, has_postfx) {
+            (true, false) => {
+                e.insert(crate::post_fx::PostFxSettings::ANIME_DEFAULT);
+            }
+            (false, true) => {
+                e.remove::<crate::post_fx::PostFxSettings>();
+            }
+            _ => {}
         }
     }
 }

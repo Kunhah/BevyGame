@@ -795,11 +795,30 @@ impl Inventory {
     }
 }
 
+/// The kinds of equipment slot a character's [`EquipmentLoadout`] may expose.
+/// Which of these a protagonist *has* (and how many of each) is part of their
+/// identity — front-liners carry `Headgear` helms while casters instead get a
+/// `Talisman` slot for ritual foci. See `CharacterKind::equipment_loadout`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum EquipmentSlotType {
+    /// Primary (and any secondary / sidearm) armament. Combat reads the first
+    /// `Weapon` slot for the basic attack; later weapon slots are sidearms.
     Weapon,
+    /// Body protection (and, for the shield-bearer, an extra `Armor` slot).
     Armor,
+    /// Worn on the head: helm, hood, hat, or veil.
+    Headgear,
+    /// Rings, charms, relics — small stat / passive trinkets.
     Accessory,
+    /// A spiritual focus channelled by ritual casters and the warrior-priest
+    /// (Houjou's battle-rites): ofuda, prayer beads, gohei, a war-banner.
+    Talisman,
+    /// A spirit mask — noh / hannya / oni / kitsune. Worn by the spirit-touched
+    /// (vessels, the necromancer, the fox-cleric) *in addition* to headgear.
+    Mask,
+    /// Footwear — split-toe tabi, straw waraji, armoured suneate, raised geta.
+    /// Mostly governs mobility (agility → evasion).
+    Footwear,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -813,14 +832,74 @@ pub enum WeaponType {
     Bow,
     /// Iron war-club — the Niō guardian's bludgeon (Iwao).
     Tetsubo,
+    /// Bo-shuriken / throwing blades — the kunoichi's thrown sidearm (Rina).
+    Shuriken,
+    /// Tanzutsu matchlock pistol — Rina's short-range sidearm.
+    Pistol,
+    /// Tessen / gunbai war-fan — a caster's melee-capable ritual implement
+    /// (Sayaka, Suzuka).
+    Fan,
+    /// The biwa lute wielded as a severing instrument by the blind exorcist
+    /// (Kanzo).
+    Biwa,
+    /// Yari — the straight thrusting spear; reach and armour-punch for the
+    /// front line (Houjou, ashigaru discipline).
+    Yari,
+    /// Wakizashi — the companion short-sword, worn paired with the katana as a
+    /// samurai's sidearm (Houjou).
+    Wakizashi,
+    /// Nodachi / ōdachi — the oversized field great-sword; slow, two-handed,
+    /// devastating (a heavy bruiser's option).
+    Nodachi,
+    /// Kusarigama — the chain-and-sickle: a kunoichi's reach-and-entangle
+    /// weapon (Rina).
+    Kusarigama,
+    /// Kanabō — the spiked oni-club; heavier and crueller than the smooth
+    /// tetsubō (Iwao, oni-blooded bruisers).
+    Kanabo,
+    /// Tanegashima — the long matchlock musket; heavy ranged fire (Rina's
+    /// heavier alternative to the tanzutsu).
+    Teppo,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ArmorType {
+    /// Ō-yoroi / full dō — the samurai and guardian's plate-and-lamellar.
     HeavyArmor,
+    /// Light travelling protection (do-maru style).
     LightArmor,
     Robe,
     Shield,
+    /// Kusari-katabira — a mail-lined garment worn concealed under clothing.
+    /// The shinobi's Edo-accurate armour: protection without bulk (Rina).
+    Kusari,
+    /// Tatami-dō — folding, portable lamellar/brigandine sewn to cloth. Light
+    /// enough for a marching warrior-monk to carry and don (Renjiro).
+    Tatami,
+    /// Haramaki — a light belly-wrap torso armour, open at the back. Cheap,
+    /// mobile protection between a robe and proper armour.
+    Haramaki,
+    /// Kikkō — concealed brigandine of hexagonal plates sewn between cloth.
+    /// Hidden protection a step sturdier than mail (Rina, agents).
+    Kikko,
+    /// Jinbaori — the commander's surcoat worn over armour. More a mantle of
+    /// resolve and presence than plate; bolsters morale.
+    Jinbaori,
+}
+
+/// Headgear sub-kinds. Roughly tracks the wearer's role: `Helmet` for armoured
+/// front-liners, `Hood` for shinobi/monks, `Hat` for casters and pilgrims,
+/// `Veil` for nuns and the spirit-touched.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum HeadgearType {
+    /// Kabuto — the samurai / guardian war-helm.
+    Helmet,
+    /// Zukin cowl — shinobi and travelling monks.
+    Hood,
+    /// Eboshi / sugegasa — court casters and pilgrims.
+    Hat,
+    /// Mourning / pilgrim veil — nuns, vessels, the spirit-touched.
+    Veil,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -828,13 +907,75 @@ pub enum AccessoryType {
     Charm,
     Ring,
     Relic,
+    /// Magatama — the ancient comma-shaped jewel; a spiritual focus that
+    /// steadies the mind (casters, the spirit-touched).
+    Magatama,
+    /// Netsuke — a carved toggle ornament worn on the sash; a fortune trinket
+    /// (small all-round / luck bonus).
+    Netsuke,
+    /// Inrō — the lacquered medicine case carried on the obi; its remedies
+    /// shore up resolve and stamina.
+    Inro,
+    /// Obi — the sash itself, reinforced; a worn band that braces the body
+    /// (light armour-style trinket).
+    Obi,
+}
+
+/// Ritual foci that go in the [`EquipmentSlotType::Talisman`] slot. Each leans
+/// toward a magic school: ofuda/shikifu for Onmyodo, juzu/gohei for Kamishin.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum TalismanType {
+    /// Paper seal-strips — the onmyōji's and vessel's binding talisman.
+    Ofuda,
+    /// Buddhist prayer beads — monks, nuns, exorcists.
+    Juzu,
+    /// Shinto purification wand — clerics and exorcists.
+    Gohei,
+    /// Folded shikigami paper — Suzuka's / Magatsu's commanded servant.
+    Shikifu,
+    /// Sashimono / nobori battle-standard — the samurai's martial war-rite
+    /// focus. Lets Houjou channel rallying rituals on the front line.
+    WarBanner,
+}
+
+/// Spirit masks for the [`EquipmentSlotType::Mask`] slot. Each carries a folkloric
+/// charge: a vessel hides behind a noh face, an oni mask channels Yomi, a fox
+/// mask suits the kitsune.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum MaskType {
+    /// Noh theatre mask — the placid face a vessel wears over the spirit within.
+    Noh,
+    /// Hannya — the jealous, half-demon visage; rage and sorrow made one.
+    Hannya,
+    /// Oni mask — the demon-face of Yomi, worn by the necromancer.
+    Oni,
+    /// Kitsune (fox) mask — Inari's servant; Sayaka's true face.
+    Kitsune,
+}
+
+/// Footwear for the [`EquipmentSlotType::Footwear`] slot. Chiefly a mobility
+/// trinket (its `agility` feeds evasion).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum FootwearType {
+    /// Split-toe tabi — the shinobi's silent, sure-footed sole (Rina).
+    Tabi,
+    /// Waraji straw sandals — the pilgrim's and mountain-monk's road footwear.
+    Waraji,
+    /// Suneate greaves — armoured shin guards for the front line.
+    Suneate,
+    /// Geta clogs — raised wooden sandals; a court caster's footwear.
+    Geta,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum EquipmentType {
     Weapon(WeaponType),
     Armor(ArmorType),
+    Headgear(HeadgearType),
     Accessory(AccessoryType),
+    Talisman(TalismanType),
+    Mask(MaskType),
+    Footwear(FootwearType),
 }
 
 impl EquipmentType {
@@ -842,7 +983,43 @@ impl EquipmentType {
         match self {
             EquipmentType::Weapon(_) => EquipmentSlotType::Weapon,
             EquipmentType::Armor(_) => EquipmentSlotType::Armor,
+            EquipmentType::Headgear(_) => EquipmentSlotType::Headgear,
             EquipmentType::Accessory(_) => EquipmentSlotType::Accessory,
+            EquipmentType::Talisman(_) => EquipmentSlotType::Talisman,
+            EquipmentType::Mask(_) => EquipmentSlotType::Mask,
+            EquipmentType::Footwear(_) => EquipmentSlotType::Footwear,
+        }
+    }
+}
+
+/// The flat stat contribution of a set of equipped items, summed for one
+/// combatant. Folded into `CombatStats.*.current` each frame by
+/// [`apply_equipment_bonuses_system`], on top of the status-effect recompute.
+///
+/// Offensive `lethality`/`hit` are collected **only from non-weapon slots**:
+/// the drawn weapon's offence is already applied at the attack site
+/// (`queue_damage_from_before_attack`), so counting it here too would
+/// double-dip. Every slot still contributes `armor`, `agility`, and `mind`.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct EquipmentBonus {
+    pub lethality: i32,
+    pub hit: i32,
+    pub armor: i32,
+    pub agility: i32,
+    pub mind: i32,
+}
+
+impl EquipmentBonus {
+    /// Add one equipped item's stats into the running total.
+    pub fn accumulate(&mut self, eq: &Equipment) {
+        self.armor += eq.armor;
+        self.agility += eq.agility;
+        self.mind += eq.mind;
+        // The held weapon's lethality/hit are applied where the attack is rolled;
+        // only gear in the other slots adds offence here.
+        if eq.equipment_type.slot_type() != EquipmentSlotType::Weapon {
+            self.lethality += eq.lethality;
+            self.hit += eq.hit;
         }
     }
 }
@@ -2658,6 +2835,42 @@ fn queue_damage_from_before_attack(
     }
 }
 
+
+/// Fold equipped-gear stats into each combatant's `CombatStats.*.current`.
+///
+/// Runs every frame, *after* the status-effect recompute pass has reset
+/// `current = base * status_mults` (see
+/// `crate::status_effects::recompute_combat_capability_system`). Because the
+/// recompute rebuilds `current` from `base` each frame, these equipment bonuses
+/// are re-applied on top each frame and never compound.
+///
+/// Stat mapping (see [`EquipmentBonus`]):
+/// * `armor`    → defensive `armor` (raises damage soaked)
+/// * `agility`  → `evasion` (raises dodge chance)
+/// * `mind`     → `mind` (mental attack/defence and magic scaling)
+/// * `lethality`/`hit` from non-weapon slots → offence (the drawn weapon's own
+///   lethality/hit is added at the attack site instead).
+///
+/// Pool stats (health/morale/magic) are intentionally left to the resource-cap
+/// pass; equipment does not yet move pool ceilings.
+fn apply_equipment_bonuses_system(
+    mut q: Query<(&mut CombatStats, &EquipmentLoadout)>,
+    equipment_q: Query<&Equipment>,
+) {
+    for (mut stats, loadout) in q.iter_mut() {
+        let mut bonus = EquipmentBonus::default();
+        for item in loadout.equipped_items() {
+            if let Ok(eq) = equipment_q.get(item) {
+                bonus.accumulate(eq);
+            }
+        }
+        stats.lethality.current = (stats.lethality.current + bonus.lethality).max(0);
+        stats.hit.current = (stats.hit.current + bonus.hit).max(0);
+        stats.armor.current = (stats.armor.current + bonus.armor).max(0);
+        stats.evasion.current = (stats.evasion.current + bonus.agility).max(0);
+        stats.mind.current = (stats.mind.current + bonus.mind).max(0);
+    }
+}
 
 /// Mind-stat margin (attacker − defender) at which a losing 剋 matchup inverts
 /// via 相乘 overload (see [`crate::gogyo::damage_multiplier_overloaded`]).
@@ -4636,17 +4849,64 @@ fn default_allowed_types_for_slot(slot_type: EquipmentSlotType) -> Vec<Equipment
             EquipmentType::Weapon(WeaponType::Sword),
             EquipmentType::Weapon(WeaponType::Dagger),
             EquipmentType::Weapon(WeaponType::Staff),
+            EquipmentType::Weapon(WeaponType::Naginata),
+            EquipmentType::Weapon(WeaponType::Bow),
+            EquipmentType::Weapon(WeaponType::Tetsubo),
+            EquipmentType::Weapon(WeaponType::Shuriken),
+            EquipmentType::Weapon(WeaponType::Pistol),
+            EquipmentType::Weapon(WeaponType::Fan),
+            EquipmentType::Weapon(WeaponType::Biwa),
+            EquipmentType::Weapon(WeaponType::Yari),
+            EquipmentType::Weapon(WeaponType::Wakizashi),
+            EquipmentType::Weapon(WeaponType::Nodachi),
+            EquipmentType::Weapon(WeaponType::Kusarigama),
+            EquipmentType::Weapon(WeaponType::Kanabo),
+            EquipmentType::Weapon(WeaponType::Teppo),
         ],
         EquipmentSlotType::Armor => vec![
             EquipmentType::Armor(ArmorType::HeavyArmor),
             EquipmentType::Armor(ArmorType::LightArmor),
             EquipmentType::Armor(ArmorType::Robe),
             EquipmentType::Armor(ArmorType::Shield),
+            EquipmentType::Armor(ArmorType::Kusari),
+            EquipmentType::Armor(ArmorType::Tatami),
+            EquipmentType::Armor(ArmorType::Haramaki),
+            EquipmentType::Armor(ArmorType::Kikko),
+            EquipmentType::Armor(ArmorType::Jinbaori),
+        ],
+        EquipmentSlotType::Headgear => vec![
+            EquipmentType::Headgear(HeadgearType::Helmet),
+            EquipmentType::Headgear(HeadgearType::Hood),
+            EquipmentType::Headgear(HeadgearType::Hat),
+            EquipmentType::Headgear(HeadgearType::Veil),
         ],
         EquipmentSlotType::Accessory => vec![
             EquipmentType::Accessory(AccessoryType::Charm),
             EquipmentType::Accessory(AccessoryType::Ring),
             EquipmentType::Accessory(AccessoryType::Relic),
+            EquipmentType::Accessory(AccessoryType::Magatama),
+            EquipmentType::Accessory(AccessoryType::Netsuke),
+            EquipmentType::Accessory(AccessoryType::Inro),
+            EquipmentType::Accessory(AccessoryType::Obi),
+        ],
+        EquipmentSlotType::Talisman => vec![
+            EquipmentType::Talisman(TalismanType::Ofuda),
+            EquipmentType::Talisman(TalismanType::Juzu),
+            EquipmentType::Talisman(TalismanType::Gohei),
+            EquipmentType::Talisman(TalismanType::Shikifu),
+            EquipmentType::Talisman(TalismanType::WarBanner),
+        ],
+        EquipmentSlotType::Mask => vec![
+            EquipmentType::Mask(MaskType::Noh),
+            EquipmentType::Mask(MaskType::Hannya),
+            EquipmentType::Mask(MaskType::Oni),
+            EquipmentType::Mask(MaskType::Kitsune),
+        ],
+        EquipmentSlotType::Footwear => vec![
+            EquipmentType::Footwear(FootwearType::Tabi),
+            EquipmentType::Footwear(FootwearType::Waraji),
+            EquipmentType::Footwear(FootwearType::Suneate),
+            EquipmentType::Footwear(FootwearType::Geta),
         ],
     }
 }
@@ -5089,6 +5349,13 @@ impl Plugin for CombatPlugin {
             .add_systems(Update, apply_damage_system.after(process_damage_queue_system))
             .add_systems(Update, after_hit_listeners.after(apply_damage_system))
             .add_systems(Update, after_attack_finalizers.after(after_hit_listeners))
+            // Fold equipped-gear stats into `current`, on top of the status
+            // recompute (which resets `current = base * mult` each frame).
+            .add_systems(
+                Update,
+                apply_equipment_bonuses_system
+                    .after(crate::status_effects::recompute_combat_capability_system),
+            )
             // supporting
             // Health/magic regen are owned by StatusEffectsPlugin so regen
             // multipliers (Slow/Minimal Regeneration, Crippled Spirit, Starved)
@@ -5171,5 +5438,53 @@ mod gogyo_combat_tests {
             effective_element(None, Some(&att), true),
             Some(Element { phase: Phase::Metal, polarity: Polarity::In })
         );
+    }
+}
+
+#[cfg(test)]
+mod equipment_bonus_tests {
+    use super::*;
+
+    fn gear(equipment_type: EquipmentType, leth: i32, hit: i32, armor: i32, agi: i32, mind: i32) -> Equipment {
+        Equipment {
+            id: 0,
+            name: String::new(),
+            equipment_type,
+            base_price: 0,
+            materials: vec![],
+            lethality: leth,
+            hit,
+            armor,
+            agility: agi,
+            mind,
+            morale: 0,
+        }
+    }
+
+    /// Armor / agility / mind are summed from every slot; offensive
+    /// lethality+hit are summed from *non-weapon* slots only (the held weapon's
+    /// offence is applied at the attack site, so counting it here would
+    /// double-dip).
+    #[test]
+    fn weapon_offence_is_excluded_but_its_defence_counts() {
+        let mut b = EquipmentBonus::default();
+        // A weapon: high lethality/hit, plus a little agility.
+        b.accumulate(&gear(EquipmentType::Weapon(WeaponType::Sword), 10, 5, 0, 2, 0));
+        // A charm: defensive/utility offence allowed through.
+        b.accumulate(&gear(EquipmentType::Accessory(AccessoryType::Charm), 1, 2, 1, 1, 6));
+        // Armour and a mask.
+        b.accumulate(&gear(EquipmentType::Armor(ArmorType::Kusari), 0, 0, 8, -1, 0));
+        b.accumulate(&gear(EquipmentType::Mask(MaskType::Hannya), 0, 1, 0, 0, 4));
+
+        // Lethality: only the charm's +1 (weapon's +10 excluded).
+        assert_eq!(b.lethality, 1);
+        // Hit: charm +2, mask +1 (weapon's +5 excluded).
+        assert_eq!(b.hit, 3);
+        // Armor: charm +1, kusari +8.
+        assert_eq!(b.armor, 9);
+        // Agility: weapon +2, charm +1, kusari -1 → all slots count.
+        assert_eq!(b.agility, 2);
+        // Mind: charm +6, mask +4.
+        assert_eq!(b.mind, 10);
     }
 }

@@ -31,9 +31,9 @@ use bevy::prelude::*;
 use crate::combat_ability::MagicSchool;
 use crate::combat_plugin::{
     Abilities, AccessoryType, ArmorType, CharacterId, CombatStats, ElementalAffinity,
-    EquipmentLoadout, EquipmentSlotType, EquipmentType, ExtraHp, GrowthAttributes, GrowthCurve,
-    Inventory, MagicDistribution, PaladinBehavior, RogueBehavior, SpiritMediumBehavior, StatPool,
-    WeaponType,
+    EquipmentLoadout, EquipmentSlotType, EquipmentType, ExtraHp, FootwearType, GrowthAttributes,
+    GrowthCurve, HeadgearType, Inventory, MagicDistribution, MaskType, PaladinBehavior,
+    RogueBehavior, SpiritMediumBehavior, StatPool, TalismanType, WeaponType,
 };
 use crate::gogyo::{Element, Phase, Polarity};
 use crate::constants::DEFAULT_ACTION_POINTS;
@@ -294,72 +294,163 @@ impl CharacterKind {
     }
 
     /// Equipment the character may wield — the allowed-types skeleton (no items
-    /// pre-equipped). This gates what each protagonist can wear (Rina can't don
-    /// heavy armor; casters are staff-and-robe), which is part of their identity.
+    /// pre-equipped). This gates both *which slots* a protagonist has and *what
+    /// types* fit each slot, and that gating is a core part of their identity:
+    ///
+    /// * Only the two pure martial bruisers (Rina, Iwao) have **no `Talisman`
+    ///   slot** — they channel through the body, not ritual foci. Even Houjou
+    ///   the samurai casts battle-rites (a sashimono war-banner focus).
+    /// * Headgear tracks role: `Helmet` for the armoured front line (Houjou,
+    ///   Iwao), `Hood` for shinobi/monks, `Hat` for court casters and pilgrims,
+    ///   `Veil` for the nun and the spirit-touched.
+    /// * `Mask` (spirit-touched only: Sayaka, Toshiko, Yuna, Magatsu) and
+    ///   `Footwear` (mobile/marching classes) are extra slots beyond headgear.
+    /// * Edo-accurate light armour: Rina's concealed `Kusari` mail, Renjiro's
+    ///   folding `Tatami` dō.
+    /// * Two slots of the same kind = a real second slot: Rina's sidearm
+    ///   `Weapon` (thrown/firearm), Iwao's shield `Armor`, the casters' second
+    ///   `Accessory`.
+    ///
+    /// Order matters for `Weapon`: combat reads the *first* `Weapon` slot for
+    /// the basic attack, so the primary armament is always listed first and any
+    /// sidearm second.
     pub fn equipment_loadout(self) -> EquipmentLoadout {
         use AccessoryType::*;
         use ArmorType::*;
-        use EquipmentType::{Accessory, Armor, Weapon};
+        use EquipmentType::{Accessory, Armor, Footwear, Headgear, Mask, Talisman, Weapon};
+        use FootwearType::*;
+        use HeadgearType::*;
+        use MaskType::*;
+        use TalismanType::*;
         use WeaponType::*;
+        // Shorthands for slot kinds keep each character's row readable.
+        let wpn = EquipmentSlotType::Weapon;
+        let arm = EquipmentSlotType::Armor;
+        let head = EquipmentSlotType::Headgear;
+        let acc = EquipmentSlotType::Accessory;
+        let tal = EquipmentSlotType::Talisman;
+        let mask = EquipmentSlotType::Mask;
+        let foot = EquipmentSlotType::Footwear;
         let slots: Vec<(EquipmentSlotType, Vec<EquipmentType>)> = match self {
+            // Rina — kunoichi: a concealed blade plus a thrown/firearm sidearm,
+            // Edo-accurate concealed mail (kusari-katabira) under a cowl, ninja
+            // tabi, and a pair of trinkets. No ritual focus.
             CharacterKind::Rina => vec![
-                (EquipmentSlotType::Weapon, vec![Weapon(Dagger)]),
-                (EquipmentSlotType::Armor, vec![Armor(LightArmor)]),
-                (EquipmentSlotType::Accessory, vec![Accessory(Ring)]),
-                (EquipmentSlotType::Accessory, vec![Accessory(Charm)]),
+                (wpn, vec![Weapon(Dagger), Weapon(Sword), Weapon(Kusarigama)]),
+                (wpn, vec![Weapon(Shuriken), Weapon(Pistol), Weapon(Teppo)]),
+                (arm, vec![Armor(Kusari), Armor(Kikko), Armor(LightArmor)]),
+                (head, vec![Headgear(Hood)]),
+                (foot, vec![Footwear(Tabi)]),
+                (acc, vec![Accessory(Ring), Accessory(Netsuke)]),
+                (acc, vec![Accessory(Charm), Accessory(Obi)]),
             ],
+            // Sayaka — kitsune cleric: a ritual staff or war-fan, a robe under a
+            // hat or veil, her fox mask, a charm, and a Kamishin/Onmyodo focus.
             CharacterKind::Sayaka => vec![
-                (EquipmentSlotType::Weapon, vec![Weapon(Staff)]),
-                (EquipmentSlotType::Armor, vec![Armor(Robe)]),
-                (EquipmentSlotType::Accessory, vec![Accessory(Charm)]),
+                (wpn, vec![Weapon(Staff), Weapon(Fan)]),
+                (arm, vec![Armor(Robe)]),
+                (head, vec![Headgear(Hat), Headgear(Veil)]),
+                (mask, vec![Mask(Kitsune)]),
+                (acc, vec![Accessory(Charm), Accessory(Magatama)]),
+                (tal, vec![Talisman(Gohei), Talisman(Ofuda), Talisman(Juzu)]),
             ],
+            // Houjou — warrior-priest samurai: a long blade (katana, naginata,
+            // spear, or the great nodachi) paired with the wakizashi sidearm,
+            // full plate or a commander's surcoat under a kabuto, suneate
+            // greaves, a war-charm, and a battle-rite focus (sashimono banner /
+            // ofuda) — he can now cast rituals.
             CharacterKind::Houjou => vec![
-                (EquipmentSlotType::Weapon, vec![Weapon(Sword)]),
-                (EquipmentSlotType::Armor, vec![Armor(HeavyArmor)]),
-                (EquipmentSlotType::Accessory, vec![Accessory(Charm)]),
+                (wpn, vec![Weapon(Sword), Weapon(Naginata), Weapon(Yari), Weapon(Nodachi)]),
+                (wpn, vec![Weapon(Wakizashi)]),
+                (arm, vec![Armor(HeavyArmor), Armor(Jinbaori)]),
+                (head, vec![Headgear(Helmet)]),
+                (foot, vec![Footwear(Suneate)]),
+                (acc, vec![Accessory(Charm), Accessory(Netsuke)]),
+                (tal, vec![Talisman(WarBanner), Talisman(Ofuda)]),
             ],
+            // Toshiko — vessel: staff or hidden blade, robe under the spirit
+            // veil, a noh/hannya mask that fronts for Kuro, two trinkets, and
+            // the ofuda that binds the spirit.
             CharacterKind::Toshiko => vec![
-                (EquipmentSlotType::Weapon, vec![Weapon(Staff)]),
-                (EquipmentSlotType::Armor, vec![Armor(Robe)]),
-                (EquipmentSlotType::Accessory, vec![Accessory(Charm), Accessory(Relic)]),
+                (wpn, vec![Weapon(Staff), Weapon(Dagger)]),
+                (arm, vec![Armor(Robe)]),
+                (head, vec![Headgear(Veil)]),
+                (mask, vec![Mask(Noh), Mask(Hannya)]),
+                (acc, vec![Accessory(Charm), Accessory(Magatama)]),
+                (acc, vec![Accessory(Relic)]),
+                (tal, vec![Talisman(Ofuda)]),
             ],
-            // Renjiro — sōhei/yamabushi: naginata in melee or the longbow at
-            // range, monk's robe or light armor.
+            // Renjiro — sōhei/yamabushi: naginata or shakujō staff in melee with
+            // the longbow as a sidearm, a folding tatami-dō (Edo-accurate
+            // portable armour) or robe under a cowl/tokin, straw waraji, a
+            // charm, and prayer beads.
             CharacterKind::Renjiro => vec![
-                (EquipmentSlotType::Weapon, vec![Weapon(Naginata), Weapon(Bow)]),
-                (EquipmentSlotType::Armor, vec![Armor(Robe), Armor(LightArmor)]),
-                (EquipmentSlotType::Accessory, vec![Accessory(Charm)]),
+                (wpn, vec![Weapon(Naginata), Weapon(Staff), Weapon(Yari)]),
+                (wpn, vec![Weapon(Bow)]),
+                (arm, vec![Armor(Tatami), Armor(Haramaki), Armor(Robe), Armor(LightArmor)]),
+                (head, vec![Headgear(Hood), Headgear(Hat)]),
+                (foot, vec![Footwear(Waraji)]),
+                (acc, vec![Accessory(Charm), Accessory(Netsuke)]),
+                (tal, vec![Talisman(Juzu)]),
             ],
-            // Suzuka — onmyōji: a ritual shaku (staff), kariginu robe, and an
-            // ofuda relic or charm.
+            // Suzuka — onmyōji: a ritual shaku or war-fan, kariginu robe under an
+            // eboshi, raised geta, two trinkets, and an ofuda/shikigami focus.
             CharacterKind::Suzuka => vec![
-                (EquipmentSlotType::Weapon, vec![Weapon(Staff)]),
-                (EquipmentSlotType::Armor, vec![Armor(Robe)]),
-                (EquipmentSlotType::Accessory, vec![Accessory(Charm), Accessory(Relic)]),
+                (wpn, vec![Weapon(Staff), Weapon(Fan)]),
+                (arm, vec![Armor(Robe)]),
+                (head, vec![Headgear(Hat)]),
+                (foot, vec![Footwear(Geta)]),
+                (acc, vec![Accessory(Charm), Accessory(Magatama)]),
+                (acc, vec![Accessory(Relic)]),
+                (tal, vec![Talisman(Ofuda), Talisman(Shikifu), Talisman(Gohei)]),
             ],
-            // Kanzo — exorcist: priest's staff, robe, and a relic or charm.
+            // Kanzo — blind biwa hōshi exorcist: priest's staff or the biwa
+            // itself, robe under a cowl or veil, travelling waraji, two
+            // trinkets, and a beads/gohei focus. (Blind — wears no mask.)
             CharacterKind::Kanzo => vec![
-                (EquipmentSlotType::Weapon, vec![Weapon(Staff)]),
-                (EquipmentSlotType::Armor, vec![Armor(Robe)]),
-                (EquipmentSlotType::Accessory, vec![Accessory(Charm), Accessory(Relic)]),
+                (wpn, vec![Weapon(Staff), Weapon(Biwa)]),
+                (arm, vec![Armor(Robe)]),
+                (head, vec![Headgear(Hood), Headgear(Veil)]),
+                (foot, vec![Footwear(Waraji)]),
+                (acc, vec![Accessory(Charm), Accessory(Magatama)]),
+                (acc, vec![Accessory(Relic)]),
+                (tal, vec![Talisman(Juzu), Talisman(Gohei)]),
             ],
-            // Iwao — Niō guardian: the iron tetsubō, heavy armour or a great shield.
+            // Iwao — Niō guardian: the iron tetsubō, heavy armour AND a great
+            // shield (two armour slots), a kabuto, suneate greaves, and a charm.
+            // No ritual focus.
             CharacterKind::Iwao => vec![
-                (EquipmentSlotType::Weapon, vec![Weapon(Tetsubo)]),
-                (EquipmentSlotType::Armor, vec![Armor(HeavyArmor), Armor(Shield)]),
-                (EquipmentSlotType::Accessory, vec![Accessory(Charm)]),
+                (wpn, vec![Weapon(Tetsubo), Weapon(Kanabo)]),
+                (arm, vec![Armor(HeavyArmor)]),
+                (arm, vec![Armor(Shield)]),
+                (head, vec![Headgear(Helmet)]),
+                (foot, vec![Footwear(Suneate)]),
+                (acc, vec![Accessory(Charm), Accessory(Obi)]),
             ],
-            // Yuna — mendicant nun: a pilgrim's staff, robe, and a relic or charm.
+            // Yuna — mendicant bikuni: a pilgrim's staff or naginata, robe under
+            // the takuhatsu veil or sedge hat, the noh/hannya mask of her
+            // healer/rotting duality, pilgrim waraji, two trinkets, beads/ofuda.
             CharacterKind::Yuna => vec![
-                (EquipmentSlotType::Weapon, vec![Weapon(Staff)]),
-                (EquipmentSlotType::Armor, vec![Armor(Robe)]),
-                (EquipmentSlotType::Accessory, vec![Accessory(Charm), Accessory(Relic)]),
+                (wpn, vec![Weapon(Staff), Weapon(Naginata)]),
+                (arm, vec![Armor(Robe)]),
+                (head, vec![Headgear(Veil), Headgear(Hat)]),
+                (mask, vec![Mask(Noh), Mask(Hannya)]),
+                (foot, vec![Footwear(Waraji)]),
+                (acc, vec![Accessory(Charm), Accessory(Inro)]),
+                (acc, vec![Accessory(Relic), Accessory(Magatama)]),
+                (tal, vec![Talisman(Juzu), Talisman(Ofuda)]),
             ],
-            // Magatsu — necromancer: a ritual staff, robe, and a relic or charm.
+            // Magatsu — necromancer: a ritual staff, robe under a cowl, the
+            // oni/hannya mask of a Yomi medium, two trinkets, and the defiled
+            // ofuda/shikigami focus.
             CharacterKind::Magatsu => vec![
-                (EquipmentSlotType::Weapon, vec![Weapon(Staff)]),
-                (EquipmentSlotType::Armor, vec![Armor(Robe)]),
-                (EquipmentSlotType::Accessory, vec![Accessory(Charm), Accessory(Relic)]),
+                (wpn, vec![Weapon(Staff)]),
+                (arm, vec![Armor(Robe)]),
+                (head, vec![Headgear(Hood)]),
+                (mask, vec![Mask(Oni), Mask(Hannya)]),
+                (acc, vec![Accessory(Charm), Accessory(Magatama)]),
+                (acc, vec![Accessory(Relic)]),
+                (tal, vec![Talisman(Ofuda), Talisman(Shikifu)]),
             ],
         };
         EquipmentLoadout::with_allowed_types(slots)
@@ -860,6 +951,59 @@ mod tests {
         let empty = SelectedParty(vec![]);
         assert_eq!(empty.leader(), None);
         assert!(empty.companions().is_empty());
+    }
+
+    /// Every character's equipment loadout must be internally coherent: at
+    /// least one weapon slot, every slot has ≥1 allowed type, and each allowed
+    /// type actually belongs in the slot it is listed under. Also pins the
+    /// martial-vs-ritualist split: only ritual casters carry a `Talisman` slot.
+    #[test]
+    fn every_loadout_is_coherent() {
+        use crate::combat_plugin::EquipmentSlotType;
+
+        // The two pure martial bruisers that channel through the body, not
+        // ritual foci, and so have no Talisman slot. (Houjou, though a samurai,
+        // casts battle-rites and so *does* get one.)
+        let martial = [CharacterKind::Rina, CharacterKind::Iwao];
+
+        for kind in CharacterKind::ALL {
+            let loadout = kind.equipment_loadout();
+
+            let has_weapon = loadout
+                .slots
+                .iter()
+                .any(|s| s.slot_type == EquipmentSlotType::Weapon);
+            assert!(has_weapon, "{:?} has no weapon slot", kind);
+
+            for slot in &loadout.slots {
+                assert!(
+                    !slot.allowed_types.is_empty(),
+                    "{:?} has an empty {:?} slot",
+                    kind,
+                    slot.slot_type,
+                );
+                for allowed in &slot.allowed_types {
+                    assert_eq!(
+                        allowed.slot_type(),
+                        slot.slot_type,
+                        "{:?}: {:?} cannot go in a {:?} slot",
+                        kind,
+                        allowed,
+                        slot.slot_type,
+                    );
+                }
+            }
+
+            let has_talisman = loadout
+                .slots
+                .iter()
+                .any(|s| s.slot_type == EquipmentSlotType::Talisman);
+            if martial.contains(&kind) {
+                assert!(!has_talisman, "{:?} (martial) should have no talisman slot", kind);
+            } else {
+                assert!(has_talisman, "{:?} (ritualist) should have a talisman slot", kind);
+            }
+        }
     }
 
     /// The soft GDD rule: spirit yields 3 distribution points per point, and a

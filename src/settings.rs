@@ -25,6 +25,48 @@ pub struct GraphicsSettings {
     pub visual_occluder_fade: bool,
     /// Periodic logging of occluder motion (debug-only). Off by default.
     pub log_occluder_motion: bool,
+
+    // ---- GPU render-quality knobs (applied to the main camera) ----
+    /// Bloom around bright highlights / emissives. Moderate GPU cost.
+    #[serde(default = "default_true")]
+    pub bloom: bool,
+    /// Atmospheric distance fog. Cheap; mostly a mood/quality choice.
+    #[serde(default = "default_true")]
+    pub fog: bool,
+    /// Screen-space ambient occlusion (contact shadows). The most expensive
+    /// full-screen pass here — the first thing to drop on weak GPUs.
+    #[serde(default = "default_true")]
+    pub ssao: bool,
+    /// Fullscreen vignette + film-grain post pass. Low–moderate cost.
+    #[serde(default = "default_true")]
+    pub post_fx: bool,
+    /// Hide entity outlines beyond a distance from the camera. `bevy_mod_outline`
+    /// renders extra geometry per outlined entity, so culling distant ones saves
+    /// vertex work at the cost of far-away actors losing their ink line.
+    #[serde(default)]
+    pub cull_distant_outlines: bool,
+    /// Which preset the above knobs currently match (or `Custom` if hand-tuned).
+    #[serde(default)]
+    pub quality: GraphicsQuality,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+/// Coarse one-click quality tiers. Cycling a tier overwrites every GPU knob
+/// above; flipping any individual knob drops the tier to [`GraphicsQuality::Custom`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum GraphicsQuality {
+    /// Everything heavy off — maximum FPS on weak hardware.
+    Low,
+    /// Bloom + fog + post-fx, SSAO off, distant outlines culled.
+    Medium,
+    /// The full intended look — everything on.
+    #[default]
+    High,
+    /// Knobs were adjusted individually and no longer match a tier.
+    Custom,
 }
 
 impl Default for GraphicsSettings {
@@ -40,6 +82,43 @@ impl GraphicsSettings {
             light_visibility_culling: true,
             visual_occluder_fade: true,
             log_occluder_motion: false,
+            bloom: true,
+            fog: true,
+            ssao: true,
+            post_fx: true,
+            cull_distant_outlines: false,
+            quality: GraphicsQuality::High,
+        }
+    }
+
+    /// Overwrite every GPU knob to match a preset tier and record it.
+    pub fn apply_quality(&mut self, quality: GraphicsQuality) {
+        self.quality = quality;
+        match quality {
+            GraphicsQuality::Low => {
+                self.bloom = false;
+                self.fog = false;
+                self.ssao = false;
+                self.post_fx = false;
+                self.cull_distant_outlines = true;
+            }
+            GraphicsQuality::Medium => {
+                self.bloom = true;
+                self.fog = true;
+                self.ssao = false;
+                self.post_fx = true;
+                self.cull_distant_outlines = true;
+            }
+            GraphicsQuality::High => {
+                self.bloom = true;
+                self.fog = true;
+                self.ssao = true;
+                self.post_fx = true;
+                self.cull_distant_outlines = false;
+            }
+            // `Custom` is a marker for hand-tuned knobs — applying it changes
+            // nothing but the label.
+            GraphicsQuality::Custom => {}
         }
     }
 
@@ -90,6 +169,27 @@ impl GraphicsSettings {
             GraphicsToggle::LogOccluderMotion => {
                 if self.log_occluder_motion { "Occluder motion log: On" } else { "Occluder motion log: Off" }
             }
+            GraphicsToggle::QualityPreset => match self.quality {
+                GraphicsQuality::Low => "Quality: Low",
+                GraphicsQuality::Medium => "Quality: Medium",
+                GraphicsQuality::High => "Quality: High",
+                GraphicsQuality::Custom => "Quality: Custom",
+            },
+            GraphicsToggle::Bloom => {
+                if self.bloom { "Bloom: On" } else { "Bloom: Off" }
+            }
+            GraphicsToggle::Fog => {
+                if self.fog { "Fog: On" } else { "Fog: Off" }
+            }
+            GraphicsToggle::Ssao => {
+                if self.ssao { "Ambient occlusion: On" } else { "Ambient occlusion: Off" }
+            }
+            GraphicsToggle::PostFx => {
+                if self.post_fx { "Post-FX (vignette/grain): On" } else { "Post-FX (vignette/grain): Off" }
+            }
+            GraphicsToggle::CullDistantOutlines => {
+                if self.cull_distant_outlines { "Cull distant outlines: On" } else { "Cull distant outlines: Off" }
+            }
         }
     }
 
@@ -105,19 +205,62 @@ impl GraphicsSettings {
             GraphicsToggle::LogOccluderMotion => {
                 self.log_occluder_motion = !self.log_occluder_motion
             }
+            // Cycle Low → Medium → High → Low; applying a preset overwrites the
+            // individual knobs below.
+            GraphicsToggle::QualityPreset => {
+                let next = match self.quality {
+                    GraphicsQuality::Low => GraphicsQuality::Medium,
+                    GraphicsQuality::Medium => GraphicsQuality::High,
+                    GraphicsQuality::High | GraphicsQuality::Custom => GraphicsQuality::Low,
+                };
+                self.apply_quality(next);
+            }
+            // Flipping any individual knob means we no longer match a tier.
+            GraphicsToggle::Bloom => {
+                self.bloom = !self.bloom;
+                self.quality = GraphicsQuality::Custom;
+            }
+            GraphicsToggle::Fog => {
+                self.fog = !self.fog;
+                self.quality = GraphicsQuality::Custom;
+            }
+            GraphicsToggle::Ssao => {
+                self.ssao = !self.ssao;
+                self.quality = GraphicsQuality::Custom;
+            }
+            GraphicsToggle::PostFx => {
+                self.post_fx = !self.post_fx;
+                self.quality = GraphicsQuality::Custom;
+            }
+            GraphicsToggle::CullDistantOutlines => {
+                self.cull_distant_outlines = !self.cull_distant_outlines;
+                self.quality = GraphicsQuality::Custom;
+            }
         }
     }
 }
 
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GraphicsToggle {
+    QualityPreset,
+    Bloom,
+    Fog,
+    Ssao,
+    PostFx,
+    CullDistantOutlines,
     LightRaymarch,
     LightVisibilityCulling,
     VisualOccluderFade,
     LogOccluderMotion,
 }
 
-pub const GRAPHICS_TOGGLES: [GraphicsToggle; 4] = [
+pub const GRAPHICS_TOGGLES: [GraphicsToggle; 10] = [
+    GraphicsToggle::QualityPreset,
+    GraphicsToggle::Bloom,
+    GraphicsToggle::Fog,
+    GraphicsToggle::Ssao,
+    GraphicsToggle::PostFx,
+    GraphicsToggle::CullDistantOutlines,
     GraphicsToggle::LightRaymarch,
     GraphicsToggle::LightVisibilityCulling,
     GraphicsToggle::VisualOccluderFade,

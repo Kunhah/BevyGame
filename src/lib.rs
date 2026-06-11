@@ -44,6 +44,7 @@ pub mod menu;
 pub mod map;
 pub mod money;
 pub mod party_select;
+pub mod perf_overlay;
 pub mod movement;
 pub mod pathfinding;
 pub mod quadtree;
@@ -78,7 +79,7 @@ use combat_plugin::{
 };
 use contract::ContractPlugin;
 use constants::*;
-use core::{GameState, Game_State, GlobalVariables, Global_Variables, PlayerMapPosition, Position, Timestamp};
+use core::{in_game_state, GameState, Game_State, GlobalVariables, Global_Variables, PlayerMapPosition, Position, Timestamp};
 use debug_console::DebugConsolePlugin;
 use dialogue::DialoguePlugin;
 use economy::EconomyPlugin;
@@ -178,6 +179,7 @@ fn full_game_app() -> App {
         // components; F3 / F4 demo them on the test capsule.
         .add_plugins(effects::EffectsPlugin)
         .add_plugins(UiStylePlugin)
+        .add_plugins(perf_overlay::PerfOverlayPlugin)
         .add_plugins(HudPlugin)
         .add_plugins(CombatPlugin)
         .add_plugins(StatusEffectsPlugin)
@@ -256,6 +258,7 @@ fn full_game_app() -> App {
         .add_systems(Update, update_cache)
         .add_systems(Update, rebuild_terrain_slow_effect_index)
         .add_systems(Update, render3d::hydrate_placeholders)
+        .add_systems(Update, render3d::apply_graphics_quality)
         .add_systems(Update, render3d::scale_outline_width_by_distance)
         .add_systems(
             Update,
@@ -267,19 +270,39 @@ fn full_game_app() -> App {
         .add_systems(Update, battle::hunt_proximity_trigger)
         .add_systems(Update, battle::start_pending_hunt_battle)
         .add_systems(Update, setup_player_turns)
-        .add_systems(Update, sync_combat_move_points_from_world.after(setup_player_turns))
+        .add_systems(
+            Update,
+            sync_combat_move_points_from_world
+                .after(setup_player_turns)
+                .run_if(in_game_state(Game_State::Battle)),
+        )
         .add_systems(Update, battle::sync_player_combat_bound.after(setup_player_turns))
-        .add_systems(Update, combat_end_turn_input)
+        .add_systems(
+            Update,
+            combat_end_turn_input.run_if(in_game_state(Game_State::Battle)),
+        )
         .add_systems(Update, transform_npc_to_enemy)
         .add_systems(Update, test_log_button)
-        .add_systems(Update, end_battle_on_death)
+        .add_systems(
+            Update,
+            end_battle_on_death.run_if(in_game_state(Game_State::Battle)),
+        )
         .add_systems(Update, resolve_summon_system)
         .add_systems(Update, tick_summon_lifetime_system)
         .add_systems(Update, battle::tick_obstacle_lifetime_system)
         .add_systems(Update, battle::obstacle_aura_tick_system)
-        .add_systems(Update, battle::obstacle_on_pass_system)
-        .add_systems(Update, battle::combat_movement_system)
-        .add_systems(Update, battle::ai_combat_movement_system)
+        .add_systems(
+            Update,
+            battle::obstacle_on_pass_system.run_if(in_game_state(Game_State::Battle)),
+        )
+        .add_systems(
+            Update,
+            battle::combat_movement_system.run_if(in_game_state(Game_State::Battle)),
+        )
+        .add_systems(
+            Update,
+            battle::ai_combat_movement_system.run_if(in_game_state(Game_State::Battle)),
+        )
         .add_systems(Update, battle::bridge_player_death_to_world)
         .add_systems(Update, follow_path_system)
         .add_systems(Update, ally_follow_player_system.after(player_movement))

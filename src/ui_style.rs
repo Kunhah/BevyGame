@@ -249,6 +249,77 @@ pub fn button_visual() -> impl Bundle {
     )
 }
 
+// ---------------------------------------------------------------------------
+// Image-skinned buttons
+//
+// Interactivity lives on the `Button` + `Node` (its layout rectangle), never on
+// the pixels — so an image-skinned button clicks and hovers exactly like a
+// coloured one. `button_skin()` is a drop-in replacement for `button_visual()`:
+// keep the same `Button::default()` + `*_node()` and your existing
+// `Interaction` queries keep working unchanged.
+// ---------------------------------------------------------------------------
+
+/// Handles to the shared button artwork, loaded once at startup. Drop the PNGs
+/// at these paths under `assets/`; missing files just log and render nothing
+/// (the layout box stays clickable), so this is safe to wire up before the art
+/// exists.
+#[derive(Resource, Clone)]
+pub struct UiAssets {
+    pub button_normal: Handle<Image>,
+    pub button_hover: Handle<Image>,
+    pub button_pressed: Handle<Image>,
+}
+
+impl FromWorld for UiAssets {
+    fn from_world(world: &mut World) -> Self {
+        let assets = world.resource::<AssetServer>();
+        UiAssets {
+            button_normal: assets.load("ui/button_normal.png"),
+            button_hover: assets.load("ui/button_hover.png"),
+            button_pressed: assets.load("ui/button_pressed.png"),
+        }
+    }
+}
+
+/// The three textures a skinned button swaps between. Carried per-button so
+/// different buttons can use different art while sharing one swap system.
+#[derive(Component, Clone)]
+pub struct ButtonSkin {
+    pub normal: Handle<Image>,
+    pub hovered: Handle<Image>,
+    pub pressed: Handle<Image>,
+}
+
+/// Border thickness (in source-texture pixels) preserved by 9-slicing, so the
+/// button can be any size without stretching its corners. Tune to your art.
+const SKIN_SLICE_BORDER: f32 = 12.0;
+
+/// Drop-in replacement for [`button_visual`] that renders the standard button
+/// artwork instead of a flat colour. Pair with `button_node(..)`/`toggle_node()`
+/// for the layout, exactly as before:
+///
+/// ```ignore
+/// parent.spawn((Button::default(), button_node(48.0), button_skin(&ui), MyTag));
+/// ```
+pub fn button_skin(ui: &UiAssets) -> impl Bundle {
+    (
+        ImageNode {
+            image: ui.button_normal.clone(),
+            // 9-slice so one small PNG skins any button size cleanly.
+            image_mode: NodeImageMode::Sliced(TextureSlicer {
+                border: BorderRect::all(SKIN_SLICE_BORDER),
+                ..default()
+            }),
+            ..default()
+        },
+        ButtonSkin {
+            normal: ui.button_normal.clone(),
+            hovered: ui.button_hover.clone(),
+            pressed: ui.button_pressed.clone(),
+        },
+    )
+}
+
 pub fn title_text(text: impl Into<String>) -> impl Bundle {
     (
         Text::new(text.into()),
@@ -404,7 +475,27 @@ pub struct UiStylePlugin;
 
 impl Plugin for UiStylePlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, update_standard_button_visuals);
+        app.init_resource::<UiAssets>().add_systems(
+            Update,
+            (update_standard_button_visuals, update_skinned_button_visuals),
+        );
+    }
+}
+
+/// Image counterpart to [`update_standard_button_visuals`]: swaps the button's
+/// texture on hover/press. Runs for every `ButtonSkin` across all screens.
+fn update_skinned_button_visuals(
+    mut buttons: Query<
+        (&Interaction, &ButtonSkin, &mut ImageNode),
+        (Changed<Interaction>, With<Button>),
+    >,
+) {
+    for (interaction, skin, mut image) in &mut buttons {
+        image.image = match *interaction {
+            Interaction::Pressed => skin.pressed.clone(),
+            Interaction::Hovered => skin.hovered.clone(),
+            Interaction::None => skin.normal.clone(),
+        };
     }
 }
 

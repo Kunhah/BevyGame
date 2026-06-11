@@ -46,6 +46,14 @@ impl Default for GameState {
     }
 }
 
+/// Run-condition factory: gate a system so the scheduler skips it entirely
+/// unless the game is in `state`. Use as `system.run_if(in_game_state(X))`.
+/// Cheaper than an in-body `if game_state.0 != X { return }` because the
+/// system's params are never fetched and its body never runs when inactive.
+pub fn in_game_state(state: Game_State) -> impl Fn(bevy::prelude::Res<GameState>) -> bool + Clone {
+    move |game_state: bevy::prelude::Res<GameState>| game_state.0 == state
+}
+
 #[derive(Resource, Default)]
 pub struct Global_Variables(pub GlobalVariables);
 
