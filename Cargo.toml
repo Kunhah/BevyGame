@@ -29,10 +29,19 @@ opt-level = 1  # Lower optimization for faster development builds
 lto = false
 incremental = true
 
+# Optimize *dependencies* (Bevy, wgpu, etc.) even in dev builds. Your own crate
+# stays at opt-level 1 for fast incremental rebuilds, but the engine — which
+# dominates runtime cost — runs at full speed. Single biggest win for dev-build
+# runtime FPS; only recompiled when dependencies themselves change.
+[profile.dev.package."*"]
+opt-level = 3
+
 [profile.release]
-opt-level = 3  # Higher optimization for release builds
-lto = true
-incremental = true
+opt-level = 3        # Higher optimization for release builds
+lto = "fat"          # Cross-crate inlining for max runtime speed
+codegen-units = 1    # Trade compile time for a faster final binary
+strip = true         # Drop debug symbols → smaller, faster-loading binary
+incremental = false  # Single-codegen-unit LTO can't use incremental anyway
 
 [profile.bench]
 opt-level = 3  # Higher optimization for benchmarking

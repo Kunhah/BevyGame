@@ -44,7 +44,9 @@ use crate::skill_tree::{
 /// One playable protagonist. Carried as a component on both the overworld ally
 /// entity and (after wiring) its in-battle combatant, so HUD/identity systems
 /// can read who a unit is.
-#[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(
+    Component, Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub enum CharacterKind {
     /// Rogue / kunoichi — Kiho shinobi: shinobigatana, bo-shuriken, matchlock
     /// pistol, caltrops, smoke, and the substitution art.

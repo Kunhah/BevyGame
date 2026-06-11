@@ -312,7 +312,17 @@ impl Plugin for RenderTuningPlugin {
         }
         app.init_resource::<RenderTuning>()
             .add_systems(Update, toggle_tuning_panel)
-            .add_systems(Update, apply_render_tuning.after(toggle_tuning_panel))
+            // The tuning values only change when the F2 panel sliders move, so
+            // there's no reason to rewrite every camera/fog/grading component and
+            // mark every toon material dirty (GPU re-upload + render re-extract)
+            // on frames where nothing was touched. Gate on actual resource change;
+            // `resource_changed` is true on the first frame, so defaults still apply.
+            .add_systems(
+                Update,
+                apply_render_tuning
+                    .after(toggle_tuning_panel)
+                    .run_if(resource_changed::<RenderTuning>),
+            )
             .add_systems(EguiPrimaryContextPass, render_tuning_panel);
     }
 }

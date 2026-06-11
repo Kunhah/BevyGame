@@ -829,11 +829,18 @@ fn sync_world_map_nodes(
         } else {
             (palette::BG_BUTTON, palette::BORDER)
         };
-        bg.0 = bg_c;
-        border.top = border_c;
-        border.right = border_c;
-        border.bottom = border_c;
-        border.left = border_c;
+        // Only write when the color actually changes — an unconditional write
+        // flags BackgroundColor/BorderColor dirty every frame and forces the UI
+        // to re-extract these nodes even when nothing visually changed.
+        if bg.0 != bg_c {
+            bg.0 = bg_c;
+        }
+        if border.top != border_c {
+            border.top = border_c;
+            border.right = border_c;
+            border.bottom = border_c;
+            border.left = border_c;
+        }
     }
 }
 

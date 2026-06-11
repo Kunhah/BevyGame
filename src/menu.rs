@@ -898,6 +898,11 @@ fn toggle_pause_state(
         // Terminal run states own the whole screen; Esc must not peel back into
         // a paused world that no longer exists.
         Game_State::GameOver | Game_State::Victory => {}
+        // Esc closes a read-only overlay straight back to exploration rather
+        // than stacking the pause menu on top of it.
+        Game_State::CharacterSheet | Game_State::QuestLog => {
+            game_state.0 = Game_State::Exploring;
+        }
         other => {
             resume_state.0 = other;
             game_state.0 = Game_State::Paused;

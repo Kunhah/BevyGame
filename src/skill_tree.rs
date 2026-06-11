@@ -189,7 +189,7 @@ pub struct SkillPoints {
 /// character. Combat entities are rebuilt from `CharacterKind` each battle, so
 /// without this their learned skills would not carry over — the replay in
 /// [`apply_party_progression_system`] closes that gap.
-#[derive(Resource, Default, Debug, Clone)]
+#[derive(Resource, Default, Debug, Clone, Serialize, Deserialize)]
 pub struct PartyProgression(pub HashMap<CharacterKind, CharacterProgress>);
 
 impl PartyProgression {
@@ -201,7 +201,7 @@ impl PartyProgression {
 
 /// One character's persistent progression: available / spent points and the
 /// skills they've learned (in learn order, so effect replay is deterministic).
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CharacterProgress {
     pub available: u32,
     pub spent: u32,

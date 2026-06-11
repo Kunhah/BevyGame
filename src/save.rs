@@ -1,16 +1,37 @@
 use std::fs;
+use bevy::ecs::system::SystemParam;
 use bevy::input::keyboard::KeyCode;
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
+use crate::characters::{CharacterKind, SelectedParty};
 use crate::city_data::{CityCatalog, ClanCatalog};
 use crate::core::{GameState, Game_State, Player, PlayerMapPosition, Position, Timestamp};
-use crate::economy::{ActiveCaravans, CaravanClock};
+use crate::economy::{ActiveCaravans, CaravanClock, PlayerInventory, PlayerWallet};
 use crate::governance::{
     CastleAssaultClock, CoupChainState, CoupPreparationProgress, GlobalPunishmentState,
     GovernanceClock, GovernorPolicyClock, PlayerCrimeStatus, ReputationLedger,
 };
 use crate::map::{CurrentArea, MapSelection, MapTiles};
+use crate::money::Money;
+use crate::quests::{QuestFlags, QuestLog};
+use crate::skill_tree::PartyProgression;
+use crate::story_flags::StoryFlags;
+
+/// The slice of run state that lives in plain resources (party roster, quest
+/// progress, story/quest flags, skill progression, inventory, wallet). Bundled
+/// into one [`SystemParam`] so `handle_save_requests` stays under Bevy's 16-arg
+/// system limit while still reading/writing all of it.
+#[derive(SystemParam)]
+pub struct RunStateResources<'w> {
+    pub party: ResMut<'w, SelectedParty>,
+    pub story_flags: ResMut<'w, StoryFlags>,
+    pub quest_flags: ResMut<'w, QuestFlags>,
+    pub quest_log: ResMut<'w, QuestLog>,
+    pub progression: ResMut<'w, PartyProgression>,
+    pub inventory: ResMut<'w, PlayerInventory>,
+    pub wallet: ResMut<'w, PlayerWallet>,
+}
 
 const SAVE_DIR: &str = "saves";
 
@@ -122,7 +143,21 @@ pub struct SaveData {
     pub governor_policy_clock: GovernorPolicyClock,
     #[serde(default)]
     pub coup_preparation_progress: CoupPreparationProgress,
-    // TODO(save): include inventory, quests, flags, skills, stats, active events, party, and anything else that must persist.
+    // --- Run progress (party / quests / flags / skills / inventory) ---------
+    #[serde(default)]
+    pub selected_party: Vec<CharacterKind>,
+    #[serde(default)]
+    pub story_flags: Vec<String>,
+    #[serde(default)]
+    pub quest_flags: Vec<String>,
+    #[serde(default)]
+    pub quest_log: QuestLog,
+    #[serde(default)]
+    pub party_progression: PartyProgression,
+    #[serde(default)]
+    pub player_inventory: PlayerInventory,
+    #[serde(default)]
+    pub wallet_coins: u32,
 }
 
 pub fn save_game_hotkeys(
@@ -167,6 +202,7 @@ pub fn handle_save_requests(
     )>,
     mut player_q: Query<&mut Transform, With<Player>>,
     mut camera_q: Query<&mut Transform, (With<crate::core::MainCamera>, Without<Player>)>,
+    mut run: RunStateResources,
 ) {
     for req in requests.drain() {
         match req.action {
@@ -204,6 +240,13 @@ pub fn handle_save_requests(
                     castle_assault_clock,
                     governor_policy_clock,
                     coup_preparation_progress,
+                    selected_party: run.party.0.clone(),
+                    story_flags: run.story_flags.0.iter().cloned().collect(),
+                    quest_flags: run.quest_flags.0.iter().cloned().collect(),
+                    quest_log: run.quest_log.clone(),
+                    party_progression: run.progression.clone(),
+                    player_inventory: run.inventory.clone(),
+                    wallet_coins: run.wallet.coins.0,
                 };
                 if let Err(e) = write_save(req.slot, &data) {
                     warn!("save_game: {}", e);
@@ -234,6 +277,20 @@ pub fn handle_save_requests(
                 *governance_state.p4() = data.castle_assault_clock;
                 *governance_state.p5() = data.governor_policy_clock;
                 *governance_state.p6() = data.coup_preparation_progress;
+
+                // Restore run progress. The party roster is only overwritten
+                // when the save actually carried one (older saves leave it
+                // empty); the already-spawned leader entity stays put — full
+                // respawn-from-save is a separate concern (see spawn_party).
+                if !data.selected_party.is_empty() {
+                    run.party.0 = data.selected_party;
+                }
+                run.story_flags.0 = data.story_flags.into_iter().collect();
+                run.quest_flags.0 = data.quest_flags.into_iter().collect();
+                *run.quest_log = data.quest_log;
+                *run.progression = data.party_progression;
+                *run.inventory = data.player_inventory;
+                run.wallet.coins = Money(data.wallet_coins);
 
                 if let Ok(mut player_tf) = player_q.single_mut() {
                     player_tf.translation = Vec3::from(data.player_world);

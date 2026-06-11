@@ -120,12 +120,12 @@
 
         // ----------------------------------------------------------------
         // Yokai profiles. Three flavors that match the yokai authored in
-        // `assets/data/abilities/AbilitiesExample.ron` (ids 0x0F00..) and spawned by
+        // `assets/data/abilities/AbilitiesExample.ron` (ids 0x7800..) and spawned by
         // `crate::battle::spawn_yokai_combatant`.
         // ----------------------------------------------------------------
 
         // Onibi (will-o'-wisp): fast, fragile, prefers Will-o'-wisp burn
-        // (id 3840). Falls back to a basic attack if it can't pay the AP.
+        // (id 30720 / 0x7800). Falls back to a basic attack if it can't pay AP.
         "yokai_onibi": (
             logic: Selector([
                 Sequence([
@@ -133,31 +133,31 @@
                     Defend,
                 ]),
                 Sequence([
-                    HasAbility(id: 3840),
+                    HasAbility(id: 30720),
                     ActionPointsAtLeast(amount: 2),
-                    UseAbility(id: 3840),
+                    UseAbility(id: 30720),
                 ]),
                 BasicAttack,
                 Wait,
             ]),
         ),
 
-        // Kappa (river demon): balanced grappler. Picks River grasp (3841)
+        // Kappa (river demon): balanced grappler. Picks River grasp (30721)
         // when there's enough AP, otherwise basic-attacks the closest target.
         "yokai_kappa": (
             logic: Selector([
                 Sequence([
                     AggressivenessAtLeast(value: 5),
-                    HasAbility(id: 3841),
+                    HasAbility(id: 30721),
                     ActionPointsAtLeast(amount: 2),
-                    UseAbility(id: 3841),
+                    UseAbility(id: 30721),
                 ]),
                 BasicAttack,
                 Wait,
             ]),
         ),
 
-        // Kasha (cat-cart yokai): mental caster. Saves Final cry (3842) for
+        // Kasha (cat-cart yokai): mental caster. Saves Final cry (30722) for
         // crowded fights, otherwise pokes with basic attacks. Defends when
         // panicked rather than fleeing — Kasha doesn't run.
         "yokai_kasha": (
@@ -168,9 +168,31 @@
                 ]),
                 Sequence([
                     EnemiesAlive(at_least: 2),
-                    HasAbility(id: 3842),
+                    HasAbility(id: 30722),
                     ActionPointsAtLeast(amount: 3),
-                    UseAbility(id: 3842),
+                    UseAbility(id: 30722),
+                ]),
+                BasicAttack,
+                Wait,
+            ]),
+        ),
+
+        // The Gashadokuro (final boss): a relentless caster. Unleashes Kasha's
+        // Wail (30722 — AoE that Haunts + Terrifies) whenever two or more heroes
+        // are still standing; otherwise sears a single hero with Onibi burn
+        // (30720). Never flees, never defends — it only has to outlast you once.
+        "gashadokuro": (
+            logic: Selector([
+                Sequence([
+                    EnemiesAlive(at_least: 2),
+                    HasAbility(id: 30722),
+                    ActionPointsAtLeast(amount: 3),
+                    UseAbility(id: 30722),
+                ]),
+                Sequence([
+                    HasAbility(id: 30720),
+                    ActionPointsAtLeast(amount: 2),
+                    UseAbility(id: 30720),
                 ]),
                 BasicAttack,
                 Wait,

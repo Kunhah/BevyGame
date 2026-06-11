@@ -20,6 +20,7 @@ pub mod activities;
 pub mod ai_decision;
 pub mod areas;
 pub mod battle;
+pub mod character_sheet;
 pub mod characters;
 pub mod city_data;
 pub mod combat_ability;
@@ -48,6 +49,7 @@ pub mod pathfinding;
 pub mod quadtree;
 pub mod cutscene;
 pub mod post_fx;
+pub mod quest_hud;
 pub mod quests;
 pub mod render3d;
 pub mod rest;
@@ -191,6 +193,8 @@ fn full_game_app() -> App {
         .add_plugins(SettingsPlugin)
         .add_plugins(SkillTreePlugin)
         .add_plugins(skill_screen::SkillScreenPlugin)
+        .add_plugins(quest_hud::QuestHudPlugin)
+        .add_plugins(character_sheet::CharacterSheetPlugin)
         .add_plugins(CombatHudPlugin)
         .add_plugins(CombatOverlayPlugin)
         .add_plugins(AiDecisionPlugin)

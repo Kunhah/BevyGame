@@ -120,14 +120,14 @@ pub struct QuestCatalog {
 // Runtime state
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum QuestStatus {
     Active,
     Completed,
     Failed,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QuestObjective {
     pub id: u32,
     pub description: String,
@@ -148,7 +148,7 @@ impl QuestObjective {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Quest {
     pub id: u32,
     pub title: String,
@@ -175,7 +175,7 @@ impl Quest {
 #[derive(Resource, Default)]
 pub struct QuestRegistry(pub HashMap<u32, QuestDefinition>);
 
-#[derive(Resource, Default)]
+#[derive(Resource, Default, Clone, Debug, Serialize, Deserialize)]
 pub struct QuestLog {
     pub quests: HashMap<u32, Quest>,
     pub offered: HashSet<u32>, // quest ids that have been auto-offered already

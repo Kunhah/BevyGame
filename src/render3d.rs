@@ -505,7 +505,14 @@ pub fn scale_outline_width_by_distance(
         let size_factor = (size / SIZE_REF).powf(SIZE_POWER);
         let d = gt.translation().distance(cam_pos).max(1.0);
         let dist_factor = (ISO_DISTANCE / d).powf(DIST_POWER);
-        outline.width = (BASE_WIDTH * size_factor * dist_factor).clamp(WIDTH_MIN, WIDTH_MAX);
+        let new_width = (BASE_WIDTH * size_factor * dist_factor).clamp(WIDTH_MIN, WIDTH_MAX);
+        // Only touch the component when it meaningfully changes. Mutating
+        // `OutlineVolume` flags it for render-world re-extraction; in a
+        // turn-based game the camera is static most frames, so the width is
+        // usually identical and the write is pure churn.
+        if (outline.width - new_width).abs() > 1.0e-3 {
+            outline.width = new_width;
+        }
     }
 }
 

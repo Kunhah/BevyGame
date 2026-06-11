@@ -471,7 +471,19 @@ fn spawn_enemy_combat(
             kamishin: 2,
         },
     });
-    e.insert(Abilities(vec![]));
+    // The final boss is the one generic enemy that actually casts: give it a
+    // thematic yokai kit (Kasha's Wail = AoE Haunt+Terrify, Onibi burn = single
+    // target) and the `gashadokuro` behaviour-tree profile so
+    // `evaluate_behavior_tree_system` drives it (the resolver then fires the
+    // ability). Both cost 0 magic, only AP, so the boss can always afford them.
+    if enemy_id == FINAL_BOSS_ENCOUNTER_ID {
+        e.insert(Abilities(vec![30722, 30720]));
+        e.insert(crate::ai_decision::BehaviorTreeProfile(
+            "gashadokuro".to_string(),
+        ));
+    } else {
+        e.insert(Abilities(vec![]));
+    }
     e.insert(Experience(0));
     e.insert(Level(1));
     e.insert(AccumulatedSpeed(0));
