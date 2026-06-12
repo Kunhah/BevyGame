@@ -889,7 +889,7 @@ fn emit_successor_kills_from_combat(
 
 fn sync_successor_npcs(
     mut commands: Commands,
-    asset_server: Res<AssetServer>,
+    _asset_server: Res<AssetServer>,
     cities: Res<CityCatalog>,
     map: Res<MapTiles>,
     existing: Query<(Entity, &SuccessorNpc)>,

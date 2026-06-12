@@ -35,6 +35,7 @@ pub mod debug_console;
 pub mod dialogue;
 pub mod economy;
 pub mod effects;
+pub mod equipment;
 pub mod gogyo;
 pub mod governance;
 pub mod hud;
@@ -197,6 +198,7 @@ fn full_game_app() -> App {
         .add_plugins(skill_screen::SkillScreenPlugin)
         .add_plugins(quest_hud::QuestHudPlugin)
         .add_plugins(character_sheet::CharacterSheetPlugin)
+        .add_plugins(equipment::EquipmentPlugin)
         .add_plugins(CombatHudPlugin)
         .add_plugins(CombatOverlayPlugin)
         .add_plugins(AiDecisionPlugin)
@@ -247,6 +249,8 @@ fn full_game_app() -> App {
         .init_resource::<battle::PendingHuntBattle>()
         .init_resource::<render3d::CameraRig>()
         .init_resource::<characters::SelectedParty>()
+        .init_resource::<world::PartySpawned>()
+        .init_resource::<world::PendingPartyRespawn>()
         .add_message::<world::SetLeaderRequest>()
         .add_systems(Startup, setup)
         .add_systems(Update, world::spawn_party)

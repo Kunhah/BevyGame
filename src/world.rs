@@ -579,14 +579,27 @@ pub fn update_cache(
 /// (`K`) is usable immediately.
 const STARTING_SKILL_POINTS: u32 = 6;
 
+/// Whether [`spawn_party`] has already placed the party. A resettable resource
+/// rather than a `Local` so loading a save can clear it and force a clean
+/// respawn from the loaded roster (see `save::handle_save_requests`).
+#[derive(Resource, Default)]
+pub struct PartySpawned(pub bool);
+
+/// When a load wants the party respawned at the saved location, it parks the
+/// world position here; [`spawn_party`] consumes it on the next run, falling
+/// back to the default spawn tile when `None`.
+#[derive(Resource, Default)]
+pub struct PendingPartyRespawn(pub Option<Vec3>);
+
 pub fn spawn_party(
     mut commands: Commands,
     game_state: Res<GameState>,
     selected: Res<SelectedParty>,
     mut progression: ResMut<PartyProgression>,
-    mut spawned: Local<bool>,
+    mut spawned: ResMut<PartySpawned>,
+    mut pending_respawn: ResMut<PendingPartyRespawn>,
 ) {
-    if *spawned {
+    if spawned.0 {
         return;
     }
     // Hold until the player has left the menus into actual gameplay.
@@ -603,7 +616,12 @@ pub fn spawn_party(
         }
     }
 
-    let origin3 = tile_center_world(PLAYER_SPAWN_TILE).extend(0.0);
+    // A load parks the saved world position here so the party reappears where
+    // it was saved rather than at the default spawn tile.
+    let origin3 = pending_respawn
+        .0
+        .take()
+        .unwrap_or_else(|| tile_center_world(PLAYER_SPAWN_TILE).extend(0.0));
 
     // Leader → the overworld Player avatar. SelectedParty defaults non-empty, so
     // the fallback is purely defensive.
@@ -650,7 +668,7 @@ pub fn spawn_party(
         ));
     }
 
-    *spawned = true;
+    spawned.0 = true;
     info!(
         "Spawned party: leader {:?} + {} companion(s)",
         leader,

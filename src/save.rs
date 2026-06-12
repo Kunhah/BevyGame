@@ -23,7 +23,7 @@ use crate::story_flags::StoryFlags;
 /// into one [`SystemParam`] so `handle_save_requests` stays under Bevy's 16-arg
 /// system limit while still reading/writing all of it.
 #[derive(SystemParam)]
-pub struct RunStateResources<'w> {
+pub struct RunStateResources<'w, 's> {
     pub party: ResMut<'w, SelectedParty>,
     pub story_flags: ResMut<'w, StoryFlags>,
     pub quest_flags: ResMut<'w, QuestFlags>,
@@ -31,6 +31,13 @@ pub struct RunStateResources<'w> {
     pub progression: ResMut<'w, PartyProgression>,
     pub inventory: ResMut<'w, PlayerInventory>,
     pub wallet: ResMut<'w, PlayerWallet>,
+    // Party-respawn control: a load despawns the live party and resets these so
+    // `world::spawn_party` rebuilds it from the loaded roster at the saved spot.
+    pub spawned: ResMut<'w, crate::world::PartySpawned>,
+    pub pending_respawn: ResMut<'w, crate::world::PendingPartyRespawn>,
+    pub party_entities: Query<'w, 's, Entity, Or<(With<Player>, With<crate::battle::WorldAlly>)>>,
+    pub party_equipment: ResMut<'w, crate::equipment::PartyEquipment>,
+    pub commands: Commands<'w, 's>,
 }
 
 const SAVE_DIR: &str = "saves";
@@ -56,6 +63,21 @@ impl SaveSlot {
     fn path(self) -> String {
         format!("{}/{}", SAVE_DIR, self.file_name())
     }
+}
+
+/// The most-recently-written save slot that exists on disk, or `None` if there
+/// are no saves yet. Drives the title screen's "Continue" button.
+pub fn latest_save_slot() -> Option<SaveSlot> {
+    [SaveSlot::Auto, SaveSlot::Slot1, SaveSlot::Slot2, SaveSlot::Slot3]
+        .into_iter()
+        .filter_map(|slot| {
+            fs::metadata(slot.path())
+                .and_then(|m| m.modified())
+                .ok()
+                .map(|t| (slot, t))
+        })
+        .max_by_key(|(_, t)| *t)
+        .map(|(slot, _)| slot)
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -158,6 +180,8 @@ pub struct SaveData {
     pub player_inventory: PlayerInventory,
     #[serde(default)]
     pub wallet_coins: u32,
+    #[serde(default)]
+    pub party_equipment: crate::equipment::PartyEquipment,
 }
 
 pub fn save_game_hotkeys(
@@ -247,6 +271,7 @@ pub fn handle_save_requests(
                     party_progression: run.progression.clone(),
                     player_inventory: run.inventory.clone(),
                     wallet_coins: run.wallet.coins.0,
+                    party_equipment: run.party_equipment.clone(),
                 };
                 if let Err(e) = write_save(req.slot, &data) {
                     warn!("save_game: {}", e);
@@ -291,10 +316,22 @@ pub fn handle_save_requests(
                 *run.progression = data.party_progression;
                 *run.inventory = data.player_inventory;
                 run.wallet.coins = Money(data.wallet_coins);
+                *run.party_equipment = data.party_equipment;
 
-                if let Ok(mut player_tf) = player_q.single_mut() {
-                    player_tf.translation = Vec3::from(data.player_world);
+                // Rebuild the party from the loaded roster: despawn whoever is
+                // on the field (the default party from a fresh boot, or the live
+                // party mid-game) and have `spawn_party` repopulate it at the
+                // saved location next frame. This is what makes "Continue" /
+                // loading actually restore the saved roster rather than the
+                // default one (the old `Local` spawn-once guard couldn't reset).
+                for entity in run.party_entities.iter() {
+                    run.commands.entity(entity).despawn();
                 }
+                run.spawned.0 = false;
+                run.pending_respawn.0 = Some(Vec3::from(data.player_world));
+
+                // (Player repositioning is handled by the respawn above; only
+                // the camera needs an immediate snap to the loaded location.)
                 if let Ok(mut cam_tf) = camera_q.single_mut() {
                     let loaded = Vec3::from(data.player_world);
                     cam_tf.translation =

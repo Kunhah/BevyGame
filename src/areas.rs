@@ -393,21 +393,21 @@ pub struct WorldMapUi {
 struct WorldMapRoot;
 
 #[derive(Component)]
-struct AreaNodeButton {
+pub(crate) struct AreaNodeButton {
     area_id: u16,
 }
 
 #[derive(Component)]
-struct WorldMapInfoText;
+pub(crate) struct WorldMapInfoText;
 
 #[derive(Component)]
 struct TravelOverlayRoot;
 
 #[derive(Component)]
-struct TravelOverlayClock;
+pub(crate) struct TravelOverlayClock;
 
 #[derive(Component)]
-struct TravelOverlayBarFill;
+pub(crate) struct TravelOverlayBarFill;
 
 /// `M` toggles the world map open/closed while exploring.
 pub fn toggle_world_map(input: Res<ButtonInput<KeyCode>>, mut game_state: ResMut<GameState>) {
@@ -656,7 +656,7 @@ fn initial_info_text(catalog: &AreaCatalog, here: u16) -> String {
 
 /// Per-frame: updates the info panel from the hovered node and, on a click,
 /// begins travel to a different area.
-pub fn world_map_interaction(
+pub(crate) fn world_map_interaction(
     mut game_state: ResMut<GameState>,
     catalog: Res<AreaCatalog>,
     current_area: Res<CurrentArea>,
@@ -872,7 +872,7 @@ fn route_info_text(catalog: &AreaCatalog, here: u16, dest: u16, now: u32) -> Str
 // ---------------------------------------------------------------------------
 
 /// Spawns/despawns the traveling overlay and updates its progress bar + clock.
-pub fn manage_travel_overlay(
+pub(crate) fn manage_travel_overlay(
     mut commands: Commands,
     game_state: Res<GameState>,
     travel: Res<ActiveTravel>,

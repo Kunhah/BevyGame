@@ -424,8 +424,8 @@ pub fn mouse_click(
     input: Res<ButtonInput<MouseButton>>,
     windows: Query<&Window>,
     mut commands: Commands,
-    asset_server: Res<AssetServer>,
-    time: Res<Time>,
+    _asset_server: Res<AssetServer>,
+    _time: Res<Time>,
 ) {
 
     if !(matches!(game_state.0, Game_State::Exploring | Game_State::Battle)) {

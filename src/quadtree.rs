@@ -83,7 +83,7 @@ impl QuadtreeNode {
                 self.subdivide();
             }
 
-            if let Some(children) = &mut self.children {
+            if let Some(_children) = &mut self.children {
                 let mut reinsert = Vec::new();
                 std::mem::swap(&mut self.objects, &mut reinsert);
                 for obj in reinsert {

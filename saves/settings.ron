@@ -3,4 +3,10 @@
     light_visibility_culling: true,
     visual_occluder_fade: true,
     log_occluder_motion: false,
+    bloom: true,
+    fog: true,
+    ssao: true,
+    post_fx: true,
+    cull_distant_outlines: false,
+    quality: High,
 )

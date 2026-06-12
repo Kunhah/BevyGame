@@ -9,11 +9,10 @@ use serde::{Deserialize, Serialize};
 use crate::combat_ability::*;
 pub use crate::combat_ability::MagicSchool;
 use crate::constants::{
-    BASIC_ATTACK_ACTION_POINT_COST, DEFAULT_ACTION_POINTS, DEFAULT_MAGIC_REGEN_PER_TICK,
+    BASIC_ATTACK_ACTION_POINT_COST, DEFAULT_ACTION_POINTS,
     ITEM_ACTION_POINT_COST,
 };
 use crate::core::Timestamp;
-use crate::skill_tree::{LearnedSkills, MagicCostMultipliers, SkillPoints, SkillTreeAccess, SkillTreeKind};
 
 const HIT_CHANCE_LOGISTIC_K: f32 = 0.03;
 
@@ -1903,12 +1902,12 @@ pub enum ItemUseTrigger {
     PreDeath,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum ConsumableEffect {
     Heal { amount: u32 },
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum InventoryItemKind {
     Consumable {
         effect: ConsumableEffect,
@@ -1918,7 +1917,7 @@ pub enum InventoryItemKind {
     Equipment(EquipmentType),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InventoryItemDefinition {
     pub id: u16,
     pub name: String,
@@ -2112,7 +2111,7 @@ impl DeathBehavior for AllyDeathBehavior {
     fn on_death(
         &self,
         entity: Entity,
-        killer: Option<Entity>,
+        _killer: Option<Entity>,
         commands: &mut Commands,
         _loot_writer: &mut MessageWriter<LootEvent>,
         _xp_writer: &mut MessageWriter<AwardXpEvent>,
@@ -2135,7 +2134,7 @@ fn award_xp_system(
     mut query: Query<(&mut Experience, &mut Level)>,
 ) {
     for evt in events.read() {
-        if let Ok((mut xp, mut lvl)) = query.get_mut(evt.recipient) {
+        if let Ok((mut xp, lvl)) = query.get_mut(evt.recipient) {
             xp.0 += evt.amount;
             // Levels are capped at MAX_LEVEL (30); the high bits of `xp` encode
             // the raw level, so clamp before it ever leaves this system.
@@ -2220,7 +2219,7 @@ fn spirit_medium_absorb_system(
 
 fn paladin_before_attack_system(
     mut events: MessageMutator<BeforeAttackEvent>,
-    mut paladins: Query<(), With<PaladinBehavior>>,
+    paladins: Query<(), With<PaladinBehavior>>,
 ) {
     for ev in events.read() {
         if paladins.get(ev.attacker).is_ok() {
@@ -3375,7 +3374,7 @@ fn apply_resurrection_debuffs(
     writer: &mut MessageWriter<crate::status_effects::ApplyStatusEvent>,
 ) {
     use crate::status_effects::{
-        ApplyStatusEvent, BadConditionKind, DebuffKind, StatusKind,
+        ApplyStatusEvent, DebuffKind, StatusKind,
     };
     match rating {
         ResurrectionRating::Exceptional => {}
@@ -3731,7 +3730,7 @@ fn buff_tick_system(
     }
 
     // Remove expired stat modifiers based on timestamp
-    for (entity, mut mods) in query_mods.iter_mut() {
+    for (_entity, mut mods) in query_mods.iter_mut() {
         let mut keep = Vec::new();
         for m in mods.0.drain(..) {
             match m.expires_at_timestamp {
@@ -3873,7 +3872,7 @@ impl TurnManager {
     ///   while accumulated >= turn_threshold: push to order and subtract threshold
     pub fn calculate_turn_order(
         &mut self,
-        mut acc_q: &mut Query<&mut AccumulatedSpeed>,
+        acc_q: &mut Query<&mut AccumulatedSpeed>,
         stats_q: &Query<&CombatStats>,
     ) -> Vec<Entity> {
         let mut rng = rand::rng();
@@ -4911,323 +4910,6 @@ fn default_allowed_types_for_slot(slot_type: EquipmentSlotType) -> Vec<Equipment
     }
 }
 
-/// -----------------------------
-/// Startup spawn examples (with XP, Level, AccumulatedSpeed)
-/// -----------------------------
-fn spawn_examples(mut commands: Commands, mut tm: ResMut<TurnManager>, timestamp: Res<Timestamp>) {
-    // spawn sword
-    let sword = commands
-        .spawn_empty()
-        .insert(Equipment {
-            id: 5001,
-            name: "Silversteel Blade".to_string(),
-            equipment_type: EquipmentType::Weapon(WeaponType::Sword),
-            base_price: 32000,
-            // Material total with enum unit costs:
-            // 20*1000 + 4*400 + 3*500 + 2*800 = 24700 (below base_price)
-            materials: vec![
-                ItemMaterialCost {
-                    material: ItemMaterial::SilverSteelIngot,
-                    quantity: 20,
-                },
-                ItemMaterialCost {
-                    material: ItemMaterial::OakWood,
-                    quantity: 4,
-                },
-                ItemMaterialCost {
-                    material: ItemMaterial::Leather,
-                    quantity: 3,
-                },
-                ItemMaterialCost {
-                    material: ItemMaterial::CrystalDust,
-                    quantity: 2,
-                },
-            ],
-            lethality: 10,
-            hit: 5,
-            armor: 0,
-            agility: 2,
-            mind: 0,
-            morale: 0,
-        })
-        .insert(EquipmentHooks(vec![EquipHook::BeforeAttackMultiplier {
-            stat: Stat::Lethality,
-            multiplier: 1.15,
-            duration_turns: 1,
-        }]))
-        .insert(WeaponSharpness::new(100, 4))
-        .insert(WeaponBeforeAttackEffects(vec![
-            WeaponBeforeAttackEffect::AddFlatDamage { flat: 6 },
-            WeaponBeforeAttackEffect::BonusWhenSharp {
-                minimum_sharpness: 80,
-                flat_damage: 4,
-            },
-        ]))
-        .id();
-
-    // The four GDD protagonists. All are bound by the Merchant's Contract
-    // (`Bound` + `ResurrectionStanding`), and their `Abilities` lists hold the
-    // per-character ability ids from `assets/data/abilities/AbilitiesExample.ron`.
-
-    // --------------------------------------
-    // Rina — Rogue (Kiho)
-    // --------------------------------------
-    let rina = commands
-        .spawn_empty()
-        .insert(Name("Rina".to_string()))
-        .insert(CharacterId(1))
-        .insert(Class("Rogue".to_string()))
-        .insert(Bound)
-        .insert(ResurrectionStanding::default())
-        .insert(Inventory { item_ids: vec![1001] })
-        .insert(CombatStats {
-            health: <StatPool<i32>>::new(41),
-            morale: <StatPool<i32>>::new(62),
-            action_points: <StatPool<i32>>::new(DEFAULT_ACTION_POINTS + 1), // GDD: extra AP
-            movement: <StatPool<i32>>::new(7),
-            kiho: <StatPool<f32>>::new(4.0),
-            onmyodo: <StatPool<f32>>::new(0.0),
-            yokaijutsu: <StatPool<f32>>::new(0.0),
-            kamishin: <StatPool<f32>>::new(0.0),
-            lethality: <StatPool<i32>>::new(25),
-            hit: <StatPool<i32>>::new(32),
-            armor: <StatPool<i32>>::new(7),
-            speed: <StatPool<i32>>::new(37),    // GDD agility
-            evasion: <StatPool<i32>>::new(37),  // GDD agility
-            mind: <StatPool<i32>>::new(3),
-            health_per_rest_hour: 1,
-            morale_per_rest_hour: 4,
-            kiho_per_rest_hour: 0.25,
-            onmyodo_per_rest_hour: 0.0,
-            yokaijutsu_per_rest_hour: 0.0,
-            kamishin_per_rest_hour: 0.0,
-        })
-        .insert(GrowthAttributes::default())
-        .insert(GrowthCurve::rogue_curve())
-        .insert(EquipmentLoadout::with_allowed_types([
-            (EquipmentSlotType::Weapon, vec![EquipmentType::Weapon(WeaponType::Dagger)]),
-            (EquipmentSlotType::Armor, vec![EquipmentType::Armor(ArmorType::LightArmor)]),
-            (EquipmentSlotType::Accessory, vec![EquipmentType::Accessory(AccessoryType::Ring)]),
-            (EquipmentSlotType::Accessory, vec![EquipmentType::Accessory(AccessoryType::Charm)]),
-        ]))
-        // Quick slash, Throw knife, Shoot, Reload, Dodge, Get knife back,
-        // Invisibility, Surprise attack — see AbilitiesExample.ron L10 / 0x5000**.
-        .insert(Abilities(vec![20480, 20481, 20482, 20483, 20484, 20485, 20486, 20487]))
-        .insert(Experience(0))
-        .insert(Level(1))
-        .insert(AccumulatedSpeed(0))
-        .insert(RogueBehavior)
-        .insert(StatModifiers(Vec::new()))
-        .insert(SkillPoints::default())
-        .insert(LearnedSkills::default())
-        .insert(MagicCostMultipliers::default())
-        // Rina: Kiho only, plus her Rogue class tree.
-        .insert(
-            SkillTreeAccess::new()
-                .with_universal()
-                .with_magic([MagicSchool::Kiho])
-                .with(SkillTreeKind::RinaRogue),
-        )
-        .id();
-
-    // --------------------------------------
-    // Sayaka — Cleric / Kitsune (Kamishin, Onmyodo)
-    // --------------------------------------
-    let sayaka = commands
-        .spawn_empty()
-        .insert(Name("Sayaka".to_string()))
-        .insert(CharacterId(2))
-        .insert(Class("Cleric".to_string()))
-        .insert(Bound)
-        .insert(ResurrectionStanding::default())
-        .insert(Inventory { item_ids: vec![5001] })
-        .insert(CombatStats {
-            health: <StatPool<i32>>::new(52),
-            morale: <StatPool<i32>>::new(70),
-            action_points: <StatPool<i32>>::new(DEFAULT_ACTION_POINTS),
-            movement: <StatPool<i32>>::new(5),
-            kiho: <StatPool<f32>>::new(0.0),
-            onmyodo: <StatPool<f32>>::new(5.0),
-            yokaijutsu: <StatPool<f32>>::new(0.0),
-            kamishin: <StatPool<f32>>::new(6.0),
-            lethality: <StatPool<i32>>::new(12),
-            hit: <StatPool<i32>>::new(20),
-            armor: <StatPool<i32>>::new(10),
-            speed: <StatPool<i32>>::new(18),
-            evasion: <StatPool<i32>>::new(18),
-            mind: <StatPool<i32>>::new(22),
-            health_per_rest_hour: 2,
-            morale_per_rest_hour: 5,
-            kiho_per_rest_hour: 0.0,
-            onmyodo_per_rest_hour: 0.5,
-            yokaijutsu_per_rest_hour: 0.0,
-            kamishin_per_rest_hour: 0.6,
-        })
-        .insert(GrowthAttributes::default())
-        .insert(GrowthCurve::default())
-        .insert(EquipmentLoadout::with_allowed_types([
-            (EquipmentSlotType::Weapon, vec![EquipmentType::Weapon(WeaponType::Staff)]),
-            (EquipmentSlotType::Armor, vec![EquipmentType::Armor(ArmorType::Robe)]),
-            (EquipmentSlotType::Accessory, vec![EquipmentType::Accessory(AccessoryType::Charm)]),
-        ]))
-        // Purifying strike, Sacred prayer, Barrier of faith, Cleanse, Ritual of stillness.
-        .insert(Abilities(vec![22528, 22529, 22530, 22531, 22532]))
-        .insert(Experience(0))
-        .insert(Level(1))
-        .insert(AccumulatedSpeed(0))
-        .insert(StatModifiers(Vec::new()))
-        .insert(SkillPoints::default())
-        .insert(LearnedSkills::default())
-        .insert(MagicCostMultipliers::default())
-        // Sayaka: Kamishin + Onmyodo, plus her Cleric class tree.
-        .insert(
-            SkillTreeAccess::new()
-                .with_universal()
-                .with_magic([MagicSchool::Kamishin, MagicSchool::Onmyodo])
-                .with(SkillTreeKind::SayakaCleric),
-        )
-        .id();
-
-    // --------------------------------------
-    // Houjou Utaka — Samurai (Kiho limited, Yokaijutsu limited)
-    // --------------------------------------
-    let houjou = commands
-        .spawn_empty()
-        .insert(Name("Houjou Utaka".to_string()))
-        .insert(CharacterId(3))
-        .insert(Class("Samurai".to_string()))
-        .insert(Bound)
-        .insert(ResurrectionStanding::default())
-        .insert(Inventory { item_ids: vec![] })
-        .insert(CombatStats {
-            health: <StatPool<i32>>::new(68),
-            morale: <StatPool<i32>>::new(55),
-            action_points: <StatPool<i32>>::new(DEFAULT_ACTION_POINTS),
-            movement: <StatPool<i32>>::new(5),
-            kiho: <StatPool<f32>>::new(2.0),
-            onmyodo: <StatPool<f32>>::new(0.0),
-            yokaijutsu: <StatPool<f32>>::new(3.0),
-            kamishin: <StatPool<f32>>::new(0.0),
-            lethality: <StatPool<i32>>::new(34),
-            hit: <StatPool<i32>>::new(28),
-            armor: <StatPool<i32>>::new(18),
-            speed: <StatPool<i32>>::new(22),
-            evasion: <StatPool<i32>>::new(22),
-            mind: <StatPool<i32>>::new(8),
-            health_per_rest_hour: 2,
-            morale_per_rest_hour: 3,
-            kiho_per_rest_hour: 0.15,
-            onmyodo_per_rest_hour: 0.0,
-            yokaijutsu_per_rest_hour: 0.2,
-            kamishin_per_rest_hour: 0.0,
-        })
-        .insert(GrowthAttributes::default())
-        .insert(GrowthCurve::default())
-        .insert({
-            let mut loadout = EquipmentLoadout::with_allowed_types([
-                (EquipmentSlotType::Weapon, vec![EquipmentType::Weapon(WeaponType::Sword)]),
-                (EquipmentSlotType::Armor, vec![EquipmentType::Armor(ArmorType::HeavyArmor)]),
-                (EquipmentSlotType::Accessory, vec![EquipmentType::Accessory(AccessoryType::Charm)]),
-            ]);
-            loadout.equip_in_first_matching_slot(EquipmentType::Weapon(WeaponType::Sword), sword);
-            loadout
-        })
-        // Heavy strike, Wide slash, Counter stance, Blood draw, Forbidden cut,
-        // Sake drink, Bind spirit.
-        .insert(Abilities(vec![24576, 24577, 24578, 24579, 24580, 24581, 24582]))
-        .insert(Experience(0))
-        .insert(Level(1))
-        .insert(AccumulatedSpeed(0))
-        .insert(StatModifiers(Vec::new()))
-        .insert(SkillPoints::default())
-        .insert(LearnedSkills::default())
-        .insert(MagicCostMultipliers::default())
-        // Houjou: Kiho + Yokaijutsu (limited), plus his Samurai class tree.
-        .insert(
-            SkillTreeAccess::new()
-                .with_universal()
-                .with_magic([MagicSchool::Kiho, MagicSchool::Yokaijutsu])
-                .with(SkillTreeKind::HoujouSamurai),
-        )
-        .id();
-
-    // --------------------------------------
-    // Toshiko — Vessel (Yokaijutsu) with the Kuro extra-HP mechanic
-    // --------------------------------------
-    let toshiko = commands
-        .spawn_empty()
-        .insert(Name("Toshiko".to_string()))
-        .insert(CharacterId(4))
-        .insert(Class("Vessel".to_string()))
-        .insert(Bound)
-        .insert(ResurrectionStanding::default())
-        .insert(Inventory { item_ids: vec![1002] })
-        .insert(CombatStats {
-            health: <StatPool<i32>>::new(44),
-            morale: <StatPool<i32>>::new(48),
-            action_points: <StatPool<i32>>::new(DEFAULT_ACTION_POINTS),
-            movement: <StatPool<i32>>::new(5),
-            kiho: <StatPool<f32>>::new(0.0),
-            onmyodo: <StatPool<f32>>::new(0.0),
-            yokaijutsu: <StatPool<f32>>::new(5.0),
-            kamishin: <StatPool<f32>>::new(0.0),
-            lethality: <StatPool<i32>>::new(16),
-            hit: <StatPool<i32>>::new(18),
-            armor: <StatPool<i32>>::new(6),
-            speed: <StatPool<i32>>::new(20),
-            evasion: <StatPool<i32>>::new(20),
-            mind: <StatPool<i32>>::new(20),
-            health_per_rest_hour: 1,
-            morale_per_rest_hour: 3,
-            kiho_per_rest_hour: 0.0,
-            onmyodo_per_rest_hour: 0.0,
-            yokaijutsu_per_rest_hour: 0.5,
-            kamishin_per_rest_hour: 0.0,
-        })
-        .insert(GrowthAttributes::default())
-        .insert(GrowthCurve::spirit_mage_curve())
-        .insert(ExtraHp { current: 40, max: 40 })
-        .insert(EquipmentLoadout::with_allowed_types([
-            (EquipmentSlotType::Weapon, vec![EquipmentType::Weapon(WeaponType::Staff)]),
-            (EquipmentSlotType::Armor, vec![EquipmentType::Armor(ArmorType::Robe)]),
-            (
-                EquipmentSlotType::Accessory,
-                vec![
-                    EquipmentType::Accessory(AccessoryType::Charm),
-                    EquipmentType::Accessory(AccessoryType::Relic),
-                ],
-            ),
-        ]))
-        // Shadow touch, Whisper, See unseen, Kuro's grasp, Night veil, Shared pain.
-        .insert(Abilities(vec![26624, 26625, 26626, 26627, 26628, 26629]))
-        .insert(Experience(0))
-        .insert(Level(1))
-        .insert(AccumulatedSpeed(0))
-        .insert(SpiritMediumBehavior)
-        .insert(StatModifiers(Vec::new()))
-        .insert(SkillPoints::default())
-        .insert(LearnedSkills::default())
-        .insert(MagicCostMultipliers::default())
-        // Toshiko: Yokaijutsu only, plus her Vessel class tree.
-        .insert(
-            SkillTreeAccess::new()
-                .with_universal()
-                .with_magic([MagicSchool::Yokaijutsu])
-                .with(SkillTreeKind::ToshikoVessel),
-        )
-        .id();
-
-    // register participants in turn manager
-    tm.participants.push(rina);
-    tm.participants.push(sayaka);
-    tm.participants.push(houjou);
-    tm.participants.push(toshiko);
-
-    info!(
-        "Spawned the four bound: Rina {:?}, Sayaka {:?}, Houjou {:?}, Toshiko {:?} (sword {:?})",
-        rina, sayaka, houjou, toshiko, sword
-    );
-}
 
 /// -----------------------------
 /// App Setup

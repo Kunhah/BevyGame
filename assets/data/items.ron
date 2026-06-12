@@ -1,0 +1,77 @@
+// Item definitions, overlaid onto the hard-coded catalogs at startup by
+// `crate::equipment::overlay_item_catalogs`.
+//
+//   equipment   -> ItemCatalog          (economy; what you can wear)
+//   consumables -> InventoryItemCatalog  (combat; what you can use in battle)
+//
+// Add or override an item by giving it an `id`. Ids NOT listed here keep their
+// hard-coded defaults (with crafting materials), so this file is purely additive
+// unless you reuse an existing id. `materials: []` means "not the crafting
+// focus" — equip stats below are what matter.
+//
+// EquipmentType: Weapon(<WeaponType>) | Armor(<ArmorType>) | Headgear(<HeadgearType>)
+//              | Accessory(<AccessoryType>) | Footwear(<FootwearType>)
+// Stats: lethality / hit / armor / agility / mind / morale.
+(
+    equipment: [
+        (
+            id: 5101,
+            name: "Nodachi of the Long Field",
+            equipment_type: Weapon(Nodachi),
+            base_price: 42000,
+            materials: [],
+            lethality: 16, hit: 3, armor: 0, agility: -1, mind: 0, morale: 3,
+        ),
+        (
+            id: 5102,
+            name: "Onmyoji's Shakujo",
+            equipment_type: Weapon(Staff),
+            base_price: 26000,
+            materials: [],
+            lethality: 3, hit: 3, armor: 0, agility: 0, mind: 11, morale: 1,
+        ),
+        (
+            id: 5103,
+            name: "Lacquered Do-maru",
+            equipment_type: Armor(HeavyArmor),
+            base_price: 31000,
+            materials: [],
+            lethality: 0, hit: 0, armor: 13, agility: -2, mind: 0, morale: 3,
+        ),
+        (
+            id: 5104,
+            name: "Kabuto of the Red Crest",
+            equipment_type: Headgear(Helmet),
+            base_price: 14000,
+            materials: [],
+            lethality: 0, hit: 1, armor: 5, agility: -1, mind: 0, morale: 2,
+        ),
+        (
+            id: 5105,
+            name: "Magatama of the Deep",
+            equipment_type: Accessory(Magatama),
+            base_price: 18000,
+            materials: [],
+            lethality: 0, hit: 1, armor: 1, agility: 1, mind: 6, morale: 3,
+        ),
+        (
+            id: 5106,
+            name: "Silent Tabi",
+            equipment_type: Footwear(Tabi),
+            base_price: 9000,
+            materials: [],
+            lethality: 0, hit: 1, armor: 0, agility: 5, mind: 0, morale: 0,
+        ),
+    ],
+    consumables: [
+        (
+            id: 1003,
+            name: "Sacred Sake",
+            kind: Consumable(
+                effect: Heal(amount: 70),
+                usable_on_others: true,
+                usable_pre_death: false,
+            ),
+        ),
+    ],
+)

@@ -1,5 +1,4 @@
 use bevy::input::keyboard::KeyCode;
-use bevy::input::mouse::MouseButton;
 use bevy::prelude::*;
 use bevy::prelude::Messages;
 
@@ -334,8 +333,10 @@ fn spawn_player_combat(
     // legacy/skipped flow) fall back to the original generalist block.
     if let Some(k) = kind {
         k.insert_combat_components(&mut e);
-        // Replay this character's persistent skill progression next frame.
+        // Replay this character's persistent skill progression + equipment next
+        // frame (and, for the leader, hand over the party's consumables).
         e.insert(ProgressionPending);
+        e.insert(crate::equipment::EquipmentPending);
         return e.id();
     }
 
@@ -644,8 +645,9 @@ fn spawn_ally_combat(
         // equipment, signature mechanics).
         Some(k) => {
             k.insert_combat_components(&mut e);
-            // Replay this character's persistent skill progression next frame.
+            // Replay this character's persistent skill progression + equipment.
             e.insert(ProgressionPending);
+            e.insert(crate::equipment::EquipmentPending);
         }
         // Ambient/test ally: generic support block, universal trees only.
         None => {
@@ -1675,7 +1677,7 @@ pub fn combat_end_turn_input(
 pub fn transform_npc_to_enemy(
     mut commands: Commands,
     input: Res<ButtonInput<KeyCode>>,
-    asset_server: Res<AssetServer>,
+    _asset_server: Res<AssetServer>,
     player_q: Query<&Transform, With<Player>>,
     npc_q: Query<(Entity, &Transform, &WorldNpc), Without<MerchantNpc>>,
 ) {

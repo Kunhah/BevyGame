@@ -20,10 +20,10 @@
 //! reads the kind back and materialises the matching stat block + access. Allies
 //! with no `CharacterKind` fall back to a generic block (ambient/test allies).
 //!
-//! The numbers for the original four were lifted from the GDD-tuned (but
-//! previously unwired) `combat_plugin::spawn_examples`; the three later
-//! additions (Renjiro / Suzuka / Kanzo) are tuned to the same scale and pair
-//! with the class trees of the same name under `assets/data/skills/`.
+//! The numbers for the original four were lifted from the GDD-tuned stat blocks
+//! that used to live in a startup `spawn_examples` demo (since removed); the
+//! three later additions (Renjiro / Suzuka / Kanzo) are tuned to the same scale
+//! and pair with the class trees of the same name under `assets/data/skills/`.
 
 use bevy::ecs::system::EntityCommands;
 use bevy::prelude::*;

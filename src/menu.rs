@@ -233,6 +233,8 @@ struct PauseMenuRoot(PauseMenuPage);
 #[derive(Component, Clone, Copy)]
 enum MenuButtonAction {
     StartGame,
+    /// Title screen: load the most-recent save and resume immediately.
+    ContinueGame,
     QuitGame,
     OpenLoadPage,
     OpenSettingsPage,
@@ -435,6 +437,10 @@ fn spawn_title_page(commands: &mut Commands, root: Entity) {
                 })
                 .with_children(|menu| {
                     spawn_hero_button(menu, "New Game", MenuButtonAction::StartGame);
+                    // Only offer Continue when there's actually a save to resume.
+                    if crate::save::latest_save_slot().is_some() {
+                        spawn_hero_button(menu, "Continue", MenuButtonAction::ContinueGame);
+                    }
                     spawn_hero_button(menu, "Load Game", MenuButtonAction::OpenLoadPage);
                     spawn_hero_button(menu, "Settings", MenuButtonAction::OpenSettingsPage);
                     spawn_hero_button(menu, "Quit", MenuButtonAction::QuitGame);
@@ -937,6 +943,18 @@ fn handle_menu_actions(
                 resume_state.0 = Game_State::Exploring;
                 mouse_input.reset_all();
                 key_input.clear();
+            }
+            MenuButtonAction::ContinueGame => {
+                if let Some(slot) = crate::save::latest_save_slot() {
+                    save_requests.write(SaveRequest {
+                        action: SaveAction::Load,
+                        slot,
+                    });
+                    game_state.0 = Game_State::Exploring;
+                    resume_state.0 = Game_State::Exploring;
+                    mouse_input.reset_all();
+                    key_input.clear();
+                }
             }
             MenuButtonAction::QuitGame => {
                 exit.write(AppExit::Success);

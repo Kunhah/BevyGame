@@ -11,7 +11,6 @@ use crate::constants::{WINDOW_HEIGHT, WINDOW_WIDTH};
 use crate::light_plugin::Occluder;
 use crate::quadtree::Collider;
 use crate::ui_style::{font_size, palette, radius, spacing};
-use bevy_camera::visibility::RenderLayers;
 
 /// World-space size of each map tile background (square).
 pub const TILE_WORLD_SIZE: f32 = 4096.0;
@@ -577,12 +576,12 @@ pub fn toggle_map_mode(
 pub fn navigate_map_selection_keyboard(
     input: Res<ButtonInput<KeyCode>>,
     mut selection: ResMut<MapSelection>,
-    mut map_position: ResMut<PlayerMapPosition>,
-    mut current_area: ResMut<CurrentArea>,
-    mut timestamp: ResMut<Timestamp>,
-    mut player_q: Query<&mut Transform, With<Player>>,
-    mut camera_tf_q: Query<&mut Transform, (With<MainCamera>, Without<Player>)>,
-    mut game_state: ResMut<GameState>,
+    _map_position: ResMut<PlayerMapPosition>,
+    _current_area: ResMut<CurrentArea>,
+    _timestamp: ResMut<Timestamp>,
+    _player_q: Query<&mut Transform, With<Player>>,
+    _camera_tf_q: Query<&mut Transform, (With<MainCamera>, Without<Player>)>,
+    game_state: ResMut<GameState>,
     map: Res<MapTiles>,
 ) {
     if game_state.0 != Game_State::MapOpen {
@@ -1257,7 +1256,7 @@ pub fn handle_tile_entry(
         return;
     }
 
-    let Ok(mut player_tf) = player_q.single_mut() else {
+    let Ok(player_tf) = player_q.single_mut() else {
         return;
     };
 
