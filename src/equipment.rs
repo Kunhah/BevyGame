@@ -23,14 +23,17 @@ use std::collections::HashMap;
 use std::fs;
 
 use bevy::prelude::*;
+use rand::Rng;
 use serde::{Deserialize, Serialize};
 
+use crate::battle::{BattleParticipant, BattleSide, EnemyEncounter, FINAL_BOSS_ENCOUNTER_ID};
 use crate::characters::CharacterKind;
 use crate::combat_plugin::{
-    Equipment, EquipmentLoadout, EquipmentType, Inventory, InventoryItemCatalog,
+    DeathEvent, Equipment, EquipmentLoadout, EquipmentType, Inventory, InventoryItemCatalog,
     InventoryItemDefinition, InventoryItemKind, PlayerControlled,
 };
-use crate::economy::{ItemCatalog, PlayerInventory};
+use crate::economy::{ItemCatalog, PlayerInventory, PlayerWallet};
+use crate::money::Money;
 
 const ITEMS_PATH: &str = "assets/data/items.ron";
 
@@ -51,8 +54,139 @@ impl Plugin for EquipmentPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<PartyEquipment>()
             .add_systems(Startup, overlay_item_catalogs)
-            .add_systems(Update, apply_party_equipment_system);
+            .add_systems(Update, apply_party_equipment_system)
+            .add_systems(Update, enemy_loot_drop_system)
+            .add_systems(Update, ground_loot_pickup_system);
     }
+}
+
+// ---------------------------------------------------------------------------
+// Combat loot — slain enemies fund the equip loop
+// ---------------------------------------------------------------------------
+
+/// IDs that can drop as combat loot (must exist in `ItemCatalog` /
+/// `InventoryItemCatalog`). Deliberately grounded — coins, field medicine, and
+/// the realistic gear authored in `items.ron`; no fantasy windfalls.
+const LOOT_GEAR_POOL: [u16; 6] = [5101, 5102, 5103, 5104, 5105, 5106];
+const LOOT_FIELD_MEDICINE: u16 = 1001;
+const LOOT_SACRED_SAKE: u16 = 1003;
+
+fn is_boss_encounter(id: u32) -> bool {
+    id == FINAL_BOSS_ENCOUNTER_ID || id == crate::battle::MINIBOSS_ENCOUNTER_ID
+}
+
+/// Roll the purse + item drops for a slain enemy. Bosses are guaranteed a piece
+/// of gear and a tonic; rank-and-file mostly drop coin with the occasional find.
+fn roll_loot(encounter_id: u32, rng: &mut impl Rng) -> (u32, Vec<u16>) {
+    let boss = is_boss_encounter(encounter_id);
+    let mut items = Vec::new();
+    let coins = if boss {
+        rng.gen_range(800..1500)
+    } else {
+        rng.gen_range(40..160)
+    };
+    // Healing supplies.
+    if boss || rng.gen_range(0..100) < 30 {
+        items.push(LOOT_FIELD_MEDICINE);
+    }
+    // Gear.
+    if boss {
+        items.push(LOOT_GEAR_POOL[rng.gen_range(0..LOOT_GEAR_POOL.len())]);
+        items.push(LOOT_SACRED_SAKE);
+    } else if rng.gen_range(0..100) < 12 {
+        items.push(LOOT_GEAR_POOL[rng.gen_range(0..LOOT_GEAR_POOL.len())]);
+    }
+    (coins, items)
+}
+
+/// The body of a defeated enemy, left lying where it fell. It still carries the
+/// enemy's inventory (the rolled loot); a party member can walk up and press
+/// **Y** to loot it, transferring coins to the purse and items to the owned
+/// pool. Persists in the world until looted.
+#[derive(Component)]
+pub struct EnemyCorpse {
+    pub coins: u32,
+    pub items: Vec<u16>,
+}
+
+/// How close the leader must stand to a body to loot it.
+pub const LOOT_RANGE: f32 = 40.0;
+
+/// When an enemy combatant dies, leave its **body** on the ground at the spot it
+/// fell (its combat transform = the overworld encounter location; the dying
+/// entity is still alive here because battle-end despawns are deferred). The
+/// body keeps the enemy's inventory for the player to loot afterwards — closing
+/// the kill → loot → equip loop without silently filling the bag.
+fn enemy_loot_drop_system(
+    mut commands: Commands,
+    mut deaths: MessageReader<DeathEvent>,
+    participants: Query<
+        (&BattleSide, Option<&EnemyEncounter>, &Transform),
+        With<BattleParticipant>,
+    >,
+) {
+    let mut rng = rand::rng();
+    for ev in deaths.read() {
+        let Ok((side, encounter, transform)) = participants.get(ev.entity) else {
+            continue;
+        };
+        if !matches!(side, BattleSide::Enemy) {
+            continue;
+        }
+        let encounter_id = encounter.map(|e| e.id).unwrap_or(0);
+        let (coins, items) = roll_loot(encounter_id, &mut rng);
+        if coins == 0 && items.is_empty() {
+            continue;
+        }
+        // A low, dark "fallen body" marker on the ground (z = 0).
+        let pos = Vec3::new(transform.translation.x, transform.translation.y, 0.0);
+        commands.spawn((
+            crate::render3d::PlaceholderVisual::prop(
+                Color::srgb(0.32, 0.10, 0.12),
+                Vec2::new(30.0, 18.0),
+                8.0,
+            ),
+            Transform::from_translation(pos),
+            EnemyCorpse { coins, items },
+            crate::world::YSort { base_z: 0.0 },
+            Name::new("EnemyCorpse"),
+        ));
+    }
+}
+
+/// Loot the nearest body when the leader is beside one and presses **Y**:
+/// transfer its coins + items, then despawn the body.
+fn ground_loot_pickup_system(
+    mut commands: Commands,
+    input: Res<ButtonInput<KeyCode>>,
+    game_state: Res<crate::core::GameState>,
+    player_q: Query<&Transform, With<crate::core::Player>>,
+    corpse_q: Query<(Entity, &Transform, &EnemyCorpse)>,
+    mut wallet: ResMut<PlayerWallet>,
+    mut inventory: ResMut<PlayerInventory>,
+) {
+    if game_state.0 != crate::core::Game_State::Exploring || !input.just_pressed(KeyCode::KeyY) {
+        return;
+    }
+    let Ok(player_tf) = player_q.single() else {
+        return;
+    };
+    let p = player_tf.translation.truncate();
+    // Loot only the single nearest body in range, so one keypress = one body.
+    let nearest = corpse_q
+        .iter()
+        .map(|(e, t, loot)| (e, t.translation.truncate().distance(p), loot))
+        .filter(|(_, d, _)| *d <= LOOT_RANGE)
+        .min_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+    let Some((entity, _, loot)) = nearest else {
+        return;
+    };
+    wallet.coins = Money(wallet.coins.0.saturating_add(loot.coins));
+    for id in &loot.items {
+        inventory_add(&mut inventory, *id);
+    }
+    info!("looted body: {} mon + {} item(s)", loot.coins, loot.items.len());
+    commands.entity(entity).despawn();
 }
 
 // ---------------------------------------------------------------------------

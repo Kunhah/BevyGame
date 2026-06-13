@@ -1142,6 +1142,25 @@ pub struct RogueBehavior; // Niira
 #[derive(Component)]
 pub struct SpiritMediumBehavior; // Toshiko
 
+// Per-character passive markers for the playable roster. Each tags the combatant
+// so its signature system can react. Defensive passives (dodge/absorb/reduce)
+// are applied in `apply_damage_system`; offensive ones via `BeforeAttackEvent`
+// mutators; sustain ones via `TurnStartEvent`.
+#[derive(Component, Debug)]
+pub struct SamuraiBehavior; // Houjou — bushido: hits harder while resolve holds
+#[derive(Component, Debug)]
+pub struct ClericBehavior; // Sayaka — foxfire blessing: mends the wounded each turn
+#[derive(Component, Debug)]
+pub struct MonkBehavior; // Renjiro — breath control: regains Kiho each turn
+#[derive(Component, Debug)]
+pub struct OnmyojiBehavior; // Suzuka — the craft sustains: regains Onmyodo each turn
+#[derive(Component, Debug)]
+pub struct ExorcistBehavior; // Kanzo — spirit-sight: strikes land truer
+#[derive(Component, Debug)]
+pub struct BikuniBehavior; // Yuna — pilgrim's serenity: steadies resolve each turn
+#[derive(Component, Debug)]
+pub struct NecromancerBehavior; // Magatsu — grave-hunger: drains life from his blows
+
 /// Equipment entity
 
 #[derive(Component, Debug, Clone, Serialize, Deserialize)]
@@ -2022,11 +2041,6 @@ pub struct LootItem {
     pub quantity: u32,
 }
 
-#[derive(Debug, Clone, Resource)]
-pub struct BattleLoot {
-    pub items: Vec<LootItem>,
-}
-
 #[derive(Debug, Clone, Default, Resource)]
 pub struct PendingPlayerAction {
     pub entity: Option<Entity>,
@@ -2148,14 +2162,8 @@ fn award_xp_system(
     }
 }
 
-fn loot_system(
-    mut events: MessageReader<LootEvent>,
-    mut loot_res: ResMut<BattleLoot>,
-) {
-    for evt in events.read() {
-        loot_res.items.extend(evt.loot.clone());
-    }
-}
+// (loot_system + BattleLoot removed — combat loot now drops straight into the
+// player's purse and inventory via `equipment::enemy_loot_drop_system`.)
 
 
 #[derive(Clone, Debug, Component)]
@@ -2164,58 +2172,9 @@ pub struct ExtraHp {
     pub max: u32,
 }
 
-fn spirit_medium_absorb_system(
-    mut incoming: MessageReader<IncomingDamageEvent>,
-    mut q: Query<(&mut ExtraHp, &mut CombatStats), With<SpiritMediumBehavior>>,
-    mut dmg_queue: ResMut<DamageQueue>,
-) {
-    for ev in incoming.read() {
-        if let Ok((mut extra, mut stats)) = q.get_mut(ev.target) {
-
-            let mut dmg = ev.amount;
-
-            // absorb from extra hp
-            let absorbed = dmg.min(extra.current);
-            extra.current -= absorbed;
-            dmg -= absorbed;
-
-            if dmg == 0 {
-                dmg_queue.0.push(QueuedDamage {
-                    attacker: ev.attacker,
-                    target: ev.target,
-                    amount: 0,
-                    damage_type: ev.damage_type,
-                    element: None,
-                    scaled_with: vec![],
-                    defended_with: vec![],
-                    accuracy_override: None,
-                    crit_multiplier: 1.0,
-                    tags: vec![],
-                    cause: ev.cause.clone(),
-                });
-                continue;
-            }
-
-            // apply remaining to normal HP
-            let applied = stats.health.current.min(dmg as i32);
-            stats.health.current -= applied;
-
-            dmg_queue.0.push(QueuedDamage {
-                attacker: ev.attacker,
-                target: ev.target,
-                amount: applied,
-                damage_type: ev.damage_type,
-                element: None,
-                scaled_with: vec![],
-                defended_with: vec![],
-                accuracy_override: None,
-                crit_multiplier: 1.0,
-                tags: vec![],
-                cause: ev.cause.clone(),
-            });
-        }
-    }
-}
+// (spirit_medium_absorb_system removed — Toshiko's ExtraHp shield is now applied
+// directly in `apply_damage_system`, against the live DamageQueue pipeline,
+// since the old `IncomingDamageEvent` it read was never emitted.)
 
 fn paladin_before_attack_system(
     mut events: MessageMutator<BeforeAttackEvent>,
@@ -2229,30 +2188,8 @@ fn paladin_before_attack_system(
     }
 }
 
-fn paladin_damage_reduction_system(
-    mut incoming: MessageReader<IncomingDamageEvent>,
-    paladins: Query<(), With<PaladinBehavior>>,
-    mut dmg_queue: ResMut<DamageQueue>,
-) {
-    for ev in incoming.read() {
-        if paladins.get(ev.target).is_ok() {
-            let reduced = ev.amount.saturating_sub(1);
-            dmg_queue.0.push(QueuedDamage {
-                attacker: ev.attacker,
-                target: ev.target,
-                amount: reduced as i32,
-                damage_type: ev.damage_type,
-                element: None,
-                scaled_with: vec![],
-                defended_with: vec![],
-                accuracy_override: None,
-                crit_multiplier: 1.0,
-                tags: vec![],
-                cause: ev.cause.clone(),
-            });
-        }
-    }
-}
+// (paladin_damage_reduction_system removed — Iwao's flat damage reduction is now
+// in `apply_damage_system`; see `GUARDIAN_DAMAGE_REDUCTION`.)
 
 fn rogue_backstab_system(
     mut events: MessageMutator<BeforeAttackEvent>,
@@ -2273,46 +2210,126 @@ fn rogue_backstab_system(
     }
 }
 
-fn rogue_dodge_system(
-    mut incoming: MessageReader<IncomingDamageEvent>,
-    rogues: Query<&CombatStats, With<RogueBehavior>>,
-    mut dmg_queue: ResMut<DamageQueue>,
+// (rogue_dodge_system removed — Rina's evasion dodge is now in
+// `apply_damage_system`, rolling against the live damage instead of the
+// never-emitted IncomingDamageEvent.)
+
+/// Houjou's bushidō: while his resolve (morale) holds at 60%+, his strikes bite
+/// deeper. A `BeforeAttackEvent` mutator like the paladin/rogue offence passives.
+fn samurai_resolve_system(
+    mut events: MessageMutator<BeforeAttackEvent>,
+    samurai: Query<&CombatStats, With<SamuraiBehavior>>,
 ) {
-    for ev in incoming.read() {
-        if let Ok(stats) = rogues.get(ev.target) {
-            let chance = stats.evasion.current as f32 / 100.0;
-            if rand::random::<f32>() < chance {
-                // Dodged → send 0 damage
-                dmg_queue.0.push(QueuedDamage {
-                    attacker: ev.attacker,
-                    target: ev.target,
-                    amount: 0,
-                    damage_type: ev.damage_type,
-                    element: None,
-                    scaled_with: vec![],
-                    defended_with: vec![],
-                    accuracy_override: None,
-                    crit_multiplier: 1.0,
-                    tags: vec![],
-                    cause: ev.cause.clone(),
-                });
-                continue;
+    for ev in events.read() {
+        if let Ok(stats) = samurai.get(ev.attacker) {
+            if stats.morale.base > 0 {
+                let ratio = stats.morale.current.max(0) as f32 / stats.morale.base as f32;
+                if ratio >= 0.6 {
+                    ev.context.base_lethality += 6;
+                }
             }
         }
+    }
+}
 
-        // not dodged → push normal damage
-        dmg_queue.0.push(QueuedDamage {
-            attacker: ev.attacker,
-            target: ev.target,
-            amount: ev.amount as i32,
-            damage_type: ev.damage_type,
+/// Kanzo's spirit-sight: the blind exorcist's blows land truer (+15% hit).
+fn exorcist_focus_system(
+    mut events: MessageMutator<BeforeAttackEvent>,
+    exorcists: Query<(), With<ExorcistBehavior>>,
+) {
+    for ev in events.read() {
+        if exorcists.get(ev.attacker).is_ok() {
+            ev.context.base_hit = (ev.context.base_hit as f32 * 1.15) as i32;
+        }
+    }
+}
+
+/// Sayaka's foxfire blessing: at the start of her turn she mends the most-wounded
+/// living ally (herself included) a little.
+fn cleric_blessing_system(
+    mut turns: MessageReader<TurnStartEvent>,
+    clerics: Query<(), With<ClericBehavior>>,
+    sides: Query<(Entity, &crate::battle::BattleSide, &CombatStats)>,
+    mut heal_writer: MessageWriter<HealEvent>,
+) {
+    for ev in turns.read() {
+        if clerics.get(ev.who).is_err() {
+            continue;
+        }
+        let Ok((_, my_side, _)) = sides.get(ev.who) else {
+            continue;
+        };
+        let mut best: Option<(Entity, i32)> = None;
+        for (e, side, stats) in sides.iter() {
+            if side != my_side || stats.health.current <= 0 {
+                continue;
+            }
+            let deficit = stats.health.base - stats.health.current;
+            if deficit <= 0 {
+                continue;
+            }
+            if best.map_or(true, |(_, d)| deficit > d) {
+                best = Some((e, deficit));
+            }
+        }
+        if let Some((target, _)) = best {
+            heal_writer.write(HealEvent {
+                healer: ev.who,
+                target,
+                amount: 10,
+                element: None,
+                cause: ActionCause::Passive { source: ev.who },
+            });
+        }
+    }
+}
+
+/// Per-turn sustain passives: Renjiro's breath control restores Kiho, Suzuka's
+/// ritual craft restores Onmyodo, and Yuna's pilgrim serenity steadies resolve
+/// (morale). One marker each → one distinct reserve.
+fn class_turn_start_regen_system(
+    mut turns: MessageReader<TurnStartEvent>,
+    mut q: Query<(
+        Option<&MonkBehavior>,
+        Option<&OnmyojiBehavior>,
+        Option<&BikuniBehavior>,
+        &mut CombatStats,
+    )>,
+) {
+    for ev in turns.read() {
+        if let Ok((monk, onmyoji, bikuni, mut stats)) = q.get_mut(ev.who) {
+            if monk.is_some() {
+                stats.kiho.current = (stats.kiho.current + 1.0).min(stats.kiho.base);
+            }
+            if onmyoji.is_some() {
+                stats.onmyodo.current = (stats.onmyodo.current + 1.0).min(stats.onmyodo.base);
+            }
+            if bikuni.is_some() {
+                stats.morale.current = (stats.morale.current + 4).min(stats.morale.base);
+            }
+        }
+    }
+}
+
+/// Magatsu's grave-hunger: a fraction of the damage his blows deal flows back as
+/// his own health. Reads `AfterHitEvent` so it only fires on damage actually
+/// landed; the heal carries a `Passive` cause so it never re-triggers anything.
+fn necromancer_lifesteal_system(
+    mut hits: MessageReader<AfterHitEvent>,
+    necromancers: Query<(), With<NecromancerBehavior>>,
+    mut heal_writer: MessageWriter<HealEvent>,
+) {
+    for ev in hits.read() {
+        if ev.amount <= 0 || necromancers.get(ev.attacker).is_err() {
+            continue;
+        }
+        let drained = (ev.amount / 3).max(1) as u32;
+        heal_writer.write(HealEvent {
+            healer: ev.attacker,
+            target: ev.attacker,
+            amount: drained,
             element: None,
-            scaled_with: vec![],
-            defended_with: vec![],
-            accuracy_override: None,
-            crit_multiplier: 1.0,
-            tags: vec![],
-            cause: ev.cause.clone(),
+            cause: ActionCause::Passive { source: ev.attacker },
         });
     }
 }
@@ -3132,9 +3149,20 @@ fn try_use_pre_death_item(
 
 
 /// Apply damage to target's Health and emit AfterHitEvent
+/// Flat damage a guardian (Iwao, `PaladinBehavior`) shrugs off every incoming
+/// hit — its signature "wall" passive.
+const GUARDIAN_DAMAGE_REDUCTION: i32 = 3;
+
 pub fn apply_damage_system(
     mut reader: MessageReader<DamageEvent>,
     mut stats_q: Query<&mut CombatStats>,
+    // Per-character defensive passives. All-`Option` so it matches every target;
+    // only entities carrying a marker actually mitigate.
+    mut class_q: Query<(
+        Option<&RogueBehavior>,
+        Option<&PaladinBehavior>,
+        Option<&mut ExtraHp>,
+    )>,
     mut inventory_q: Query<&mut Inventory>,
     item_catalog: Res<InventoryItemCatalog>,
     mut after_writer: MessageWriter<AfterHitEvent>,
@@ -3142,9 +3170,41 @@ pub fn apply_damage_system(
     mut death_writer: MessageWriter<DeathEvent>,
 ) {
     for ev in reader.iter() {
+        // --- Class defensive passives (only a positive hit can be mitigated) ---
+        // Order: full dodge (rogue) → flat reduction (guardian) → spirit shield
+        // (vessel's borrowed life soaks the rest before her own health).
+        let mut amount = ev.amount;
+        if amount > 0 {
+            let evasion = stats_q
+                .get(ev.target)
+                .map(|s| s.evasion.current)
+                .unwrap_or(0);
+            if let Ok((rogue, paladin, mut extra)) = class_q.get_mut(ev.target) {
+                if rogue.is_some() {
+                    // Rina slips the blow on an evasion-scaled roll (cap 50%).
+                    let dodge_chance = (evasion as f32 / 100.0).clamp(0.0, 0.5);
+                    if rand::rng().gen_range(0.0..1.0) < dodge_chance {
+                        amount = 0;
+                    }
+                }
+                if amount > 0 && paladin.is_some() {
+                    amount = (amount - GUARDIAN_DAMAGE_REDUCTION).max(0);
+                }
+                if amount > 0 {
+                    if let Some(extra) = extra.as_mut() {
+                        if extra.current > 0 {
+                            let absorbed = (amount as u32).min(extra.current);
+                            extra.current -= absorbed;
+                            amount -= absorbed as i32;
+                        }
+                    }
+                }
+            }
+        }
+
         if let Ok(mut stats) = stats_q.get_mut(ev.target) {
             let before = stats.health.current;
-            stats.health.current = stats.health.current.saturating_sub(ev.amount);
+            stats.health.current = stats.health.current.saturating_sub(amount);
             let applied = before - stats.health.current;
             let lethal = stats.health.current == 0;
             drop(stats);
@@ -3790,26 +3850,8 @@ pub fn expand_rest_intent_system(
 /// Example AI system that makes a simple attack intent for demo
 /// Debug AI that simply picks the first valid target and attacks.
 /// Only runs if no other AI system produced an intent this frame.
-fn demo_ai_system(
-    mut intents: MessageWriter<AttackIntentEvent>,
-    query_chars: Query<Entity, With<CombatStats>>,
-) {
-    let ents: Vec<Entity> = query_chars.iter().collect();
-    if ents.len() < 2 {
-        return; // not enough participants
-    }
-
-    let attacker = ents[0];
-    let target = ents[1];
-
-    intents.send(AttackIntentEvent {
-        attacker,
-        target,
-        ability: None,
-        context: AttackContext::default(),
-        cause: ActionCause::Ai,
-    });
-}
+// (demo_ai_system removed — superseded by the real behaviour-tree AI in
+// `ai_decision`.)
 
 
 /// -----------------------------
@@ -3915,43 +3957,6 @@ impl TurnManager {
 /// -----------------------------
 
 /// Calculate XP awarded given enemy_experience and receiver_experience (from original formula).
-/// This mirrors your original approach but with safe floating arithmetic and guards.
-fn calculate_xp_award(receiver_experience: u32, enemy_experience: u32) -> u32 {
-    // original used ratio = enemy_experience / self.experience
-    // guard: if receiver_experience == 0, treat ratio as 1.0 to avoid div-by-zero
-    let ratio: f32 = if receiver_experience == 0 {
-        // if receiver has 0 xp, award something small proportional to enemy XP
-        (enemy_experience as f32) / 1.0f32
-    } else {
-        (enemy_experience as f32) / (receiver_experience as f32)
-    };
-
-    // thresholds from original: shift left 14 (= *16384)
-    // let multiplier_base = 16384.0_f32;
-
-    // clamp ratio to avoid NaNs
-    let ratio = ratio.max(0.0);
-
-    let amount_f: f32 = if ratio > 0.946 {
-        // ((ratio - 0.2).ln() / 1.25.ln() + 1.5) << 14  converted to *16384
-        let inner = (ratio - 0.2).max(0.0001);
-        let value = ((inner.ln() / 1.25f32.ln()) + 1.5) * 16384.0;
-        // clamp to non-negative
-        value.max(0.0)
-    } else {
-        // ratio.powf(30.2) * 16384
-        ratio.powf(30.2) * 16384.0
-    };
-
-    // avoid huge values; clamp to u32::MAX-1
-    if amount_f.is_nan() || amount_f <= 0.0 {
-        0
-    } else if amount_f >= (u32::MAX as f32) {
-        u32::MAX - 1
-    } else {
-        amount_f.round() as u32
-    }
-}
 
 /// Level up handler: apply stat increases using functions derived from original file.
 /// The original used strange formulas; here we approximate the same behavior while keeping types safe.
@@ -3981,45 +3986,6 @@ fn curve_growth_tactical(attr: u8, base: f32, exponent: f32) -> u32 {
     // std::cmp::max(result, 1)
 }
 
-/// Similar helper but returning signed i32 (for stats that are i32)
-fn curve_growth_i32(attr: u8, base: f32, exponent: f32) -> i32 {
-    curve_growth_tactical(attr, base, exponent) as i32
-}
-
-fn distribute_integer_growth(total_gain: u32, weights: [u8; 4]) -> [u32; 4] {
-    if total_gain == 0 {
-        return [0; 4];
-    }
-
-    let total_weight: u32 = weights.iter().map(|&w| w as u32).sum();
-    if total_weight == 0 {
-        let base = total_gain / 4;
-        let mut gains = [base; 4];
-        for gain in gains.iter_mut().take((total_gain % 4) as usize) {
-            *gain += 1;
-        }
-        return gains;
-    }
-
-    let mut gains = [0_u32; 4];
-    let mut remainders = [(0usize, 0_u32); 4];
-    let mut assigned = 0_u32;
-
-    for (index, &weight) in weights.iter().enumerate() {
-        let numerator = total_gain.saturating_mul(weight as u32);
-        gains[index] = numerator / total_weight;
-        remainders[index] = (index, numerator % total_weight);
-        assigned = assigned.saturating_add(gains[index]);
-    }
-
-    remainders.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
-    let leftovers = total_gain.saturating_sub(assigned);
-    for (index, _) in remainders.into_iter().take(leftovers as usize) {
-        gains[index] = gains[index].saturating_add(1);
-    }
-
-    gains
-}
 
 /// Apply one growth contribution's amount to the matching field on
 /// `CombatStats`. Capacity targets land on `*.base` via `add_to_base` so
@@ -4612,14 +4578,6 @@ fn resolve_ai_ability_intent_system(
     }
 }
 
-/// At the end of a turn, we emit TurnEndEvent to allow cleanup and buff ticks if you prefer to tie buff durations to turns.
-fn on_turn_end_system(mut ev_reader: MessageReader<TurnEndEvent>, mut _commands: Commands) {
-    for ev in ev_reader.iter() {
-        info!("Turn ended for {:?}", ev.who);
-        // You can do per-turn cleanup here if necessary
-    }
-}
-
 /// A helper system that consumes TurnOrderCalculatedEvent and then advances the turn automatically.
 /// (Optional: you may want to call advance once per frame or per game tick)
 fn auto_advance_after_order(
@@ -4994,6 +4952,9 @@ impl Plugin for CombatPlugin {
             .add_systems(Update, auto_advance_after_order.after(compute_turn_order_system))
             .add_systems(Update, on_turn_start_system.after(auto_advance_after_order))
             .add_systems(Update, buff_tick_on_turn_start_system.after(on_turn_start_system))
+            // Turn-start class sustain passives (Sayaka's heal, Renjiro/Suzuka regen).
+            .add_systems(Update, cleric_blessing_system.after(on_turn_start_system))
+            .add_systems(Update, class_turn_start_regen_system.after(on_turn_start_system))
             .add_systems(Update, advance_turn_system.after(compute_turn_order_system))
             .add_systems(Update, buff_tick_system)
             .add_systems(Update, process_player_action_system)
@@ -5010,6 +4971,8 @@ impl Plugin for CombatPlugin {
                 (
                     paladin_before_attack_system,
                     rogue_backstab_system,
+                    samurai_resolve_system,
+                    exorcist_focus_system,
                     equipment_before_attack_listener,
                     weapon_before_attack_effect_system,
                     apply_retarget_overrides_system,
@@ -5030,6 +4993,7 @@ impl Plugin for CombatPlugin {
             .add_systems(Update, process_damage_queue_system.after(queue_damage_from_before_attack))
             .add_systems(Update, apply_damage_system.after(process_damage_queue_system))
             .add_systems(Update, after_hit_listeners.after(apply_damage_system))
+            .add_systems(Update, necromancer_lifesteal_system.after(apply_damage_system))
             .add_systems(Update, after_attack_finalizers.after(after_hit_listeners))
             // Fold equipped-gear stats into `current`, on top of the status
             // recompute (which resets `current = base * mult` each frame).

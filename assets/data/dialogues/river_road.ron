@@ -1,0 +1,37 @@
+// Mid-game beat on the road east. A wandering nun warns the party that a
+// Jorōgumo has strung the river road with web and devoured the last caravan —
+// it must be cut down before the shrine can be reached. The final node
+// ("nun_charge") satisfies side quest 101's Talk objective and sets a flag.
+//
+// Triggered by the "Wandering Nun" interactable (press X).
+(
+    id: "river_road",
+    background: None,
+    music: None,
+    start: "nun_1",
+    nodes: {
+        "nun_1": line((
+            speaker: (name: "Wandering Nun", slot: slot4, expression: None),
+            text: "Stop — go no further up the road. A Jorōgumo has spun the gorge shut. She wore a woman's face when she took the salt-merchant and his mules.",
+            on_enter: [],
+            condition: None,
+            next: Some("nun_2"),
+        )),
+        "nun_2": line((
+            speaker: (name: "Wandering Nun", slot: slot4, expression: None),
+            text: "Her silk drinks the kegare and grows strong on it. While she holds the gorge, no one reaches the shrine — and the defilement only deepens behind her.",
+            on_enter: [],
+            condition: None,
+            next: Some("nun_charge"),
+        )),
+        "nun_charge": line((
+            speaker: (name: "Wandering Nun", slot: slot4, expression: None),
+            text: "Cut the web. Cut her. Metal bites a spider best. Do this, and the road to the shrine is open again — and I will pray your blades stay keen.",
+            on_enter: [
+                set_flag("nun_warned"),
+            ],
+            condition: None,
+            next: None,
+        )),
+    },
+)

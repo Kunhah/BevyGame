@@ -394,3 +394,110 @@ fn normalize_legacy_tile_image_paths(map: &mut MapTiles) {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Build a minimal-but-non-trivial SaveData so the round-trip exercises the
+    /// run-progress fields (party / flags / inventory / equipment) that older
+    /// saves on disk don't carry.
+    fn sample_save() -> SaveData {
+        // A 1x1 map is enough to prove tile (de)serialization round-trips.
+        let map_tiles = MapTiles {
+            tiles: vec![vec![crate::map::MapTile {
+                time: 1,
+                location_id: 0,
+                type_id: 0,
+                event_ids: vec![1000, 2000],
+                items_id: None,
+                image_path: "dot.png".to_string(),
+            }]],
+        };
+        SaveData {
+            player_world: SaveVec3 { x: 1.0, y: 2.0, z: 3.0 },
+            player_tile: Position { x: 4, y: 5 },
+            map_selection: Position { x: 6, y: 7 },
+            current_area: 2,
+            timestamp: 42,
+            map_tiles,
+            city_catalog: CityCatalog::default(),
+            clan_catalog: ClanCatalog::default(),
+            active_caravans: ActiveCaravans::default(),
+            caravan_clock: CaravanClock::default(),
+            reputation_ledger: ReputationLedger::default(),
+            player_crime_status: PlayerCrimeStatus::default(),
+            global_punishment_state: GlobalPunishmentState::default(),
+            coup_chain_state: CoupChainState::default(),
+            governance_clock: GovernanceClock::default(),
+            castle_assault_clock: CastleAssaultClock::default(),
+            governor_policy_clock: GovernorPolicyClock::default(),
+            coup_preparation_progress: CoupPreparationProgress::default(),
+            selected_party: vec![CharacterKind::Rina, CharacterKind::Sayaka],
+            story_flags: vec!["met_elder".to_string(), "saw_omen".to_string()],
+            quest_flags: vec!["q_started".to_string()],
+            quest_log: QuestLog::default(),
+            party_progression: PartyProgression::default(),
+            player_inventory: PlayerInventory::default(),
+            wallet_coins: 1234,
+            party_equipment: crate::equipment::PartyEquipment::default(),
+        }
+    }
+
+    /// Every field that goes into a save must survive a RON write→read cycle.
+    /// RON is picky about map key types and floats, so this guards against a
+    /// field type silently breaking serialization for the whole save.
+    #[test]
+    fn savedata_round_trips_through_ron() {
+        let data = sample_save();
+        let serialized = ron::ser::to_string(&data).expect("SaveData must serialize to RON");
+        let restored: SaveData =
+            ron::de::from_str(&serialized).expect("SaveData must deserialize from RON");
+
+        assert_eq!(restored.player_world.x, data.player_world.x);
+        assert_eq!(restored.player_world.y, data.player_world.y);
+        assert_eq!(restored.player_world.z, data.player_world.z);
+        assert_eq!(restored.player_tile, data.player_tile);
+        assert_eq!(restored.map_selection, data.map_selection);
+        assert_eq!(restored.current_area, data.current_area);
+        assert_eq!(restored.timestamp, data.timestamp);
+        assert_eq!(restored.map_tiles.tiles.len(), data.map_tiles.tiles.len());
+        assert_eq!(restored.selected_party, data.selected_party);
+        assert_eq!(restored.wallet_coins, data.wallet_coins);
+        // Flag ordering isn't guaranteed (HashSet origin), so compare as sets.
+        let restored_story: std::collections::HashSet<_> = restored.story_flags.into_iter().collect();
+        let expected_story: std::collections::HashSet<_> = data.story_flags.into_iter().collect();
+        assert_eq!(restored_story, expected_story);
+    }
+
+    /// Fields added after a save was written must fall back to their defaults
+    /// rather than failing the whole parse. Mirrors loading a pre-run-progress
+    /// save with today's `SaveData`.
+    #[test]
+    fn old_saves_without_run_progress_still_parse() {
+        // A save body that stops at the governance fields — i.e. has none of the
+        // run-progress fields that were added later.
+        let legacy = "(player_world:(x:0.0,y:0.0,z:0.0),player_tile:(x:0,y:0),\
+            map_selection:(x:0,y:0),current_area:0,timestamp:0,map_tiles:(tiles:[]))";
+        let restored: SaveData =
+            ron::de::from_str(legacy).expect("legacy save (missing new fields) must still parse");
+        assert!(restored.selected_party.is_empty());
+        assert!(restored.story_flags.is_empty());
+        assert_eq!(restored.wallet_coins, 0);
+    }
+
+    /// If a real save exists in the working tree, it must parse with the current
+    /// schema (this is what "Continue" does on launch). Skips when absent so a
+    /// fresh checkout / CI without saves still passes.
+    #[test]
+    fn on_disk_saves_parse_with_current_schema() {
+        for slot in [SaveSlot::Auto, SaveSlot::Slot1, SaveSlot::Slot2, SaveSlot::Slot3] {
+            let path = slot.path();
+            let Ok(contents) = fs::read_to_string(&path) else {
+                continue;
+            };
+            ron::de::from_str::<SaveData>(&contents)
+                .unwrap_or_else(|e| panic!("on-disk save {path} failed to parse: {e}"));
+        }
+    }
+}

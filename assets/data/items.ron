@@ -4,71 +4,128 @@
 //   equipment   -> ItemCatalog          (economy; what you can wear)
 //   consumables -> InventoryItemCatalog  (combat; what you can use in battle)
 //
-// Add or override an item by giving it an `id`. Ids NOT listed here keep their
-// hard-coded defaults (with crafting materials), so this file is purely additive
-// unless you reuse an existing id. `materials: []` means "not the crafting
-// focus" — equip stats below are what matter.
+// Grounded, "realistic" gear — historical Japanese arms and armour, not fantasy
+// artefacts. Stats are deliberately modest: weapons add lethality/hit (and drive
+// the wielder's basic attack), armour adds protection at a mobility cost,
+// footwear trades into agility, accessories give small resolve/focus edges.
+// Casting implements (shakujō, magatama) carry a little Mind because that's the
+// game's spell-power stat — the one concession the magic system needs.
 //
+// Add or override by `id`; ids not listed keep their hard-coded defaults.
 // EquipmentType: Weapon(<WeaponType>) | Armor(<ArmorType>) | Headgear(<HeadgearType>)
 //              | Accessory(<AccessoryType>) | Footwear(<FootwearType>)
-// Stats: lethality / hit / armor / agility / mind / morale.
+// Loot rolls draw weapons/armour from ids 5101..=5106.
 (
     equipment: [
+        // --- Weapons -----------------------------------------------------
         (
-            id: 5101,
-            name: "Nodachi of the Long Field",
-            equipment_type: Weapon(Nodachi),
-            base_price: 42000,
-            materials: [],
-            lethality: 16, hit: 3, armor: 0, agility: -1, mind: 0, morale: 3,
+            id: 5101, name: "Uchigatana",
+            equipment_type: Weapon(Sword), base_price: 18000, materials: [],
+            lethality: 8, hit: 4, armor: 0, agility: 1, mind: 0, morale: 1,
         ),
         (
-            id: 5102,
-            name: "Onmyoji's Shakujo",
-            equipment_type: Weapon(Staff),
-            base_price: 26000,
-            materials: [],
-            lethality: 3, hit: 3, armor: 0, agility: 0, mind: 11, morale: 1,
+            id: 5102, name: "Sōhei Shakujō",
+            equipment_type: Weapon(Staff), base_price: 14000, materials: [],
+            lethality: 3, hit: 3, armor: 0, agility: 0, mind: 6, morale: 1,
         ),
         (
-            id: 5103,
-            name: "Lacquered Do-maru",
-            equipment_type: Armor(HeavyArmor),
-            base_price: 31000,
-            materials: [],
-            lethality: 0, hit: 0, armor: 13, agility: -2, mind: 0, morale: 3,
+            id: 5107, name: "Tantō",
+            equipment_type: Weapon(Dagger), base_price: 6000, materials: [],
+            lethality: 4, hit: 6, armor: 0, agility: 2, mind: 0, morale: 0,
         ),
         (
-            id: 5104,
-            name: "Kabuto of the Red Crest",
-            equipment_type: Headgear(Helmet),
-            base_price: 14000,
-            materials: [],
-            lethality: 0, hit: 1, armor: 5, agility: -1, mind: 0, morale: 2,
+            id: 5108, name: "Ōmi Yari",
+            equipment_type: Weapon(Yari), base_price: 16000, materials: [],
+            lethality: 9, hit: 3, armor: 0, agility: -1, mind: 0, morale: 0,
         ),
         (
-            id: 5105,
-            name: "Magatama of the Deep",
-            equipment_type: Accessory(Magatama),
-            base_price: 18000,
-            materials: [],
-            lethality: 0, hit: 1, armor: 1, agility: 1, mind: 6, morale: 3,
+            id: 5109, name: "Sōhei Naginata",
+            equipment_type: Weapon(Naginata), base_price: 15000, materials: [],
+            lethality: 8, hit: 3, armor: 0, agility: -1, mind: 0, morale: 0,
         ),
         (
-            id: 5106,
-            name: "Silent Tabi",
-            equipment_type: Footwear(Tabi),
-            base_price: 9000,
-            materials: [],
+            id: 5110, name: "Hankyū Bow",
+            equipment_type: Weapon(Bow), base_price: 13000, materials: [],
+            lethality: 6, hit: 5, armor: 0, agility: 1, mind: 0, morale: 0,
+        ),
+        (
+            id: 5111, name: "Tetsubō",
+            equipment_type: Weapon(Tetsubo), base_price: 17000, materials: [],
+            lethality: 12, hit: 1, armor: 0, agility: -2, mind: 0, morale: 0,
+        ),
+        // --- Armour ------------------------------------------------------
+        (
+            id: 5103, name: "Dō-maru",
+            equipment_type: Armor(HeavyArmor), base_price: 22000, materials: [],
+            lethality: 0, hit: 0, armor: 11, agility: -2, mind: 0, morale: 2,
+        ),
+        (
+            id: 5112, name: "Haramaki",
+            equipment_type: Armor(Haramaki), base_price: 9000, materials: [],
+            lethality: 0, hit: 0, armor: 5, agility: 0, mind: 0, morale: 1,
+        ),
+        (
+            id: 5113, name: "Tatami-dō",
+            equipment_type: Armor(Tatami), base_price: 12000, materials: [],
+            lethality: 0, hit: 0, armor: 6, agility: -1, mind: 0, morale: 1,
+        ),
+        (
+            id: 5114, name: "Kusari-katabira",
+            equipment_type: Armor(Kusari), base_price: 11000, materials: [],
+            lethality: 0, hit: 1, armor: 4, agility: 1, mind: 0, morale: 0,
+        ),
+        // --- Headgear ----------------------------------------------------
+        (
+            id: 5104, name: "Suji Kabuto",
+            equipment_type: Headgear(Helmet), base_price: 10000, materials: [],
+            lethality: 0, hit: 1, armor: 4, agility: -1, mind: 0, morale: 1,
+        ),
+        (
+            id: 5115, name: "Jingasa",
+            equipment_type: Headgear(Hat), base_price: 3500, materials: [],
+            lethality: 0, hit: 1, armor: 1, agility: 1, mind: 0, morale: 0,
+        ),
+        // --- Footwear ----------------------------------------------------
+        (
+            id: 5106, name: "Shinobi Tabi",
+            equipment_type: Footwear(Tabi), base_price: 5000, materials: [],
             lethality: 0, hit: 1, armor: 0, agility: 5, mind: 0, morale: 0,
+        ),
+        (
+            id: 5116, name: "Waraji Sandals",
+            equipment_type: Footwear(Waraji), base_price: 1500, materials: [],
+            lethality: 0, hit: 0, armor: 0, agility: 2, mind: 0, morale: 0,
+        ),
+        // --- Accessories -------------------------------------------------
+        (
+            id: 5105, name: "Magatama Pendant",
+            equipment_type: Accessory(Magatama), base_price: 12000, materials: [],
+            lethality: 0, hit: 0, armor: 1, agility: 0, mind: 4, morale: 2,
+        ),
+        (
+            id: 5117, name: "Lacquered Inrō",
+            equipment_type: Accessory(Inro), base_price: 7000, materials: [],
+            lethality: 0, hit: 0, armor: 1, agility: 0, mind: 0, morale: 4,
+        ),
+        (
+            id: 5118, name: "Carved Netsuke",
+            equipment_type: Accessory(Netsuke), base_price: 4000, materials: [],
+            lethality: 0, hit: 1, armor: 0, agility: 1, mind: 0, morale: 1,
         ),
     ],
     consumables: [
         (
-            id: 1003,
-            name: "Sacred Sake",
+            id: 1003, name: "Sacred Sake",
             kind: Consumable(
                 effect: Heal(amount: 70),
+                usable_on_others: true,
+                usable_pre_death: false,
+            ),
+        ),
+        (
+            id: 1004, name: "Rice Ball",
+            kind: Consumable(
+                effect: Heal(amount: 20),
                 usable_on_others: true,
                 usable_pre_death: false,
             ),

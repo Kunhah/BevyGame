@@ -13,7 +13,7 @@ use bevy::prelude::*;
 
 use crate::characters::{CharacterKind, SelectedParty};
 use crate::combat_ability::Ability_Tree;
-use crate::combat_plugin::{InventoryItemCatalog, InventoryItemKind};
+use crate::combat_plugin::{EquipmentSlotType, InventoryItemCatalog, InventoryItemKind};
 use crate::core::{GameState, Game_State};
 use crate::economy::{ItemCatalog, PlayerInventory, PlayerWallet};
 use crate::equipment::{can_equip, equip_item, member_accepts, unequip_item, PartyEquipment};
@@ -118,16 +118,21 @@ fn equipped_bonus(
     item_catalog: &ItemCatalog,
     kind: CharacterKind,
 ) -> EquipBonus {
+    // Mirror `combat_plugin::apply_equipment_bonuses_system` exactly so the
+    // numbers shown are the numbers that actually apply in battle: a weapon's
+    // offence (lethality/hit) is NOT a flat add — the weapon drives the basic
+    // attack instead — and morale isn't an equipment bonus at all.
     let mut b = EquipBonus::default();
     if let Some(ids) = party_equipment.0.get(&kind) {
         for id in ids {
             if let Some(eq) = item_catalog.0.get(id) {
-                b.lethality += eq.lethality;
-                b.hit += eq.hit;
+                if eq.equipment_type.slot_type() != EquipmentSlotType::Weapon {
+                    b.lethality += eq.lethality;
+                    b.hit += eq.hit;
+                }
                 b.armor += eq.armor;
                 b.agility += eq.agility;
                 b.mind += eq.mind;
-                b.morale += eq.morale;
             }
         }
     }

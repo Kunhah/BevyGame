@@ -418,6 +418,36 @@ pub fn setup(
         Name::new("VillageElder"),
     ));
 
+    // A wandering nun on the river road, partway east, who warns of the
+    // Jorōgumo and gives the mid-game beat (side quest 101).
+    commands.spawn((
+        PlaceholderVisual::character(Color::srgb(0.80, 0.78, 0.74)),
+        Transform::from_translation(origin3 + Vec3::new(12.0 * 32.0, 5.0 * 32.0, 0.0)),
+        VisualOcclusionTarget,
+        YSort { base_z: 0.0 },
+        Interactable {
+            name: "Wandering Nun".to_string(),
+            dialogue_id: "river_road".to_string(),
+        },
+        crate::light_plugin::LightSensitive { threshold: 0.15 },
+        Name::new("WanderingNun"),
+    ));
+
+    // The mid-game mini-boss: the Jorōgumo on the river road, gating the way to
+    // the shrine. Tough, casts, drops good loot — but not a `FinalBoss`, so
+    // beating it returns to exploration (no Victory).
+    commands.spawn((
+        PlaceholderVisual::character(Color::srgb(0.55, 0.20, 0.35)),
+        Transform::from_translation(origin3 + Vec3::new(15.0 * 32.0, 3.0 * 32.0, 0.0)),
+        EnemyEncounter {
+            id: crate::battle::MINIBOSS_ENCOUNTER_ID,
+        },
+        VisualOcclusionTarget,
+        YSort { base_z: 0.0 },
+        crate::light_plugin::LightSensitive { threshold: 0.15 },
+        Name::new("Jorogumo"),
+    ));
+
     // The final boss: the Gashadokuro at the defiled shrine, far to the east of
     // the village. Walk adjacent and press Space to engage. Felling it carries
     // `FinalBoss` into combat, so `end_battle_on_death` wins the run, and its

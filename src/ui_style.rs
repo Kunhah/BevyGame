@@ -263,22 +263,17 @@ pub fn button_visual() -> impl Bundle {
 /// at these paths under `assets/`; missing files just log and render nothing
 /// (the layout box stays clickable), so this is safe to wire up before the art
 /// exists.
-#[derive(Resource, Clone)]
+///
+/// NOTE: the UI uses the flat-colour [`button_visual`] everywhere, so this
+/// skinned path is dormant. We leave the handles empty (default) instead of
+/// eagerly loading PNGs that don't exist yet — that spammed "Path not found:
+/// ui/button_*.png" every boot. When the art lands at `assets/ui/button_*.png`,
+/// restore the `assets.load(...)` calls below and start spawning `button_skin`.
+#[derive(Resource, Clone, Default)]
 pub struct UiAssets {
     pub button_normal: Handle<Image>,
     pub button_hover: Handle<Image>,
     pub button_pressed: Handle<Image>,
-}
-
-impl FromWorld for UiAssets {
-    fn from_world(world: &mut World) -> Self {
-        let assets = world.resource::<AssetServer>();
-        UiAssets {
-            button_normal: assets.load("ui/button_normal.png"),
-            button_hover: assets.load("ui/button_hover.png"),
-            button_pressed: assets.load("ui/button_pressed.png"),
-        }
-    }
 }
 
 /// The three textures a skinned button swaps between. Carried per-button so

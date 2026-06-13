@@ -177,6 +177,27 @@
             ]),
         ),
 
+        // The Jorōgumo (mid-game mini-boss): an entangler. Wails on a grouped
+        // party (30722); otherwise snares a lone hero with Kappa's Grasp (30721,
+        // slow); falls back to a bite.
+        "jorogumo": (
+            logic: Selector([
+                Sequence([
+                    EnemiesAlive(at_least: 2),
+                    HasAbility(id: 30722),
+                    ActionPointsAtLeast(amount: 3),
+                    UseAbility(id: 30722),
+                ]),
+                Sequence([
+                    HasAbility(id: 30721),
+                    ActionPointsAtLeast(amount: 2),
+                    UseAbility(id: 30721),
+                ]),
+                BasicAttack,
+                Wait,
+            ]),
+        ),
+
         // The Gashadokuro (final boss): a relentless caster. Unleashes Kasha's
         // Wail (30722 — AoE that Haunts + Terrifies) whenever two or more heroes
         // are still standing; otherwise sears a single hero with Onibi burn

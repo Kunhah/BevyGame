@@ -302,7 +302,7 @@ fn spawn_onboarding_ui(mut commands: Commands) {
             left: Val::Px(spacing::MD),
             ..default()
         },
-        Text::new("WASD move · X talk · Space fight · M map · J quests · K skills · C party"),
+        Text::new("WASD move · X talk · Space fight · Y loot · M map · J quests · K skills · C party"),
         TextFont {
             font_size: font_size::SMALL,
             ..default()
@@ -351,6 +351,7 @@ fn update_onboarding_prompt(
     player_q: Query<&Transform, With<Player>>,
     interactables: Res<CachedInteractables>,
     enemy_q: Query<&Transform, With<EnemyEncounter>>,
+    corpse_q: Query<&Transform, With<crate::equipment::EnemyCorpse>>,
     mut footer_q: Query<&mut Visibility, (With<ControlFooter>, Without<ContextPrompt>)>,
     mut prompt_root_q: Query<
         (&mut Visibility, &Children),
@@ -371,6 +372,12 @@ fn update_onboarding_prompt(
             return None;
         }
         let p = player_tf.translation.truncate();
+        let near_corpse = corpse_q
+            .iter()
+            .any(|t| t.translation.truncate().distance(p) <= crate::equipment::LOOT_RANGE);
+        if near_corpse {
+            return Some("Y — Loot");
+        }
         let near_talk = interactables
             .0
             .iter()

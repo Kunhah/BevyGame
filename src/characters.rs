@@ -30,10 +30,12 @@ use bevy::prelude::*;
 
 use crate::combat_ability::MagicSchool;
 use crate::combat_plugin::{
-    Abilities, AccessoryType, ArmorType, CharacterId, CombatStats, ElementalAffinity,
-    EquipmentLoadout, EquipmentSlotType, EquipmentType, ExtraHp, FootwearType, GrowthAttributes,
-    GrowthCurve, HeadgearType, Inventory, MagicDistribution, MaskType, PaladinBehavior,
-    RogueBehavior, SpiritMediumBehavior, StatPool, TalismanType, WeaponType,
+    Abilities, AccessoryType, ArmorType, BikuniBehavior, CharacterId, ClericBehavior, CombatStats,
+    ElementalAffinity, EquipmentLoadout, EquipmentSlotType, EquipmentType, ExorcistBehavior,
+    ExtraHp, FootwearType, GrowthAttributes, GrowthCurve, HeadgearType, Inventory,
+    MagicDistribution, MaskType, MonkBehavior, NecromancerBehavior, OnmyojiBehavior,
+    PaladinBehavior, RogueBehavior, SamuraiBehavior, SpiritMediumBehavior, StatPool, TalismanType,
+    WeaponType,
 };
 use crate::gogyo::{Element, Phase, Polarity};
 use crate::constants::DEFAULT_ACTION_POINTS;
@@ -521,7 +523,27 @@ impl CharacterKind {
             CharacterKind::Iwao => {
                 e.insert(PaladinBehavior);
             }
-            _ => {}
+            CharacterKind::Houjou => {
+                e.insert(SamuraiBehavior);
+            }
+            CharacterKind::Sayaka => {
+                e.insert(ClericBehavior);
+            }
+            CharacterKind::Renjiro => {
+                e.insert(MonkBehavior);
+            }
+            CharacterKind::Suzuka => {
+                e.insert(OnmyojiBehavior);
+            }
+            CharacterKind::Kanzo => {
+                e.insert(ExorcistBehavior);
+            }
+            CharacterKind::Yuna => {
+                e.insert(BikuniBehavior);
+            }
+            CharacterKind::Magatsu => {
+                e.insert(NecromancerBehavior);
+            }
         }
     }
 

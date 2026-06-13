@@ -173,6 +173,10 @@ pub struct FinalBoss;
 /// defiled shrine). Sits outside every other id range used in `world.rs`.
 pub const FINAL_BOSS_ENCOUNTER_ID: u32 = 9001;
 
+/// World-encounter id for the mid-game mini-boss (the Jorōgumo on the river
+/// road). Tougher than rank-and-file yokai, gates the road to the shrine.
+pub const MINIBOSS_ENCOUNTER_ID: u32 = 9002;
+
 pub fn battle_trigger_system(
     mut commands: Commands,
     mut game_state: ResMut<GameState>,
@@ -410,6 +414,9 @@ fn spawn_enemy_combat(
         // The Gashadokuro: a wall of bone meant to take the whole party several
         // rounds and punish a glass-cannon line-up.
         FINAL_BOSS_ENCOUNTER_ID => (420, 22, 82, 16, 7),
+        // The Jorōgumo: a tough mid-game gatekeeper — tankier and faster than
+        // rank-and-file yokai, but well short of the final boss.
+        MINIBOSS_ENCOUNTER_ID => (220, 16, 78, 10, 9),
         1 => (80, 10, 70, 6, 8),
         2 => (120, 14, 75, 10, 6),
         _ => (60, 8, 65, 4, 7),
@@ -421,6 +428,8 @@ fn spawn_enemy_combat(
     let (phase, polarity) = match enemy_id {
         // Earth-bodied undeath, yin: weak to Wood (×1.5), resists Water.
         FINAL_BOSS_ENCOUNTER_ID => (Phase::Earth, Polarity::In),
+        // Wood-natured spider, yin: weak to Metal (cut the web), resists Earth.
+        MINIBOSS_ENCOUNTER_ID => (Phase::Wood, Polarity::In),
         1 => (Phase::Metal, Polarity::In),
         2 => (Phase::Water, Polarity::Yo),
         _ => (Phase::Wood, Polarity::In),
@@ -482,6 +491,11 @@ fn spawn_enemy_combat(
         e.insert(crate::ai_decision::BehaviorTreeProfile(
             "gashadokuro".to_string(),
         ));
+    } else if enemy_id == MINIBOSS_ENCOUNTER_ID {
+        // Entangling spider: Kasha's Wail to terrify a clustered party, Kappa's
+        // Grasp to slow a lone hero.
+        e.insert(Abilities(vec![30722, 30721]));
+        e.insert(crate::ai_decision::BehaviorTreeProfile("jorogumo".to_string()));
     } else {
         e.insert(Abilities(vec![]));
     }

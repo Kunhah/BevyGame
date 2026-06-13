@@ -176,5 +176,60 @@
             ],
             auto_offer: true,
         ),
+
+        // ----------------------------------------------------------------
+        // SIDE QUEST — mid-game beat. The Jorōgumo (encounter 9002 ==
+        // MINIBOSS_ENCOUNTER_ID) gates the road to the shrine. Hear the
+        // nun out, then cut the spider down; her body drops good loot.
+        // ----------------------------------------------------------------
+        (
+            id: 101,
+            title: "The River Road",
+            description: "A Jorōgumo has strung the gorge shut and feeds on the kegare. Clear the road east before pressing on to the shrine.",
+            objectives: [
+                (
+                    id: 1,
+                    description: "Hear the wandering nun's warning.",
+                    kind: Talk(dialogue_id: "nun_charge"),
+                    required: 1,
+                ),
+                (
+                    id: 2,
+                    description: "Slay the Jorōgumo on the river road.",
+                    kind: Kill(enemy_id: Some(9002)),
+                    required: 1,
+                ),
+            ],
+            preconditions: [],
+            rewards: [
+                Experience(260),
+                Flag("river_road_clear"),
+            ],
+            auto_offer: true,
+        ),
+
+        // ----------------------------------------------------------------
+        // SIDE QUEST — open-ended bounty. Thin the wandering yokai that
+        // prey on the roads. Any three foes count.
+        // ----------------------------------------------------------------
+        (
+            id: 102,
+            title: "Thin the Brood",
+            description: "Yokai grow bold along the roads. Cut down three of them to make the paths safer.",
+            objectives: [
+                (
+                    id: 1,
+                    description: "Defeat any 3 foes.",
+                    kind: Kill(enemy_id: None),
+                    required: 3,
+                ),
+            ],
+            preconditions: [],
+            rewards: [
+                Experience(150),
+                Reputation(target: Clan(clan_name: "Mizuno"), delta: 5),
+            ],
+            auto_offer: true,
+        ),
     ],
 )
