@@ -85,6 +85,30 @@ impl LocalGrid {
         }
     }
 
+    /// A grid centred on `start`, reaching `radius_steps` in every direction.
+    /// Used by the reachability flood ([`reachable_tiles`]), which has no goal to
+    /// bias the bounds toward — unlike [`LocalGrid::new`], which leans the box in
+    /// the goal's direction.
+    fn centered(start: Position, radius_steps: i32, margin: i32) -> Self {
+        let min_step_x = -radius_steps;
+        let max_step_x = radius_steps;
+        let min_step_y = -radius_steps;
+        let max_step_y = radius_steps;
+        let width = (max_step_x - min_step_x + 1) as usize;
+        let height = (max_step_y - min_step_y + 1) as usize;
+
+        Self {
+            start,
+            margin,
+            min_step_x,
+            max_step_x,
+            min_step_y,
+            max_step_y,
+            width,
+            height,
+        }
+    }
+
     fn len(&self) -> usize {
         self.width * self.height
     }
@@ -279,4 +303,115 @@ pub fn pathfinding(
     path.reverse();
 
     path
+}
+
+/// Flood every cell reachable from `start` whose accumulated travel cost stays
+/// within `budget` **world units**, respecting obstacles via the same collider
+/// walkability test [`pathfinding`] uses. This is the classic tactics-game
+/// "movement range": every spot the unit could step onto this turn.
+///
+/// This is **Dijkstra**, not A\*. There is no goal, so there is no heuristic to
+/// steer the search — we just expand outward in cheapest-cost-first order until
+/// the budget runs out. (Concretely it *is* A\* with the heuristic forced to
+/// zero: `priority == cost`, see the push below.) Dijkstra — rather than a plain
+/// BFS — is required because diagonal steps cost more than cardinal ones, so the
+/// cheapest way to a cell isn't always the fewest steps.
+///
+/// Returns each reachable cell paired with the world-unit cost to reach it — a
+/// distance field, so a caller can colour by remaining range or read a path back
+/// out without a second search. `margin` is the grid step in world units
+/// (coarser = cheaper to compute and blockier to look at).
+pub fn reachable_tiles(
+    quad_tree: &QuadTree,
+    start: Position,
+    budget: f32,
+    margin: i32,
+) -> Vec<(Position, f32)> {
+    if budget <= 0.0 || margin <= 0 {
+        return Vec::new();
+    }
+
+    let mut possible_colliders = Vec::with_capacity(16);
+    if !walkable_query(start, quad_tree, &mut possible_colliders) {
+        return Vec::new();
+    }
+
+    // Costs use the same 10-per-cardinal / 14-per-diagonal scale as A*'s
+    // `distance`, so one step of `margin` world units == 10 cost units. Convert
+    // the world-unit budget into that scale and size the grid to match (clamped
+    // to the same reach ceiling the planner uses, so a huge budget can't blow up
+    // the allocation).
+    let steps_budget = budget / margin as f32;
+    let budget_cost = (steps_budget * 10.0).round() as i32;
+    let max_reach = WALKING_LIMIT as i32 + LOCAL_GRID_PADDING_STEPS;
+    let radius_steps = (steps_budget.ceil() as i32 + 1).clamp(1, max_reach);
+
+    let grid = LocalGrid::centered(start, radius_steps, margin);
+    let Some(start_index) = grid.index(0, 0) else {
+        return Vec::new();
+    };
+
+    let cell_count = grid.len();
+    let mut g_score = vec![i32::MAX; cell_count];
+    let mut closed = vec![false; cell_count];
+    let mut walkable_cache = vec![WALKABLE_UNKNOWN; cell_count];
+
+    let mut open_set = BinaryHeap::new();
+    g_score[start_index] = 0;
+    walkable_cache[start_index] = WALKABLE_OPEN;
+    // Dijkstra == A* with a zero heuristic: the priority *is* the cost so far.
+    open_set.push(Node_P {
+        index: start_index,
+        cost: 0,
+        priority: 0,
+    });
+
+    let mut reachable = Vec::new();
+
+    while let Some(current) = open_set.pop() {
+        if current.cost > g_score[current.index] || closed[current.index] {
+            continue;
+        }
+        closed[current.index] = true;
+        reachable.push((
+            grid.position(current.index),
+            current.cost as f32 * margin as f32 / 10.0,
+        ));
+
+        let (current_step_x, current_step_y) = grid.step_coords(current.index);
+        for (dx, dy) in PATH_DIRECTIONS {
+            let Some(neighbor_index) = grid.index(current_step_x + dx, current_step_y + dy) else {
+                continue;
+            };
+            if closed[neighbor_index] {
+                continue;
+            }
+
+            if walkable_cache[neighbor_index] == WALKABLE_UNKNOWN {
+                let neighbor = grid.position(neighbor_index);
+                walkable_cache[neighbor_index] =
+                    if walkable_query(neighbor, quad_tree, &mut possible_colliders) {
+                        WALKABLE_OPEN
+                    } else {
+                        WALKABLE_BLOCKED
+                    };
+            }
+            if walkable_cache[neighbor_index] == WALKABLE_BLOCKED {
+                continue;
+            }
+
+            let movement_cost = if dx == 0 || dy == 0 { 10 } else { 14 };
+            let tentative_g = current.cost + movement_cost;
+            if tentative_g <= budget_cost && tentative_g < g_score[neighbor_index] {
+                g_score[neighbor_index] = tentative_g;
+                open_set.push(Node_P {
+                    index: neighbor_index,
+                    cost: tentative_g,
+                    priority: tentative_g,
+                });
+            }
+        }
+    }
+
+    reachable
 }

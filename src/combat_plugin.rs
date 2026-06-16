@@ -1668,6 +1668,24 @@ pub struct AwaitingResurrection {
     pub rating: ResurrectionRating,
 }
 
+/// Innate deathlessness — overrides the Merchant's Contract resurrection rules
+/// for the entity that carries it. Stamped onto deathless party members' *world*
+/// entities by `stamp_deathless_marker_system` (driven by `CharacterKind`).
+///
+/// A `DeathlessReturn` character, when killed:
+/// - always returns after exactly `delay_hours` (ignores `ResurrectionStanding`),
+/// - takes no resurrection penalty debuffs,
+/// - rises where they fell rather than teleporting to a `ResurrectionPoint`,
+/// - and their death does not decay `ResurrectionStanding`.
+///
+/// This lives at the resurrection layer, not the GameOver/party-wipe layer, so a
+/// future "whole party warps somewhere and revives" flow can query this marker to
+/// keep applying these rules without rewiring anything.
+#[derive(Debug, Clone, Copy, Component)]
+pub struct DeathlessReturn {
+    pub delay_hours: u32,
+}
+
 #[derive(Debug, Clone, Message)]
 pub struct ResurrectionRequestedEvent {
     pub who: Entity,
@@ -3309,31 +3327,67 @@ fn apply_morale_drain_system(
 /// `process_resurrection_queue_system`, so that the debuff durations are
 /// counted from the moment the character is back, not from the moment they
 /// fell.
+/// Stamp `DeathlessReturn` onto deathless party members' world entities. Driven
+/// by `Added<CharacterKind>` so a single path covers fresh spawns, save-loads
+/// (both route through `world::spawn_party`), and any future party changes.
+/// Restricted to world party entities (`Player` / `WorldAlly`): the marker
+/// belongs on the persistent world entity the resurrection pipeline acts on, not
+/// on transient combat participants.
+fn stamp_deathless_marker_system(
+    mut commands: Commands,
+    q: Query<
+        (Entity, &crate::characters::CharacterKind),
+        (
+            Added<crate::characters::CharacterKind>,
+            Or<(With<crate::core::Player>, With<crate::battle::WorldAlly>)>,
+        ),
+    >,
+) {
+    for (entity, kind) in q.iter() {
+        if kind.is_deathless() {
+            commands
+                .entity(entity)
+                .insert(DeathlessReturn { delay_hours: 1 });
+        }
+    }
+}
+
 fn enqueue_resurrection_on_death_system(
     mut commands: Commands,
     mut reader: MessageReader<DeathEvent>,
-    mut q_standing: Query<(&Bound, &mut ResurrectionStanding)>,
+    mut q_standing: Query<(&Bound, &mut ResurrectionStanding, Option<&DeathlessReturn>)>,
     timestamp: Res<Timestamp>,
     mut writer: MessageWriter<ResurrectionRequestedEvent>,
 ) {
     for ev in reader.read() {
-        let Ok((_bound, mut standing)) = q_standing.get_mut(ev.entity) else {
+        let Ok((_bound, mut standing, deathless)) = q_standing.get_mut(ev.entity) else {
             continue;
         };
-        standing.deaths = standing.deaths.saturating_add(1);
-        // Each death drops score by 20. Hunt success/failure events tune it
-        // further; this is the pure death penalty.
-        standing.score = standing.score.saturating_sub(20);
 
-        let rating = ResurrectionRating::from_score(standing.score);
-        let delay_hours = match rating {
-            ResurrectionRating::Exceptional => 0,
-            ResurrectionRating::Satisfactory => 1,
-            ResurrectionRating::Acceptable => 6,
-            ResurrectionRating::Poor => 24,
-            ResurrectionRating::Neglectful => 24 * 3,
-            ResurrectionRating::Forfeited => 24 * 7,
+        // Deathless characters (e.g. Yuna) sidestep the contract: a fixed return
+        // delay, no standing decay, and rating `Exceptional` so the debuff table
+        // (`apply_resurrection_debuffs`) is a no-op. They rise where they fell —
+        // `teleport_on_resurrection` skips them.
+        let (rating, delay_hours) = if let Some(deathless) = deathless {
+            (ResurrectionRating::Exceptional, deathless.delay_hours)
+        } else {
+            standing.deaths = standing.deaths.saturating_add(1);
+            // Each death drops score by 20. Hunt success/failure events tune it
+            // further; this is the pure death penalty.
+            standing.score = standing.score.saturating_sub(20);
+
+            let rating = ResurrectionRating::from_score(standing.score);
+            let delay_hours = match rating {
+                ResurrectionRating::Exceptional => 0,
+                ResurrectionRating::Satisfactory => 1,
+                ResurrectionRating::Acceptable => 6,
+                ResurrectionRating::Poor => 24,
+                ResurrectionRating::Neglectful => 24 * 3,
+                ResurrectionRating::Forfeited => 24 * 7,
+            };
+            (rating, delay_hours)
         };
+
         let ready_at = timestamp
             .0
             .saturating_add(delay_hours * crate::constants::TIMESTAMP_TICKS_PER_HOUR);
@@ -3344,8 +3398,11 @@ fn enqueue_resurrection_on_death_system(
         });
         writer.write(ResurrectionRequestedEvent { who: ev.entity });
         info!(
-            "Resurrection enqueued for {:?}: rating {:?}, ready in {}h",
-            ev.entity, rating, delay_hours
+            "Resurrection enqueued for {:?}: rating {:?}, ready in {}h{}",
+            ev.entity,
+            rating,
+            delay_hours,
+            if deathless.is_some() { " (deathless)" } else { "" }
         );
     }
 }
@@ -3366,7 +3423,10 @@ pub struct ResurrectionPoint;
 pub fn teleport_on_resurrection(
     mut events: MessageReader<ResurrectedEvent>,
     shrine_q: Query<&Transform, With<ResurrectionPoint>>,
-    mut transforms_q: Query<&mut Transform, Without<ResurrectionPoint>>,
+    // `Without<DeathlessReturn>` deliberately excludes deathless characters: they
+    // rise where they fell, not at a shrine. `get_mut` simply returns `Err` for
+    // them, so they fall through the `else { continue }` below untouched.
+    mut transforms_q: Query<&mut Transform, (Without<ResurrectionPoint>, Without<DeathlessReturn>)>,
 ) {
     for ev in events.read() {
         let Ok(mut tf) = transforms_q.get_mut(ev.who) else {
@@ -5010,6 +5070,7 @@ impl Plugin for CombatPlugin {
             // BeforeRestEvent. `rest_regen_system` (in StatusEffectsPlugin)
             // chains after this and emits AfterRestEvent.
             .add_systems(Update, expand_rest_intent_system)
+            .add_systems(Update, stamp_deathless_marker_system)
             .add_systems(Update, enqueue_resurrection_on_death_system)
             .add_systems(Update, process_resurrection_queue_system)
             .add_systems(Update, teleport_on_resurrection.after(process_resurrection_queue_system))

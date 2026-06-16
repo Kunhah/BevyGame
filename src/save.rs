@@ -265,7 +265,7 @@ pub fn handle_save_requests(
                     governor_policy_clock,
                     coup_preparation_progress,
                     selected_party: run.party.0.clone(),
-                    story_flags: run.story_flags.0.iter().cloned().collect(),
+                    story_flags: run.story_flags.iter_set_names().map(String::from).collect(),
                     quest_flags: run.quest_flags.0.iter().cloned().collect(),
                     quest_log: run.quest_log.clone(),
                     party_progression: run.progression.clone(),
@@ -310,7 +310,7 @@ pub fn handle_save_requests(
                 if !data.selected_party.is_empty() {
                     run.party.0 = data.selected_party;
                 }
-                run.story_flags.0 = data.story_flags.into_iter().collect();
+                *run.story_flags = StoryFlags::from_names(data.story_flags);
                 run.quest_flags.0 = data.quest_flags.into_iter().collect();
                 *run.quest_log = data.quest_log;
                 *run.progression = data.party_progression;

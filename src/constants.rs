@@ -53,8 +53,13 @@ pub const fn ticks_to_seconds(ticks: u32) -> u32 {
 // directly (3600 >> 3 = 450 ticks/hour, exact).
 pub const TIMESTAMP_TICKS_PER_MINUTE: u32 = seconds_to_ticks(60);
 pub const TIMESTAMP_TICKS_PER_HOUR: u32 = seconds_to_ticks(3600);
-pub const DEFAULT_MAGIC_REGEN_PER_TICK: f32 =
-    1.0 / ((4.0 * 60.0 * 60.0) / TIMESTAMP_SECONDS_PER_TICK as f32);
+
+/// Multiplier from raw tile time-cost to game-clock ticks, applied uniformly to
+/// manual walking and fast travel so the two stay consistent. The tilemap is
+/// far smaller than the land it represents, so a single tile stands in for much
+/// more than its literal 8-second crossing; this stretches travel to believable
+/// spans without mapping in-game time 1:1 onto real-world distance. Tune freely.
+pub const WORLD_TIME_SCALE: u32 = 10;
 
 bitflags! {
     pub struct Flags: u128 {

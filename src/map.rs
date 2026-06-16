@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use rand::Rng;
 
 use crate::core::{GameState, Game_State, MainCamera, Player, PlayerMapPosition, Position, Timestamp};
-use crate::constants::{WINDOW_HEIGHT, WINDOW_WIDTH};
+use crate::constants::{WINDOW_HEIGHT, WINDOW_WIDTH, WORLD_TIME_SCALE};
 use crate::light_plugin::Occluder;
 use crate::quadtree::Collider;
 use crate::ui_style::{font_size, palette, radius, spacing};
@@ -311,6 +311,13 @@ pub fn total_time_cost_for_tile_indexed(
     effects: &TerrainSlowEffectIndex,
 ) -> u32 {
     time_cost_for_tile(tile).saturating_add(additional_time_cost_at_tile_indexed(tile_pos, effects))
+}
+
+/// Convert a summed tile time-cost into game-clock ticks, scaled by
+/// [`WORLD_TIME_SCALE`]. The single conversion point shared by manual walking
+/// and fast travel, so a path always costs the same game-time either way.
+pub fn travel_ticks_for_cost(cost: u32) -> u32 {
+    cost.saturating_mul(WORLD_TIME_SCALE)
 }
 
 /// Returns the movement multiplier applied for manual exploration movement.
@@ -711,8 +718,10 @@ pub fn confirm_travel(
     }
 }
 
-/// Find the lowest-time path (Dijkstra) between tiles, returning the path and cost.
-fn shortest_time_path_and_cost(
+/// Find the lowest-time path (Dijkstra) between tiles, returning the path and
+/// the summed tile time-cost. `pub` so overland fast travel ([`crate::areas`])
+/// shares the exact same per-tile cost model as manual map travel.
+pub fn shortest_time_path_and_cost(
     start: Position,
     dest: Position,
     map: &MapTiles,
@@ -894,7 +903,7 @@ fn travel_to_destination(
         current_area.0 = tile.location_id;
     }
 
-    timestamp.0 = timestamp.0.saturating_add(travel_time.max(1));
+    timestamp.0 = timestamp.0.saturating_add(travel_ticks_for_cost(travel_time).max(1));
 
     let world_center = tile_center_world(final_dest);
 
@@ -1209,10 +1218,8 @@ pub fn handle_local_map_boundary_crossing(
         return;
     }
 
-    timestamp.0 = timestamp.0.saturating_add(total_time_cost_for_tile_indexed(
-        destination_map_tile,
-        destination_tile,
-        &slow_effects,
+    timestamp.0 = timestamp.0.saturating_add(travel_ticks_for_cost(
+        total_time_cost_for_tile_indexed(destination_map_tile, destination_tile, &slow_effects),
     ));
 
     let previous_area = current_area.0;

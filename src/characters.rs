@@ -490,6 +490,18 @@ impl CharacterKind {
     /// equipment, inventory, identity tags, and any signature mechanic. The
     /// caller is responsible for battle scaffolding (BattleParticipant, side,
     /// turn-order, transform, name, etc.).
+    /// Whether this character is innately deathless — exempt from the Merchant's
+    /// Contract resurrection rules. A deathless character always returns after a
+    /// fixed delay, with no penalty debuffs, where they fell (not at a shrine),
+    /// and their death never decays `ResurrectionStanding`. See
+    /// `combat_plugin::DeathlessReturn`.
+    ///
+    /// Yuna, the Bikuni (Wood·In, the "deathless nun"), is the only deathless
+    /// roster member.
+    pub fn is_deathless(self) -> bool {
+        matches!(self, CharacterKind::Yuna)
+    }
+
     pub fn insert_combat_components(self, e: &mut EntityCommands) {
         e.insert(self.combat_stats());
         e.insert(self.growth());

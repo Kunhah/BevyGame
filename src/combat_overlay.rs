@@ -21,7 +21,9 @@ use crate::battle::{BattleParticipant, BattleSide, CombatMovePoints, CombatMoveT
 use crate::combat_plugin::{
     CombatStats, DamageEvent, DamageType, PendingPlayerAction, TurnOrder, TurnStartEvent,
 };
-use crate::core::{GameState, Game_State, MainCamera, Player};
+use crate::core::{GameState, Game_State, MainCamera, Player, Position};
+use crate::pathfinding::reachable_tiles;
+use crate::quadtree::QuadTree;
 use crate::status_effects::{StatusEffects, StatusKind};
 use crate::ui_style::{font_size, palette, radius, spacing};
 
@@ -71,6 +73,7 @@ impl Plugin for CombatOverlayPlugin {
                     sync_hover_ring,
                     sync_move_marker,
                     sync_move_ring,
+                    sync_move_reachable,
                 ),
             );
     }
@@ -623,6 +626,102 @@ fn sync_move_ring(
             MeshMaterial3d(mat),
             Transform::from_translation(pos).with_scale(Vec3::new(radius, radius, 1.0)),
             MoveRing,
+            OverlayRoot,
+        ));
+    }
+}
+
+/// World-unit grid resolution of the reachable-area fill. Coarser than the
+/// pathfinder's own step so the flood stays cheap to compute and render.
+const REACHABLE_CELL: i32 = 24;
+
+/// One translucent ground quad marking a cell the player can reach this turn.
+#[derive(Component)]
+struct ReachableCell;
+
+/// Paint every ground cell the active player can actually walk to this turn —
+/// the obstacle-aware fill *inside* the [`MoveRing`]. Where the ring draws a
+/// naive circle, this runs Dijkstra ([`reachable_tiles`]) so walls and colliders
+/// carve the real shape of the reachable area.
+///
+/// Recomputed only when the player meaningfully moves or spends move points: a
+/// flood fill + collider queries every frame would be wasteful, and the result
+/// only changes on those events.
+#[allow(clippy::type_complexity)]
+fn sync_move_reachable(
+    mut commands: Commands,
+    game_state: Res<GameState>,
+    pending: Res<PendingPlayerAction>,
+    quad_tree: Res<QuadTree>,
+    mut cached_assets: Local<Option<(Handle<Mesh>, Handle<StandardMaterial>)>>,
+    mut signature: Local<Option<(i32, i32, i32)>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    player_q: Query<(&Transform, &CombatMovePoints), With<Player>>,
+    cell_q: Query<Entity, With<ReachableCell>>,
+) {
+    let active = game_state.0 == Game_State::Battle && pending.entity.is_some();
+    let player = player_q.iter().next();
+    let budget = player.map(|(_, mp)| mp.remaining).unwrap_or(0.0);
+
+    // Tear the fill down when it's not the player's turn (or nothing to show).
+    if !active || budget <= 1.0 {
+        if signature.is_some() {
+            for e in &cell_q {
+                commands.entity(e).despawn();
+            }
+            *signature = None;
+        }
+        return;
+    }
+    let Some((player_tf, _)) = player else { return };
+
+    // Only rebuild when the player has shifted a cell or the budget changed.
+    let sig = (
+        (player_tf.translation.x / REACHABLE_CELL as f32).round() as i32,
+        (player_tf.translation.y / REACHABLE_CELL as f32).round() as i32,
+        budget.round() as i32,
+    );
+    if *signature == Some(sig) && !cell_q.is_empty() {
+        return;
+    }
+    *signature = Some(sig);
+
+    for e in &cell_q {
+        commands.entity(e).despawn();
+    }
+
+    let start = Position {
+        x: player_tf.translation.x as i32,
+        y: player_tf.translation.y as i32,
+    };
+    let cells = reachable_tiles(&quad_tree, start, budget, REACHABLE_CELL);
+
+    // Lazily build a flat unit-cell quad + an unlit translucent material.
+    let (mesh, mat) = cached_assets
+        .get_or_insert_with(|| {
+            (
+                meshes.add(Rectangle::new(
+                    REACHABLE_CELL as f32 * 0.92,
+                    REACHABLE_CELL as f32 * 0.92,
+                )),
+                materials.add(StandardMaterial {
+                    base_color: palette::ALLY.with_alpha(0.16),
+                    unlit: true,
+                    alpha_mode: AlphaMode::Blend,
+                    ..default()
+                }),
+            )
+        })
+        .clone();
+
+    for (pos, _cost) in cells {
+        commands.spawn((
+            Mesh3d(mesh.clone()),
+            MeshMaterial3d(mat.clone()),
+            // z just under the MoveRing (1.5) so the boundary still reads on top.
+            Transform::from_translation(Vec3::new(pos.x as f32, pos.y as f32, 1.0)),
+            ReachableCell,
             OverlayRoot,
         ));
     }

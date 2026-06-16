@@ -26,27 +26,34 @@ use std::fs;
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use crate::constants::TIMESTAMP_TICKS_PER_HOUR;
+use crate::constants::{TIMESTAMP_SECONDS_PER_TICK, TIMESTAMP_TICKS_PER_HOUR};
 use crate::core::{GameState, Game_State, MainCamera, Player, PlayerMapPosition, Timestamp};
 use crate::core::Position;
-use crate::map::{tile_center_world, AreaChanged, CurrentArea, MapTiles};
+use crate::map::{
+    shortest_time_path_and_cost, tile_center_world, travel_ticks_for_cost, AreaChanged,
+    CurrentArea, MapTiles, TerrainSlowEffectIndex,
+};
 use crate::render3d::iso_camera_offset;
-use crate::ui_style::{button_node, font_size, palette, radius, spacing};
+use crate::ui_style::{font_size, palette, radius, spacing};
 
 const AREAS_DATA_PATH: &str = "assets/data/areas.ron";
 
 /// Size of the 8×8 tile block each area owns. Mirrors `region_size` in
 /// `crate::map::generate_map_tiles`, where `location_id = bx + by * 8`.
 const REGION_SIZE: i32 = 8;
+/// The world is 8 blocks wide × 8 blocks tall (64×64 tiles / `REGION_SIZE`), so
+/// `location_id = bx + by * BLOCKS_PER_ROW` spans a full 8×8 grid of regions.
 const BLOCKS_PER_ROW: u16 = 8;
+const WORLD_BLOCK_COLS: u16 = 8;
+const WORLD_BLOCK_ROWS: u16 = 8;
 
 // --- World-map UI layout (pixels) ------------------------------------------
-const MAP_CANVAS_W: f32 = 820.0;
-const MAP_CANVAS_H: f32 = 460.0;
-const NODE_W: f32 = 156.0;
-const NODE_H: f32 = 48.0;
-const EDGE_DOT: f32 = 8.0;
-const INFO_PANEL_W: f32 = 280.0;
+// `MAP_CANVAS_*` is the on-screen size of the grid and also the coordinate space
+// `canvas_px` reports for keyboard-nav direction scoring.
+const MAP_CANVAS_W: f32 = 980.0;
+const MAP_CANVAS_H: f32 = 560.0;
+const CELL_GAP: f32 = 3.0;
+const INFO_PANEL_W: f32 = 260.0;
 const TRAVEL_BAR_W: f32 = 420.0;
 const TRAVEL_BAR_H: f32 = 18.0;
 
@@ -106,7 +113,9 @@ impl Default for AreaCatalog {
                 info!("Using built-in default areas (no usable {})", AREAS_DATA_PATH);
                 seed_default_areas()
             });
-        Self::from_areas(areas)
+        // Expand the authored areas to cover the entire 8×8 block grid so the
+        // whole world is one continuous, travelable map rather than a corner.
+        Self::from_areas(fill_world_grid(areas))
     }
 }
 
@@ -155,6 +164,158 @@ impl AreaCatalog {
             .map(|a| a.name.clone())
             .unwrap_or_else(|| format!("Region {id}"))
     }
+}
+
+// ---------------------------------------------------------------------------
+// Full-grid expansion: every block becomes a named, travelable region
+// ---------------------------------------------------------------------------
+
+/// Evocative prefixes for procedurally-named filler regions.
+const NAME_PREFIX: [&str; 16] = [
+    "North", "Hidden", "Old", "Lonely", "Misty", "Jade", "Crimson", "Silver",
+    "Whispering", "Broken", "Golden", "Quiet", "Frost", "Ember", "Shadow", "Twin",
+];
+
+/// Deterministic terrain for an auto-generated block, giving the world variety
+/// without hand-authoring all 64 regions. Never returns the impassable type.
+fn generated_terrain(bx: u16, by: u16) -> u8 {
+    let h = (bx.wrapping_mul(73) ^ by.wrapping_mul(151)).wrapping_add(bx.wrapping_mul(by));
+    match h % 7 {
+        0 => 0,        // road
+        1 | 2 => 1,    // plains
+        3 | 4 => 2,    // forest
+        _ => 3,        // mountains
+    }
+}
+
+fn generated_name(id: u16, terrain: u8) -> String {
+    let prefix = NAME_PREFIX[(id as usize * 7 + 3) % NAME_PREFIX.len()];
+    let suffix = match terrain {
+        0 => "Crossing",
+        1 => "Fields",
+        2 => "Woods",
+        3 => "Heights",
+        _ => "Wilds",
+    };
+    format!("{prefix} {suffix}")
+}
+
+fn generated_description(terrain: u8) -> String {
+    match terrain {
+        0 => "A dusty waystation where old roads meet.",
+        1 => "Open rice-fields and grazing land under a wide sky.",
+        2 => "Dim cedar woods loud with cicada song.",
+        3 => "Wind-bitten ridgelines and bare standing stone.",
+        _ => "Untamed borderland the maps barely name.",
+    }
+    .to_string()
+}
+
+/// Per-terrain leg cost; mountains are slow, roads quick. Summed across the two
+/// regions a leg connects so terrain shapes route times.
+fn terrain_leg_cost(terrain: u8) -> u32 {
+    match terrain {
+        0 => 1,
+        1 => 2,
+        2 => 3,
+        3 => 4,
+        _ => 3,
+    }
+}
+
+fn travel_hours(a: u8, b: u8) -> u32 {
+    (terrain_leg_cost(a) + terrain_leg_cost(b)).max(2)
+}
+
+fn block_anchor(bx: u16, by: u16) -> Position {
+    // +4 lands mid-block, always inside the one-tile impassable border ring.
+    Position {
+        x: bx as i32 * REGION_SIZE + 4,
+        y: by as i32 * REGION_SIZE + 4,
+    }
+}
+
+fn generated_area(id: u16, bx: u16, by: u16) -> AreaDef {
+    let terrain = generated_terrain(bx, by);
+    AreaDef {
+        id,
+        name: generated_name(id, terrain),
+        description: generated_description(terrain),
+        anchor: block_anchor(bx, by),
+        terrain,
+        ui_x: bx as f32 / (WORLD_BLOCK_COLS.max(2) - 1) as f32,
+        ui_y: by as f32 / (WORLD_BLOCK_ROWS.max(2) - 1) as f32,
+        connections: vec![],
+    }
+}
+
+fn add_link(area: &mut AreaDef, to: u16, hours: u32) {
+    if !area.connections.iter().any(|l| l.to == to) {
+        area.connections.push(AreaLink { to, hours });
+    }
+}
+
+/// Ensure every block of the 8×8 world has a region, keeping authored areas and
+/// generating filler for the rest, then link each region to its right and down
+/// neighbour so the whole grid is reachable. Authored cross-links survive
+/// because [`AreaCatalog::from_areas`] dedups edges and keeps the cheapest.
+fn fill_world_grid(authored: Vec<AreaDef>) -> Vec<AreaDef> {
+    let mut by_id: HashMap<u16, AreaDef> =
+        authored.into_iter().map(|a| (a.id, a)).collect();
+
+    for by in 0..WORLD_BLOCK_ROWS {
+        for bx in 0..WORLD_BLOCK_COLS {
+            let id = bx + by * BLOCKS_PER_ROW;
+            by_id
+                .entry(id)
+                .or_insert_with(|| generated_area(id, bx, by));
+        }
+    }
+
+    let terrain_of: HashMap<u16, u8> =
+        by_id.iter().map(|(id, a)| (*id, a.terrain)).collect();
+
+    let mut areas = Vec::with_capacity(by_id.len());
+    for by in 0..WORLD_BLOCK_ROWS {
+        for bx in 0..WORLD_BLOCK_COLS {
+            let id = bx + by * BLOCKS_PER_ROW;
+            let Some(mut area) = by_id.remove(&id) else {
+                continue;
+            };
+            let here = area.terrain;
+            if bx + 1 < WORLD_BLOCK_COLS {
+                let to = id + 1;
+                add_link(&mut area, to, travel_hours(here, terrain_of[&to]));
+            }
+            if by + 1 < WORLD_BLOCK_ROWS {
+                let to = id + BLOCKS_PER_ROW;
+                add_link(&mut area, to, travel_hours(here, terrain_of[&to]));
+            }
+            areas.push(area);
+        }
+    }
+    areas
+}
+
+/// Flat fill colour for a region cell, by terrain `type_id`.
+fn terrain_color(terrain: u8) -> Color {
+    match terrain {
+        0 => Color::srgb(0.40, 0.36, 0.28), // road — dusty tan
+        1 => Color::srgb(0.28, 0.44, 0.24), // plains — green
+        2 => Color::srgb(0.16, 0.32, 0.20), // forest — deep green
+        3 => Color::srgb(0.38, 0.38, 0.44), // mountains — slate
+        _ => Color::srgb(0.34, 0.28, 0.40), // wilds — muted violet
+    }
+}
+
+/// Mix a colour toward white by `t` for hover/focus/here highlight states.
+fn lighten(color: Color, t: f32) -> Color {
+    let s = color.to_srgba();
+    Color::srgb(
+        s.red + (1.0 - s.red) * t,
+        s.green + (1.0 - s.green) * t,
+        s.blue + (1.0 - s.blue) * t,
+    )
 }
 
 /// Stamp each area's `location_id` and dominant terrain onto its 8×8 tile
@@ -292,13 +453,13 @@ fn begin_travel(
     travel: &mut ActiveTravel,
     from: u16,
     dest: &AreaDef,
-    hours: u32,
+    total_ticks: u32,
     now_tick: u32,
 ) {
-    let total_ticks = hours.saturating_mul(TIMESTAMP_TICKS_PER_HOUR);
     // Scale the on-screen animation to the journey length, but keep it brief:
     // a short hop plays in ~2s, the longest legs cap at ~6s.
-    let real_duration = (hours as f32 * 0.5).clamp(2.0, 6.0);
+    let hours = total_ticks as f32 / TIMESTAMP_TICKS_PER_HOUR as f32;
+    let real_duration = (hours * 0.5).clamp(2.0, 6.0);
     *travel = ActiveTravel {
         active: true,
         from_area: from,
@@ -311,8 +472,8 @@ fn begin_travel(
         real_duration,
     };
     info!(
-        "Travel begun: {} -> {} ({}h, {} ticks)",
-        from, dest.id, hours, total_ticks
+        "Travel begun: {} -> {} ({} ticks, ~{:.1}h)",
+        from, dest.id, total_ticks, hours
     );
 }
 
@@ -387,6 +548,10 @@ pub struct WorldMapUi {
     overlay_root: Option<Entity>,
     /// Keyboard-focused area (the one arrows move and Enter travels to).
     focus: Option<u16>,
+    /// Cached route-panel text, keyed by the destination it was computed for, so
+    /// the tile-level pathfinder runs once per focus change rather than per frame.
+    route_cache_dest: Option<u16>,
+    route_cache_text: String,
 }
 
 #[derive(Component)]
@@ -435,13 +600,16 @@ pub fn manage_world_map_ui(
     if open && ui.map_root.is_none() {
         let here = current_area_node(&catalog, current_area.0, player_map_pos.0);
         ui.map_root = Some(spawn_world_map(&mut commands, &catalog, here));
-        // Start the keyboard focus on the current area.
+        // Start the keyboard focus on the current area; clear any stale route.
         ui.focus = Some(here);
+        ui.route_cache_dest = None;
+        ui.route_cache_text.clear();
     } else if !open {
         if let Some(root) = ui.map_root.take() {
             commands.entity(root).despawn();
         }
         ui.focus = None;
+        ui.route_cache_dest = None;
     }
 }
 
@@ -482,12 +650,18 @@ fn spawn_world_map(commands: &mut Commands, catalog: &AreaCatalog, here: u16) ->
                 ..default()
             })
             .with_children(|row| {
-                // --- Map canvas: edges (dots) then area nodes. ---
+                // --- Map canvas: a continuous grid of touching region cells. ---
+                let (cols, rows) = grid_extent(catalog);
                 row.spawn((
                     Node {
                         width: Val::Px(MAP_CANVAS_W),
                         height: Val::Px(MAP_CANVAS_H),
-                        position_type: PositionType::Relative,
+                        display: Display::Grid,
+                        grid_template_columns: vec![RepeatedGridTrack::flex(cols, 1.0)],
+                        grid_template_rows: vec![RepeatedGridTrack::flex(rows, 1.0)],
+                        column_gap: Val::Px(CELL_GAP),
+                        row_gap: Val::Px(CELL_GAP),
+                        padding: UiRect::all(Val::Px(CELL_GAP)),
                         border: UiRect::all(Val::Px(1.0)),
                         border_radius: BorderRadius::all(Val::Px(radius::LG)),
                         ..default()
@@ -496,7 +670,6 @@ fn spawn_world_map(commands: &mut Commands, catalog: &AreaCatalog, here: u16) ->
                     BorderColor::all(palette::BORDER_SUBTLE),
                 ))
                 .with_children(|canvas| {
-                    spawn_edge_dots(canvas, catalog);
                     for area in &catalog.areas {
                         spawn_area_node(canvas, area, area.id == here);
                     }
@@ -544,34 +717,61 @@ fn spawn_world_map(commands: &mut Commands, catalog: &AreaCatalog, here: u16) ->
         .id()
 }
 
+/// Block grid dimensions actually present in the catalog (normally the full
+/// 8×8), used to size the UI grid.
+fn grid_extent(catalog: &AreaCatalog) -> (u16, u16) {
+    let mut cols = 1u16;
+    let mut rows = 1u16;
+    for area in &catalog.areas {
+        cols = cols.max(area.id % BLOCKS_PER_ROW + 1);
+        rows = rows.max(area.id / BLOCKS_PER_ROW + 1);
+    }
+    (cols, rows)
+}
+
+/// Centre of an area's grid cell in canvas pixels — used only for keyboard-nav
+/// direction scoring (the cells themselves are laid out by the CSS grid).
 fn canvas_px(area: &AreaDef) -> (f32, f32) {
-    (area.ui_x.clamp(0.0, 1.0) * MAP_CANVAS_W, area.ui_y.clamp(0.0, 1.0) * MAP_CANVAS_H)
+    let bx = (area.id % BLOCKS_PER_ROW) as f32;
+    let by = (area.id / BLOCKS_PER_ROW) as f32;
+    (
+        (bx + 0.5) / WORLD_BLOCK_COLS as f32 * MAP_CANVAS_W,
+        (by + 0.5) / WORLD_BLOCK_ROWS as f32 * MAP_CANVAS_H,
+    )
 }
 
 fn spawn_area_node(parent: &mut ChildSpawnerCommands, area: &AreaDef, is_here: bool) {
-    let (cx, cy) = canvas_px(area);
-    let mut node = button_node(NODE_H);
-    node.width = Val::Px(NODE_W);
-    node.position_type = PositionType::Absolute;
-    node.left = Val::Px(cx - NODE_W * 0.5);
-    node.top = Val::Px(cy - NODE_H * 0.5);
-    node.flex_direction = FlexDirection::Column;
-    node.row_gap = Val::Px(2.0);
-
+    let bx = (area.id % BLOCKS_PER_ROW) as i16;
+    let by = (area.id / BLOCKS_PER_ROW) as i16;
+    let base = terrain_color(area.terrain);
     let (bg, border) = if is_here {
-        (palette::BG_BUTTON_PRESSED, palette::BORDER_ACCENT)
+        (lighten(base, 0.28), palette::ACCENT_SUCCESS)
     } else {
-        (palette::BG_BUTTON, palette::BORDER)
+        (base, palette::BORDER)
     };
 
     parent
         .spawn((
             Button::default(),
-            node,
+            Node {
+                width: Val::Percent(100.0),
+                height: Val::Percent(100.0),
+                grid_column: GridPlacement::start(bx + 1),
+                grid_row: GridPlacement::start(by + 1),
+                display: Display::Flex,
+                flex_direction: FlexDirection::Column,
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                padding: UiRect::all(Val::Px(spacing::SM)),
+                border: UiRect::all(Val::Px(1.0)),
+                row_gap: Val::Px(2.0),
+                overflow: Overflow::clip(),
+                ..default()
+            },
             BackgroundColor(bg),
             BorderColor::all(border),
             AreaNodeButton { area_id: area.id },
-            Name::new(format!("AreaNode({})", area.name)),
+            Name::new(format!("AreaCell({})", area.name)),
         ))
         .with_children(|btn| {
             btn.spawn((
@@ -581,6 +781,10 @@ fn spawn_area_node(parent: &mut ChildSpawnerCommands, area: &AreaDef, is_here: b
                     ..default()
                 },
                 TextColor(palette::TEXT_PRIMARY),
+                TextLayout {
+                    justify: Justify::Center,
+                    ..default()
+                },
             ));
             btn.spawn((
                 Text::new(if is_here { "(you are here)" } else { area_terrain_label(area.terrain) }),
@@ -591,48 +795,6 @@ fn spawn_area_node(parent: &mut ChildSpawnerCommands, area: &AreaDef, is_here: b
                 TextColor(if is_here { palette::ACCENT_SUCCESS } else { palette::TEXT_DIM }),
             ));
         });
-}
-
-/// Draws each undirected edge as a row of small dots between node centres. Dots
-/// avoid the rotation-on-UI-nodes pitfall entirely — pure absolute placement.
-fn spawn_edge_dots(parent: &mut ChildSpawnerCommands, catalog: &AreaCatalog) {
-    let mut drawn: std::collections::HashSet<(u16, u16)> = std::collections::HashSet::new();
-    for area in &catalog.areas {
-        let (ax, ay) = canvas_px(area);
-        for link in catalog.neighbors(area.id) {
-            let key = if area.id < link.to {
-                (area.id, link.to)
-            } else {
-                (link.to, area.id)
-            };
-            if !drawn.insert(key) {
-                continue;
-            }
-            let Some(other) = catalog.get(link.to) else {
-                continue;
-            };
-            let (bx, by) = canvas_px(other);
-            let dist = ((bx - ax).powi(2) + (by - ay).powi(2)).sqrt();
-            let dots = ((dist / 26.0).round() as i32).max(2);
-            for i in 1..dots {
-                let t = i as f32 / dots as f32;
-                let x = ax + (bx - ax) * t;
-                let y = ay + (by - ay) * t;
-                parent.spawn((
-                    Node {
-                        width: Val::Px(EDGE_DOT),
-                        height: Val::Px(EDGE_DOT),
-                        position_type: PositionType::Absolute,
-                        left: Val::Px(x - EDGE_DOT * 0.5),
-                        top: Val::Px(y - EDGE_DOT * 0.5),
-                        border_radius: BorderRadius::all(Val::Px(EDGE_DOT * 0.5)),
-                        ..default()
-                    },
-                    BackgroundColor(palette::BORDER),
-                ));
-            }
-        }
-    }
 }
 
 fn area_terrain_label(terrain: u8) -> &'static str {
@@ -662,6 +824,8 @@ pub(crate) fn world_map_interaction(
     current_area: Res<CurrentArea>,
     player_map_pos: Res<PlayerMapPosition>,
     timestamp: Res<Timestamp>,
+    map: Res<MapTiles>,
+    slow: Res<TerrainSlowEffectIndex>,
     mut travel: ResMut<ActiveTravel>,
     mut ui: ResMut<WorldMapUi>,
     nodes: Query<(&Interaction, &AreaNodeButton)>,
@@ -672,6 +836,7 @@ pub(crate) fn world_map_interaction(
     }
 
     let here = current_area_node(&catalog, current_area.0, player_map_pos.0);
+    let start_tile = player_map_pos.0;
 
     let mut hovered: Option<u16> = None;
     let mut pressed: Option<u16> = None;
@@ -690,26 +855,41 @@ pub(crate) fn world_map_interaction(
     }
 
     // Info panel reflects the current focus (mouse or keyboard), else the
-    // "you are here" blurb.
+    // "you are here" blurb. The route runs the tile-level pathfinder, so cache
+    // it by destination and only recompute when the focus changes.
     let info_focus = pressed.or(hovered).or(ui.focus);
     if let Ok(mut text) = info_q.single_mut() {
         text.0 = match info_focus {
             None => initial_info_text(&catalog, here),
-            Some(dest) => route_info_text(&catalog, here, dest, timestamp.0),
+            Some(dest) => {
+                if ui.route_cache_dest != Some(dest) {
+                    ui.route_cache_text =
+                        route_info_text(&catalog, here, start_tile, dest, &map, &slow, timestamp.0);
+                    ui.route_cache_dest = Some(dest);
+                }
+                ui.route_cache_text.clone()
+            }
         };
     }
 
     if let Some(dest) = pressed {
-        try_travel(&catalog, here, dest, &mut travel, &mut game_state, timestamp.0);
+        try_travel(
+            &catalog, here, start_tile, dest, &map, &slow, &mut travel, &mut game_state,
+            timestamp.0,
+        );
     }
 }
 
-/// Begin travel from `here` to `dest` if it isn't the current area and a route
-/// exists. Shared by mouse clicks and the keyboard `Enter`.
+/// Begin travel from the player's tile to `dest`'s anchor if a walkable tile
+/// route exists. Travel time is the summed per-tile cost (same model as manual
+/// walking), scaled by [`WORLD_TIME_SCALE`]. Shared by clicks and keyboard.
 fn try_travel(
     catalog: &AreaCatalog,
     here: u16,
+    start_tile: Position,
     dest: u16,
+    map: &MapTiles,
+    slow: &TerrainSlowEffectIndex,
     travel: &mut ActiveTravel,
     game_state: &mut GameState,
     now: u32,
@@ -717,12 +897,17 @@ fn try_travel(
     if dest == here {
         return;
     }
-    match (plan_travel(catalog, here, dest), catalog.get(dest)) {
-        (Some((hours, _path)), Some(area)) => {
-            begin_travel(travel, here, area, hours, now);
+    let Some(area) = catalog.get(dest) else {
+        warn!("Travel target area {dest} not in catalog");
+        return;
+    };
+    match shortest_time_path_and_cost(start_tile, area.anchor, map, slow) {
+        Some((_path, cost)) => {
+            let total_ticks = travel_ticks_for_cost(cost).max(1);
+            begin_travel(travel, here, area, total_ticks, now);
             game_state.0 = Game_State::Traveling;
         }
-        _ => warn!("No route from area {here} to {dest}"),
+        None => warn!("No walkable tile route from {start_tile:?} to area {dest}"),
     }
 }
 
@@ -735,6 +920,8 @@ fn world_map_keyboard(
     current_area: Res<CurrentArea>,
     player_map_pos: Res<PlayerMapPosition>,
     timestamp: Res<Timestamp>,
+    map: Res<MapTiles>,
+    slow: Res<TerrainSlowEffectIndex>,
     mut travel: ResMut<ActiveTravel>,
     mut ui: ResMut<WorldMapUi>,
 ) {
@@ -767,7 +954,10 @@ fn world_map_keyboard(
     }
 
     if keys.just_pressed(KeyCode::Enter) {
-        try_travel(&catalog, here, focus, &mut travel, &mut game_state, timestamp.0);
+        try_travel(
+            &catalog, here, player_map_pos.0, focus, &map, &slow, &mut travel, &mut game_state,
+            timestamp.0,
+        );
     }
 }
 
@@ -820,14 +1010,15 @@ fn sync_world_map_nodes(
         let is_focus = focus == Some(node.area_id);
         let hovered = *interaction != Interaction::None;
 
+        let base = terrain_color(catalog.get(node.area_id).map(|a| a.terrain).unwrap_or(255));
         let (bg_c, border_c) = if is_here {
-            (palette::BG_BUTTON_PRESSED, palette::ACCENT_SUCCESS)
+            (lighten(base, 0.28), palette::ACCENT_SUCCESS)
         } else if is_focus {
-            (palette::BG_BUTTON_HOVER, palette::BORDER_ACCENT)
+            (lighten(base, 0.18), palette::BORDER_ACCENT)
         } else if hovered {
-            (palette::BG_BUTTON_HOVER, palette::BORDER_HOVER)
+            (lighten(base, 0.12), palette::BORDER_HOVER)
         } else {
-            (palette::BG_BUTTON, palette::BORDER)
+            (base, palette::BORDER)
         };
         // Only write when the color actually changes — an unconditional write
         // flags BackgroundColor/BorderColor dirty every frame and forces the UI
@@ -844,7 +1035,15 @@ fn sync_world_map_nodes(
     }
 }
 
-fn route_info_text(catalog: &AreaCatalog, here: u16, dest: u16, now: u32) -> String {
+fn route_info_text(
+    catalog: &AreaCatalog,
+    here: u16,
+    start_tile: Position,
+    dest: u16,
+    map: &MapTiles,
+    slow: &TerrainSlowEffectIndex,
+    now: u32,
+) -> String {
     let dest_name = catalog.name_of(dest);
     let desc = catalog
         .get(dest)
@@ -853,17 +1052,54 @@ fn route_info_text(catalog: &AreaCatalog, here: u16, dest: u16, now: u32) -> Str
     if dest == here {
         return format!("{dest_name}\n\n{desc}\n\nYou are already here.");
     }
-    match plan_travel(catalog, here, dest) {
-        Some((hours, path)) => {
-            let arrival = now.saturating_add(hours.saturating_mul(TIMESTAMP_TICKS_PER_HOUR));
-            let route: Vec<String> = path.iter().map(|&id| catalog.name_of(id)).collect();
+    let Some(area) = catalog.get(dest) else {
+        return format!("{dest_name}\n\n{desc}\n\nNo known route from here.");
+    };
+    match shortest_time_path_and_cost(start_tile, area.anchor, map, slow) {
+        Some((path, cost)) => {
+            let ticks = travel_ticks_for_cost(cost);
+            let arrival = now.saturating_add(ticks);
+            let route = route_region_names(&path, map, catalog);
             format!(
-                "{dest_name}\n\n{desc}\n\nTravel time: {hours}h\nArrive: {}\n\nRoute: {}\n\n[ Click to depart ]",
+                "{dest_name}\n\n{desc}\n\nTravel time: {}\nArrive: {}\n\nRoute: {}\n\n[ Click to depart ]",
+                format_duration(ticks),
                 format_clock(arrival),
                 route.join(" → ")
             )
         }
-        None => format!("{dest_name}\n\n{desc}\n\nNo known route from here."),
+        None => format!("{dest_name}\n\n{desc}\n\nNo overland route from here."),
+    }
+}
+
+/// Distinct regions the tile path passes through, in order, for the route line.
+fn route_region_names(path: &[Position], map: &MapTiles, catalog: &AreaCatalog) -> Vec<String> {
+    let mut names = Vec::new();
+    let mut last: Option<u16> = None;
+    for pos in path {
+        let id = map
+            .tiles
+            .get(pos.y as usize)
+            .and_then(|row| row.get(pos.x as usize))
+            .map(|tile| tile.location_id);
+        if let Some(id) = id {
+            if last != Some(id) {
+                names.push(catalog.name_of(id));
+                last = Some(id);
+            }
+        }
+    }
+    names
+}
+
+/// Format a tick span as `Hh MMm` (or `Mm` under an hour) of in-game time.
+fn format_duration(ticks: u32) -> String {
+    let secs = ticks as u64 * TIMESTAMP_SECONDS_PER_TICK as u64;
+    let hours = secs / 3600;
+    let minutes = (secs % 3600) / 60;
+    if hours > 0 {
+        format!("{hours}h {minutes:02}m")
+    } else {
+        format!("{minutes}m")
     }
 }
 

@@ -16,6 +16,7 @@ dependencies = [
  "bevy_sprite_render",
  "bitflags 2.11.1",
  "bytemuck",
+ "fixedbitset",
  "noise",
  "once_cell",
  "petgraph",
